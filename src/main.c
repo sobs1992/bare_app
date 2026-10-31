@@ -23,6 +23,7 @@
 #include "gui/control/control.h"
 #include "gui/ctx.h"
 #include "gui/notify.h"
+#include "gui/view/core/i18n.h"
 #include "gui/view/core/view.h"
 #include "hal/platform.h"
 #include "services/services.h"
@@ -45,12 +46,13 @@ static void usage(FILE *f)
 {
 	size_t i;
 
-	fprintf(f, "usage: bare_app [-p PLATFORM] [-b BACKEND] [-v] [-l]\n"
+	fprintf(f, "usage: bare_app [-p PLATFORM] [-b BACKEND] [-L LANG] [-v] [-l]\n"
 		   "  -p, --platform NAME   skip detection (see -l)\n"
 		   "  -b, --backend NAME    view backend:");
 	for (i = 0; i < ARRAY_SIZE(backends); i++)
 		fprintf(f, " %s", backends[i]->name);
-	fprintf(f, "\n  -v, --verbose         debug log\n"
+	fprintf(f, "\n  -L, --lang en|ru      UI language (default: $BARE_APP_LANG, else en)\n"
+		   "  -v, --verbose         debug log\n"
 		   "  -l, --list            list platforms\n");
 }
 
@@ -74,20 +76,21 @@ int main(int argc, char **argv)
 	static const struct option opts[] = {
 		{ "platform", required_argument, NULL, 'p' },
 		{ "backend", required_argument, NULL, 'b' },
+		{ "lang", required_argument, NULL, 'L' },
 		{ "verbose", no_argument, NULL, 'v' },
 		{ "list", no_argument, NULL, 'l' },
 		{ "help", no_argument, NULL, 'h' },
 		{ 0 }
 	};
 	const struct view_backend_ops *be = backends[0];
-	const char *pf_name = NULL;
+	const char *pf_name = NULL, *lang = getenv("BARE_APP_LANG");
 	const struct platform *pf;
 	struct mainloop *ml;
 	sigset_t sigs;
 	int c, sfd, ret = 1;
 	size_t i;
 
-	while ((c = getopt_long(argc, argv, "p:b:vlh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "p:b:L:vlh", opts, NULL)) != -1) {
 		switch (c) {
 		case 'p':
 			pf_name = optarg;
@@ -101,6 +104,9 @@ int main(int argc, char **argv)
 				fprintf(stderr, "bare_app: unknown backend \"%s\"\n", optarg);
 				return 1;
 			}
+			break;
+		case 'L':
+			lang = optarg;
 			break;
 		case 'v':
 			log_set_level(LOG_DEBUG);
@@ -117,6 +123,8 @@ int main(int argc, char **argv)
 		}
 	}
 
+	if (lang && *lang && i18n_set(lang) < 0)
+		LOGW(TAG, "unknown language \"%s\", using %s", lang, i18n_lang());
 	pf = platform_probe(pf_name);
 	if (!pf)
 		return 1;

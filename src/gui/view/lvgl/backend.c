@@ -1,4 +1,6 @@
 /* LVGL view backend: glue between the view core and LVGL. */
+#include <string.h>
+
 #include "lvgl_view.h"
 
 #include "core/log.h"
@@ -86,11 +88,15 @@ static void backend_notify(const struct gui_notify *n)
 
 	switch (n->kind) {
 	case NOTIFY_BATTERY_LOW:
-		lv_snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  Battery low: %d%%", n->value);
+		lv_snprintf(text, sizeof(text), "%s  ", LV_SYMBOL_WARNING);
+		lv_snprintf(text + strlen(text), sizeof(text) - strlen(text), tr(S_BATTERY_LOW_FMT),
+			    n->value);
 		break;
 	case NOTIFY_CHARGER:
-		lv_snprintf(text, sizeof(text), "%s", n->value ? LV_SYMBOL_CHARGE "  Charger connected"
-							       : "Charger disconnected");
+		if (n->value)
+			lv_snprintf(text, sizeof(text), LV_SYMBOL_CHARGE "  %s", tr(S_CHARGER_CONNECTED));
+		else
+			lv_snprintf(text, sizeof(text), "%s", tr(S_CHARGER_DISCONNECTED));
 		break;
 	default:
 		return;

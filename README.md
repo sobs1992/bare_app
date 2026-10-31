@@ -33,11 +33,19 @@ tools/oga.sh shot s.png     # снимок всех слоёв работающ�
 tools/oga.sh stop           # остановить, показать конец лога
 ```
 
-Опции программы: `-p PLATFORM` (без него — по device tree), `-b lvgl|headless`, `-v` — отладочный лог.
+Опции программы: `-p PLATFORM` (без него — по device tree), `-b lvgl|headless`,
+`-L en|ru` — язык (или `BARE_APP_LANG`), `-v` — отладочный лог.
 На OGA экран выводится через DRM с аппаратными плоскостями (видео под UI, экран «Layers»),
 если DRM недоступен — через fbdev. Снимок: `kill -USR1 $(pidof bare_app)` → `/tmp/bare_app.ppm`
 (или `BARE_APP_SHOT`).
 Выход: F6 (`quit_combo` платформы), пункт Quit, SIGTERM/SIGINT.
+
+Шрифты с кириллицей пересоздаются так (нужен Pillow):
+
+```sh
+for s in 14 20; do tools/gen_font.py --size $s --name ui_font_$s \
+    --fallback lv_font_montserrat_$s -o src/gui/view/lvgl/fonts/ui_font_$s.c; done
+```
 
 ## Управление
 

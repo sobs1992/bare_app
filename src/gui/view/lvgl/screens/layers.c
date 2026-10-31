@@ -22,7 +22,7 @@ static void *layers_init(lv_obj_t *parent, lv_obj_t **root)
 	scr = lv_obj_create(NULL);
 	if (l->video)
 		lv_obj_set_style_bg_opa(scr, LV_OPA_TRANSP, 0);
-	statusbar_create(scr, LV_SYMBOL_IMAGE "  Layers");
+	statusbar_create(scr, LV_SYMBOL_IMAGE, tr(S_LAYERS));
 
 	panel = lv_obj_create(scr);
 	lv_obj_set_size(panel, LV_PCT(90), LV_SIZE_CONTENT);
@@ -35,13 +35,9 @@ static void *layers_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_width(text, LV_PCT(100));
 	lv_label_set_long_mode(text, LV_LABEL_LONG_MODE_WRAP);
 	if (l->video)
-		lv_label_set_text(text, "Video layer: test pattern (hardware plane)\n"
-					"UI layer: LVGL with alpha on top\n"
-					"B  back");
+		lv_label_set_text(text, tr(S_LAYERS_VIDEO));
 	else
-		lv_label_set_text(text, LV_SYMBOL_WARNING "  This display has no video layer\n"
-					"(fbdev, SDL or memory display)\n"
-					"B  back");
+		lv_label_set_text_fmt(text, LV_SYMBOL_WARNING "  %s", tr(S_LAYERS_NO_VIDEO));
 	*root = scr;
 	return l;
 }

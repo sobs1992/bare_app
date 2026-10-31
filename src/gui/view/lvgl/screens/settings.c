@@ -45,10 +45,10 @@ static void *settings_init(lv_obj_t *parent, lv_obj_t **root)
 		return NULL;
 	s->shown_brightness = -2;
 	scr = lv_obj_create(NULL);
-	statusbar_create(scr, LV_SYMBOL_SETTINGS "  Settings");
+	statusbar_create(scr, LV_SYMBOL_SETTINGS, tr(S_SETTINGS));
 	body = screen_body(scr);
 
-	r = row(body, "Brightness");
+	r = row(body, tr(S_BRIGHTNESS));
 	s->slider = lv_slider_create(r);
 	lv_obj_set_width(s->slider, 200);
 	ui_focus_style(s->slider);
@@ -58,15 +58,17 @@ static void *settings_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_style_text_font(s->value, UI_FONT_MID, 0);
 	s->no_bl = lv_label_create(r);
 	lv_obj_set_style_text_color(s->no_bl, UI_COLOR_DIM, 0);
-	lv_label_set_text(s->no_bl, "not available");
+	lv_label_set_text(s->no_bl, tr(S_NOT_AVAILABLE));
 
-	r = row(body, "Battery");
+	r = row(body, tr(S_BATTERY));
 	s->battery = lv_label_create(r);
 	lv_obj_set_style_text_font(s->battery, UI_FONT_MID, 0);
+	lv_obj_set_flex_grow(s->battery, 1);
+	lv_label_set_long_mode(s->battery, LV_LABEL_LONG_MODE_WRAP);
 
 	hint = lv_label_create(body);
 	lv_obj_set_style_text_color(hint, UI_COLOR_DIM, 0);
-	lv_label_set_text(hint, LV_SYMBOL_LEFT " " LV_SYMBOL_RIGHT " change    B  back");
+	lv_label_set_text_fmt(hint, LV_SYMBOL_LEFT " " LV_SYMBOL_RIGHT " %s", tr(S_CHANGE_BACK));
 	*root = scr;
 	return s;
 }
@@ -92,12 +94,12 @@ static void settings_update(void *self, const struct gui_ctx *c, uint32_t change
 	}
 	if (changed & CTX_POWER) {
 		if (!c->power.available || c->power.capacity < 0)
-			lv_label_set_text(s->battery, c->power.available ? "unknown" : "none");
+			lv_label_set_text(s->battery, tr(c->power.available ? S_UNKNOWN : S_NONE));
 		else
 			lv_label_set_text_fmt(s->battery, "%d%%, %s%s", c->power.capacity,
-					      c->power.full ? "full" :
-					      c->power.charging ? "charging" : "discharging",
-					      c->power.online ? ", charger on" : "");
+					      tr(c->power.full ? S_FULL :
+						 c->power.charging ? S_CHARGING : S_DISCHARGING),
+					      c->power.online ? tr(S_CHARGER_ON) : "");
 	}
 }
 

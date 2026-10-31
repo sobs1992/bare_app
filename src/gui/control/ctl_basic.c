@@ -81,8 +81,8 @@ static int system_init(const struct control_env *env)
 	struct gui_ctx *c = ctx_lock();
 
 	snprintf(c->system.platform, sizeof(c->system.platform), "%s", env->pf->name);
-	snprintf(c->system.model, sizeof(c->system.model), "%s",
-		 *platform_model() ? platform_model() : "unknown board");
+	/* "" when unknown: wording is the view's business */
+	snprintf(c->system.model, sizeof(c->system.model), "%s", platform_model());
 	ctx_unlock(CTX_SYSTEM);
 	return 0;
 }

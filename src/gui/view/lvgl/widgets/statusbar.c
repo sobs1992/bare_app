@@ -86,19 +86,21 @@ const struct widget_ops statusbar_widget = {
 	.deinit = statusbar_deinit,
 };
 
-void statusbar_set_title(lv_obj_t *bar, const char *title)
+void statusbar_set_title(lv_obj_t *bar, const char *symbol, const char *title)
 {
 	struct statusbar *s = widget_self(bar);
 
-	if (s)
+	if (s && symbol)
+		lv_label_set_text_fmt(s->title, "%s  %s", symbol, title);
+	else if (s)
 		lv_label_set_text(s->title, title);
 }
 
-lv_obj_t *statusbar_create(lv_obj_t *parent, const char *title)
+lv_obj_t *statusbar_create(lv_obj_t *parent, const char *symbol, const char *title)
 {
 	lv_obj_t *bar = widget_create(&statusbar_widget, parent);
 
 	if (bar)
-		statusbar_set_title(bar, title);
+		statusbar_set_title(bar, symbol, title);
 	return bar;
 }

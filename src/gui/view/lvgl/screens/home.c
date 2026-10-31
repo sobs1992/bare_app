@@ -9,16 +9,17 @@ struct home {
 };
 
 struct entry {
-	const char *symbol, *text;
+	const char *symbol;
+	enum str_id text;
 	enum gui_action_type action;
 	int arg;
 };
 
 static const struct entry entries[] = {
-	{ LV_SYMBOL_KEYBOARD, "Input test", ACT_OPEN_SCREEN, SCREEN_INPUT_TEST },
-	{ LV_SYMBOL_SETTINGS, "Settings", ACT_OPEN_SCREEN, SCREEN_SETTINGS },
-	{ LV_SYMBOL_IMAGE, "Layers", ACT_OPEN_SCREEN, SCREEN_LAYERS },
-	{ LV_SYMBOL_POWER, "Quit", ACT_QUIT, 0 },
+	{ LV_SYMBOL_KEYBOARD, S_INPUT_TEST, ACT_OPEN_SCREEN, SCREEN_INPUT_TEST },
+	{ LV_SYMBOL_SETTINGS, S_SETTINGS, ACT_OPEN_SCREEN, SCREEN_SETTINGS },
+	{ LV_SYMBOL_IMAGE, S_LAYERS, ACT_OPEN_SCREEN, SCREEN_LAYERS },
+	{ LV_SYMBOL_POWER, S_QUIT, ACT_QUIT, 0 },
 };
 
 static void on_click(lv_event_t *e)
@@ -38,7 +39,7 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 	if (!h)
 		return NULL;
 	scr = lv_obj_create(NULL);
-	statusbar_create(scr, "bare_app");
+	statusbar_create(scr, NULL, "bare_app");
 	body = screen_body(scr);
 	lv_obj_set_flex_align(body, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
@@ -49,7 +50,7 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 		lv_obj_add_event_cb(btn, on_click, LV_EVENT_CLICKED, (void *)&entries[i]);
 		label = lv_label_create(btn);
 		lv_obj_set_style_text_font(label, UI_FONT_MID, 0);
-		lv_label_set_text_fmt(label, "%s  %s", entries[i].symbol, entries[i].text);
+		lv_label_set_text_fmt(label, "%s  %s", entries[i].symbol, tr(entries[i].text));
 		lv_obj_center(label);
 	}
 
@@ -65,7 +66,9 @@ static void home_update(void *self, const struct gui_ctx *c, uint32_t changed)
 	struct home *h = self;
 
 	if (changed & CTX_SYSTEM)
-		lv_label_set_text_fmt(h->footer, "%s  (platform %s)", c->system.model, c->system.platform);
+		lv_label_set_text_fmt(h->footer, tr(S_PLATFORM_FMT),
+				      *c->system.model ? c->system.model : tr(S_UNKNOWN_BOARD),
+				      c->system.platform);
 }
 
 static void home_deinit(void *self)

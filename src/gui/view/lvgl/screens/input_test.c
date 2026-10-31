@@ -106,7 +106,7 @@ static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 	if (!t)
 		return NULL;
 	scr = lv_obj_create(NULL);
-	statusbar_create(scr, LV_SYMBOL_KEYBOARD "  Input test");
+	statusbar_create(scr, LV_SYMBOL_KEYBOARD, tr(S_INPUT_TEST));
 	body = screen_body(scr);
 	lv_obj_set_flex_flow(body, LV_FLEX_FLOW_ROW);
 	lv_obj_set_flex_align(body, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
@@ -134,7 +134,7 @@ static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 	}
 	hint = lv_label_create(left);
 	lv_obj_set_style_text_color(hint, UI_COLOR_DIM, 0);
-	lv_label_set_text(hint, "B twice: back");
+	lv_label_set_text(hint, tr(S_TWICE_BACK));
 
 	/* right: both sticks and their values */
 	right = column(body, 2 * STICK + 10);

@@ -28,8 +28,9 @@ void *widget_self(lv_obj_t *root);
 
 /* widgets/ */
 extern const struct widget_ops statusbar_widget;
-void statusbar_set_title(lv_obj_t *bar, const char *title);
-lv_obj_t *statusbar_create(lv_obj_t *parent, const char *title);
+/* symbol: LV_SYMBOL_* or NULL */
+void statusbar_set_title(lv_obj_t *bar, const char *symbol, const char *title);
+lv_obj_t *statusbar_create(lv_obj_t *parent, const char *symbol, const char *title);
 
 /* screens/ */
 extern const struct widget_ops home_screen, settings_screen, input_test_screen, layers_screen;

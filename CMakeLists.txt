@@ -56,6 +56,7 @@ add_library(bare_app_core STATIC
 	src/gui/control/ctl_basic.c
 	src/gui/control/ctl_display.c
 	src/gui/control/ctl_power.c
+	src/gui/view/core/i18n.c
 	src/gui/view/core/view.c
 	src/gui/view/headless/headless.c
 )
@@ -91,6 +92,8 @@ if(BARE_APP_WITH_LVGL)
 		src/gui/view/lvgl/widget.c
 		src/gui/view/lvgl/screens.c
 		src/gui/view/lvgl/widgets/statusbar.c
+		src/gui/view/lvgl/fonts/ui_font_14.c
+		src/gui/view/lvgl/fonts/ui_font_20.c
 		src/gui/view/lvgl/screens/home.c
 		src/gui/view/lvgl/screens/settings.c
 		src/gui/view/lvgl/screens/input_test.c
