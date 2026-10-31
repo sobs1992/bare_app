@@ -13,7 +13,7 @@
 #include "drivers/input_script.h"
 #include "hal/platform.h"
 
-#ifdef BARE_APP_WITH_SDL
+#ifdef CONFIG_DISPLAY_SDL
 #include "drivers/sdl.h"
 #endif
 
@@ -28,13 +28,13 @@ const struct platform platform_pc = {
 	.name = "pc",
 	.compatible = NULL,
 	.displays = {
-#ifdef BARE_APP_WITH_SDL
+#ifdef CONFIG_DISPLAY_SDL
 		{ &display_sdl, &(const struct sdl_params){ .width = 480, .height = 320, .zoom = 2 } },
 #endif
 		{ &display_mem, &mem_params },
 	},
 	.inputs = {
-#ifdef BARE_APP_WITH_SDL
+#ifdef CONFIG_INPUT_SDL
 		{ &input_sdl, NULL },
 #endif
 		{ &input_script, &script_params },

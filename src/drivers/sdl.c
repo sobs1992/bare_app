@@ -180,6 +180,8 @@ static void *sdl_input_open(const void *params, struct mainloop *ml)
 		return NULL;
 	in->ml = ml;
 	in->pump = mainloop_add_timer(ml, 0, PUMP_MS, pump, in);
+	input_declare((GP_BIT(GP_COUNT) - 1) & ~(GP_BIT(GP_L2) | GP_BIT(GP_R2) | GP_BIT(GP_MENU) |
+					    GP_BIT(GP_VOL_UP) | GP_BIT(GP_VOL_DOWN)), 0);
 	return in;
 }
 

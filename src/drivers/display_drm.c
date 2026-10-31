@@ -545,6 +545,7 @@ static void drm_close(struct hal_display *disp)
 	console_restore();
 }
 
+#ifdef CONFIG_SNAPSHOT
 static int drm_snapshot(struct hal_display *disp, const char *path)
 {
 	struct drmdisp *d = (struct drmdisp *)disp;
@@ -552,6 +553,7 @@ static int drm_snapshot(struct hal_display *disp, const char *path)
 	return shot_write_ppm(path, &d->layers[LAYER_UI].shadow,
 			      d->layers[LAYER_VIDEO].plane ? &d->layers[LAYER_VIDEO].shadow : NULL);
 }
+#endif
 
 static void drm_info(struct hal_display *disp, struct hal_display_info *info)
 {
@@ -599,5 +601,7 @@ const struct hal_display_ops display_drm = {
 	.layer_acquire = drm_acquire,
 	.layer_damage = drm_damage,
 	.layer_submit = drm_submit,
+#ifdef CONFIG_SNAPSHOT
 	.snapshot = drm_snapshot,
+#endif
 };

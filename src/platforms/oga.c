@@ -26,7 +26,8 @@ static const struct evdev_key_map oga_keys[] = {
 };
 
 static const struct evdev_axis_map oga_axes[] = {
-	{ ABS_X, GP_AXIS_LX, false }, { ABS_Y, GP_AXIS_LY, false },
+	/* the ADC reads the X direction of the stick mirrored */
+	{ ABS_X, GP_AXIS_LX, true }, { ABS_Y, GP_AXIS_LY, false },
 	{ ABS_RX, GP_AXIS_RX, false }, { ABS_RY, GP_AXIS_RY, false },	/* Super only */
 	{ 0, GP_AXIS_COUNT, false }
 };
@@ -43,21 +44,29 @@ const struct platform platform_oga = {
 	.compatible = oga_compatible,
 	.displays = {
 		/* planes: video under the UI; fbdev if DRM is busy or missing */
+#ifdef CONFIG_DISPLAY_DRM
 		{ &display_drm, &(const struct drm_params){
 			.device = "/dev/dri/card0", .tty = "/dev/tty1", .rotation = HAL_ROT_AUTO } },
+#endif
+#ifdef CONFIG_DISPLAY_FBDEV
 		{ &display_fbdev, &(const struct fbdev_params){
 			.device = "/dev/fb0", .tty = "/dev/tty1", .rotation = HAL_ROT_AUTO } },
+#endif
 	},
 	.inputs = {
 		{ &input_evdev, &(const struct evdev_params){ .name = "gpio-keys", .keys = oga_keys } },
 		{ &input_evdev, &(const struct evdev_params){
 			.name = "adc-joystick", .axes = oga_axes, .deadzone = 0.15f } },
 	},
+#ifdef CONFIG_POWER
 	.power = { &power_sysfs, &(const struct power_sysfs_params){
 		.battery = "/sys/class/power_supply/rk817-battery",
 		.charger = "/sys/class/power_supply/rk817-charger" } },
+#endif
+#ifdef CONFIG_BACKLIGHT
 	.backlight = { &backlight_sysfs, &(const struct backlight_sysfs_params){
 		.path = "/sys/class/backlight/backlight", .min_percent = 5 } },
+#endif
 	.quit_combo = GP_BIT(GP_F6),
 	.config_path = "/etc/bare_app.conf",
 };

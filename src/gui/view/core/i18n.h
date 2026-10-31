@@ -23,5 +23,6 @@ enum str_id {
 int i18n_set(const char *lang);
 const char *i18n_lang(void);
 const char *tr(enum str_id id);
+int i18n_count(void);		/* languages in this build */
 /* The language after 'code' in the list, wrapping around */
 const char *i18n_next(const char *code);

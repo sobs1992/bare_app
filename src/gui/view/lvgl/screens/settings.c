@@ -66,13 +66,15 @@ static void *settings_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_style_text_color(s->no_bl, UI_COLOR_DIM, 0);
 	lv_label_set_text(s->no_bl, tr(S_NOT_AVAILABLE));
 
-	r = row(body, tr(S_LANGUAGE));
-	btn = lv_button_create(r);
-	ui_focus_style(btn);
-	lv_obj_add_event_cb(btn, on_lang, LV_EVENT_CLICKED, NULL);
-	label = lv_label_create(btn);
-	lv_obj_set_style_text_font(label, UI_FONT_MID, 0);
-	lv_label_set_text(label, tr(S_LANG_NAME));
+	if (i18n_count() > 1) {
+		r = row(body, tr(S_LANGUAGE));
+		btn = lv_button_create(r);
+		ui_focus_style(btn);
+		lv_obj_add_event_cb(btn, on_lang, LV_EVENT_CLICKED, NULL);
+		label = lv_label_create(btn);
+		lv_obj_set_style_text_font(label, UI_FONT_MID, 0);
+		lv_label_set_text(label, tr(S_LANG_NAME));
+	}
 
 	r = row(body, tr(S_BATTERY));
 	s->battery = lv_label_create(r);

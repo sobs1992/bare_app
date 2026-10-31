@@ -2,7 +2,8 @@
 # Build bare_app for the ODROID-GO Advance and drive it over the serial console
 # (scripts/oga-serial.py of the SDK). The SDK is two levels up unless SDK= is set.
 #
-#   tools/oga.sh build          cross-compile into build-oga/
+#   tools/oga.sh build          cross-compile into build-oga/ (BARE_APP_DEFCONFIG=name
+#                               or path picks the configuration, default oga_defconfig)
 #   tools/oga.sh run [ARGS]     build, copy to /tmp/bare_app if changed, restart in background
 #   tools/oga.sh stop           stop it and show the end of the log
 #   tools/oga.sh log            whole log (/tmp/bare_app.log)
@@ -22,7 +23,8 @@ build() {
 	[ -f "$HOST/share/buildroot/toolchainfile.cmake" ] ||
 		{ echo "no OGA toolchain in $HOST: run 'make FW=oga rootfs' in the SDK" >&2; exit 1; }
 	cmake -S "$APP" -B "$OUT" -DCMAKE_BUILD_TYPE=Release \
-	      -DCMAKE_TOOLCHAIN_FILE="$HOST/share/buildroot/toolchainfile.cmake" > /dev/null
+	      -DCMAKE_TOOLCHAIN_FILE="$HOST/share/buildroot/toolchainfile.cmake" \
+	      -DBARE_APP_DEFCONFIG="${BARE_APP_DEFCONFIG:-}" > /dev/null
 	cmake --build "$OUT" -j"$(nproc)"
 	"$HOST/bin/aarch64-buildroot-linux-gnu-strip" -o "$OUT/bare_app.stripped" "$OUT/bare_app"
 }
@@ -60,5 +62,5 @@ shot)
 	fi
 	;;
 key)  "$SERIAL" key --delay 0.3 "$@" ;;
-*)    sed -n '2,13p' "$0"; exit 1 ;;
+*)    sed -n '2,14p' "$0"; exit 1 ;;
 esac

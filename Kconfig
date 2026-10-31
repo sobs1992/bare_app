@@ -1,0 +1,167 @@
+mainmenu "bare_app configuration"
+
+menu "Platforms"
+
+config PLATFORM_OGA
+	bool "ODROID-GO Advance / Black Edition / Super"
+	default y
+	select INPUT_EVDEV
+	select DISPLAY_FBDEV if !DISPLAY_DRM
+	help
+	  Picked at run time by the device tree "compatible" of the board.
+	  Needs DRM or fbdev for the screen (fbdev is selected if DRM is
+	  off), evdev for the buttons and the stick.
+
+config PLATFORM_PC
+	bool "PC simulator (platforms pc and pc-mem)"
+	select DISPLAY_MEM
+	select INPUT_SCRIPT
+	help
+	  "pc" opens an SDL window if DISPLAY_SDL is on, "pc-mem" always
+	  draws into memory (tests, scripted screenshots).
+
+endmenu
+
+menu "Display drivers"
+
+config DISPLAY_DRM
+	bool "DRM/KMS with hardware planes"
+	default y if PLATFORM_OGA
+	help
+	  UI on an overlay plane with alpha, video layer on the primary
+	  plane, vsync. Raw kernel UAPI, no libdrm needed.
+
+config DISPLAY_FBDEV
+	bool "Linux framebuffer (fbdev)"
+	default y if PLATFORM_OGA
+	help
+	  One layer, no video. Used when DRM is missing or busy.
+
+config DISPLAY_MEM
+	bool "Display in memory"
+	help
+	  For tests: draws nothing, can write snapshots.
+
+config DISPLAY_SDL
+	bool "SDL2 window (simulator)"
+	depends on PLATFORM_PC
+	default y
+	help
+	  Needs SDL2 development files on the build machine
+	  (libsdl2-dev).
+
+endmenu
+
+menu "Input drivers"
+
+config INPUT_EVDEV
+	bool "evdev: buttons and analog sticks"
+
+config INPUT_HOTPLUG
+	bool "Reattach input devices that come and go (uevent)"
+	depends on INPUT_EVDEV
+	default y
+
+config INPUT_SCRIPT
+	bool "Scripted input from stdin"
+	help
+	  Words on stdin press buttons ("down a wait:500 f6"); only when
+	  stdin is not a terminal.
+
+config INPUT_SDL
+	bool "SDL keyboard"
+	depends on DISPLAY_SDL
+	default y
+
+endmenu
+
+menu "System services"
+
+config POWER
+	bool "Battery and charger (sysfs power_supply)"
+	default y
+
+config POWER_UEVENT
+	bool "Re-read the battery on power_supply uevents"
+	depends on POWER
+	default y
+	help
+	  Without it the battery is polled every 5 s.
+
+config BACKLIGHT
+	bool "Backlight control (sysfs)"
+	default y
+
+config SETTINGS_FILE
+	bool "Keep settings between runs"
+	default y
+	help
+	  Brightness and language in the platform's settings file
+	  (/etc/bare_app.conf on the OGA).
+
+endmenu
+
+menu "User interface"
+
+config VIEW_LVGL
+	bool "LVGL view backend"
+	default y
+
+config VIEW_HEADLESS
+	bool "Headless view backend (logs instead of drawing)"
+	default y
+	help
+	  Also proves the core builds without a GUI toolkit.
+
+if VIEW_LVGL
+
+config SCREEN_INPUT_TEST
+	bool "Input test screen"
+	default y
+
+config SCREEN_SETTINGS
+	bool "Settings screen (brightness, language)"
+	default y
+
+config SCREEN_LAYERS
+	bool "Layers screen (UI over the video layer)"
+	default y
+	select VIDEO_TESTPATTERN
+
+config UI_FONT_CYRILLIC
+	bool "Fonts with Cyrillic (Noto Sans)"
+	default y
+	help
+	  Without it the built-in Montserrat fonts are used: Latin only.
+
+endif
+
+config LANG_RU
+	bool "Russian translation"
+	depends on UI_FONT_CYRILLIC || !VIEW_LVGL
+	default y
+
+config VIDEO_TESTPATTERN
+	bool "Test pattern video source"
+	help
+	  Animated colour bars drawn by a thread into the video layer.
+
+endmenu
+
+menu "Debugging"
+
+config SNAPSHOT
+	bool "Screenshots (SIGUSR1, BARE_APP_SHOT)"
+	default y
+	help
+	  Write the composed layers as a PPM image on SIGUSR1, and on exit
+	  if BARE_APP_SHOT is set.
+
+config BUILD_TESTS
+	bool "Host unit tests and the smoke test"
+	depends on PLATFORM_PC && VIEW_HEADLESS
+	default y
+	help
+	  Built only for the host (not when cross-compiling).
+
+endmenu

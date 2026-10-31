@@ -1,0 +1,16 @@
+# Example of a reduced OGA build: fbdev only, English only, no video layer,
+# no settings file, no headless backend, no debugging aids
+CONFIG_PLATFORM_OGA=y
+# CONFIG_PLATFORM_PC is not set
+# CONFIG_DISPLAY_DRM is not set
+CONFIG_DISPLAY_FBDEV=y
+# CONFIG_INPUT_HOTPLUG is not set
+# CONFIG_POWER_UEVENT is not set
+# CONFIG_SETTINGS_FILE is not set
+# CONFIG_VIEW_HEADLESS is not set
+# CONFIG_SCREEN_SETTINGS is not set
+# CONFIG_SCREEN_LAYERS is not set
+# CONFIG_UI_FONT_CYRILLIC is not set
+# CONFIG_LANG_RU is not set
+# CONFIG_VIDEO_TESTPATTERN is not set
+# CONFIG_SNAPSHOT is not set

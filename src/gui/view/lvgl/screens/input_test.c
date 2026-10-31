@@ -1,7 +1,8 @@
 /*
  * Input test: grabs the gamepad, lights up pressed buttons and shows the
- * sticks. Every button is shown, so B cannot simply mean "back": B pressed
- * twice within 600 ms leaves.
+ * sticks. Only what the hardware has is shown (input_*_present()). B is
+ * one of the buttons under test, so it cannot simply mean "back": B
+ * pressed twice within 600 ms leaves.
  */
 #include <stdlib.h>
 
@@ -13,9 +14,12 @@
 #define DOT 14
 #define DOUBLE_TAP_MS 600
 
+#define LEFT_STICK  (GP_BIT(GP_AXIS_LX) | GP_BIT(GP_AXIS_LY))
+#define RIGHT_STICK (GP_BIT(GP_AXIS_RX) | GP_BIT(GP_AXIS_RY))
+
 struct input_test {
-	lv_obj_t *cell[GP_COUNT];
-	lv_obj_t *dot[2];
+	lv_obj_t *cell[GP_COUNT];	/* NULL: the device has no such button */
+	lv_obj_t *dot[2];		/* NULL: no such stick */
 	lv_obj_t *values;
 	uint32_t last_b;
 };
@@ -26,14 +30,22 @@ static void place_dot(struct input_test *t, int stick)
 	float y = input_axis(stick ? GP_AXIS_RY : GP_AXIS_LY);
 	int half = (STICK - DOT) / 2;
 
-	lv_obj_set_pos(t->dot[stick], half + (int)(x * half), half + (int)(y * half));
+	if (t->dot[stick])
+		lv_obj_set_pos(t->dot[stick], half + (int)(x * half), half + (int)(y * half));
 }
 
 static void show_values(struct input_test *t)
 {
-	lv_label_set_text_fmt(t->values, "L %+.2f %+.2f\nR %+.2f %+.2f",
-			      (double)input_axis(GP_AXIS_LX), (double)input_axis(GP_AXIS_LY),
-			      (double)input_axis(GP_AXIS_RX), (double)input_axis(GP_AXIS_RY));
+	if (!t->values)
+		return;
+	if (t->dot[0] && t->dot[1])
+		lv_label_set_text_fmt(t->values, "L %+.2f %+.2f\nR %+.2f %+.2f",
+				      (double)input_axis(GP_AXIS_LX), (double)input_axis(GP_AXIS_LY),
+				      (double)input_axis(GP_AXIS_RX), (double)input_axis(GP_AXIS_RY));
+	else
+		lv_label_set_text_fmt(t->values, "X %+.2f  Y %+.2f",
+				      (double)input_axis(t->dot[0] ? GP_AXIS_LX : GP_AXIS_RX),
+				      (double)input_axis(t->dot[0] ? GP_AXIS_LY : GP_AXIS_RY));
 }
 
 static void on_input(const struct gp_event *ev, void *ud)
@@ -47,7 +59,9 @@ static void on_input(const struct gp_event *ev, void *ud)
 	}
 	if (ev->repeat)
 		return;
-	if (ev->pressed)
+	if (!t->cell[ev->code])
+		;	/* not declared by the driver (e.g. the stick's virtual D-pad) */
+	else if (ev->pressed)
 		lv_obj_add_state(t->cell[ev->code], LV_STATE_CHECKED);
 	else
 		lv_obj_remove_state(t->cell[ev->code], LV_STATE_CHECKED);
@@ -100,6 +114,7 @@ static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 {
 	struct input_test *t = calloc(1, sizeof(*t));
 	lv_obj_t *scr, *body, *left, *grid, *right, *sticks, *hint;
+	uint32_t present, axes;
 	int b;
 
 	(void)parent;
@@ -118,9 +133,15 @@ static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_size(grid, LV_PCT(100), LV_SIZE_CONTENT);
 	lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
 	lv_obj_set_style_pad_gap(grid, 5, 0);
+	present = input_buttons_present();
+	if (!present)
+		present = GP_BIT(GP_COUNT) - 1;	/* nothing declared: show all */
 	for (b = 0; b < GP_COUNT; b++) {
-		lv_obj_t *cell = lv_obj_create(grid), *label;
+		lv_obj_t *cell, *label;
 
+		if (!(present & GP_BIT(b)))
+			continue;
+		cell = lv_obj_create(grid);
 		lv_obj_set_size(cell, 46, 30);
 		lv_obj_set_style_pad_all(cell, 0, 0);
 		lv_obj_set_scrollable(cell, false);
@@ -142,11 +163,16 @@ static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_remove_style_all(sticks);
 	lv_obj_set_size(sticks, LV_PCT(100), LV_SIZE_CONTENT);
 	lv_obj_set_flex_flow(sticks, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(sticks, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-	stick_box(sticks, "L", &t->dot[0]);
-	stick_box(sticks, "R", &t->dot[1]);
-	t->values = lv_label_create(right);
-	lv_obj_set_style_text_color(t->values, UI_COLOR_DIM, 0);
+	lv_obj_set_flex_align(sticks, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+	axes = input_axes_present();
+	if (axes & LEFT_STICK)
+		stick_box(sticks, (axes & RIGHT_STICK) ? "L" : "", &t->dot[0]);
+	if (axes & RIGHT_STICK)
+		stick_box(sticks, (axes & LEFT_STICK) ? "R" : "", &t->dot[1]);
+	if (axes & (LEFT_STICK | RIGHT_STICK)) {
+		t->values = lv_label_create(right);
+		lv_obj_set_style_text_color(t->values, UI_COLOR_DIM, 0);
+	}
 
 	place_dot(t, 0);
 	place_dot(t, 1);

@@ -6,14 +6,16 @@
 #include "core/log.h"
 #include "core/util.h"
 
-extern const struct platform platform_oga;
-extern const struct platform platform_pc;
-extern const struct platform platform_pc_mem;
+extern const struct platform platform_oga, platform_pc, platform_pc_mem;
 
 static const struct platform *const platforms[] = {
+#ifdef CONFIG_PLATFORM_OGA
 	&platform_oga,
+#endif
+#ifdef CONFIG_PLATFORM_PC
 	&platform_pc,
 	&platform_pc_mem,
+#endif
 };
 
 static char model[64];
@@ -56,8 +58,12 @@ const struct platform *platform_probe(const char *name)
 		return p;
 	}
 	p = probe_dt();
+#ifdef CONFIG_PLATFORM_PC
 	if (!p)
 		p = &platform_pc;
+#endif
+	if (!p)
+		LOGE("platform", "this board is not supported by this build (see -l)");
 	return p;
 }
 

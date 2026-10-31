@@ -12,9 +12,15 @@
 
 static const struct widget_ops *const screen_ops[SCREEN_COUNT] = {
 	[SCREEN_HOME] = &home_screen,
+#ifdef CONFIG_SCREEN_INPUT_TEST
 	[SCREEN_INPUT_TEST] = &input_test_screen,
+#endif
+#ifdef CONFIG_SCREEN_SETTINGS
 	[SCREEN_SETTINGS] = &settings_screen,
+#endif
+#ifdef CONFIG_SCREEN_LAYERS
 	[SCREEN_LAYERS] = &layers_screen,
+#endif
 };
 
 static struct {

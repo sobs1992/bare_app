@@ -10,10 +10,15 @@ struct hal_display;
 
 #include "gui/view/core/i18n.h"
 
+#ifdef CONFIG_UI_FONT_CYRILLIC
 /* Noto Sans with Cyrillic (fonts/, tools/gen_font.py); icons fall back to Montserrat */
 extern const lv_font_t ui_font_14, ui_font_20;
 #define UI_FONT_SMALL (&ui_font_14)
 #define UI_FONT_MID   (&ui_font_20)
+#else
+#define UI_FONT_SMALL (&lv_font_montserrat_14)
+#define UI_FONT_MID   (&lv_font_montserrat_20)
+#endif
 #define UI_COLOR_DIM  lv_color_hex(0x8a8f98)
 #define UI_COLOR_ON   lv_color_hex(0x2f8cff)
 #define UI_COLOR_WARN lv_color_hex(0xff6a3d)

@@ -181,6 +181,7 @@ bool view_video_available(void)
 	return video_layer() != NULL;
 }
 
+#ifdef CONFIG_VIDEO_TESTPATTERN
 /* A new frame from the producer thread: copy it into the video layer */
 static void on_video_frame(int fd, short revents, void *ud)
 {
@@ -228,18 +229,24 @@ static void video_stop(struct hal_layer *l)
 	hal_layer_submit(l);
 }
 
+#endif /* CONFIG_VIDEO_TESTPATTERN */
+
 int view_video_set(enum video_source src)
 {
 	struct hal_layer *l = video_layer();
-	struct hal_fb *fb;
 
 	if (!l)
 		return src == VIDEO_NONE ? 0 : -1;
 	if (src == v.video_src)
 		return 0;
+#ifndef CONFIG_VIDEO_TESTPATTERN
+	if (src != VIDEO_NONE)
+		return -1;	/* not in this build */
+#else
 	video_stop(l);
 	if (src == VIDEO_TEST_PATTERN) {
-		fb = hal_layer_acquire(l);
+		struct hal_fb *fb = hal_layer_acquire(l);
+
 		v.video_mb = mailbox_new(fb->width, fb->height);
 		if (!v.video_mb)
 			return -1;
@@ -247,6 +254,7 @@ int view_video_set(enum video_source src)
 		mainloop_add_fd(v.ml, mailbox_fd(v.video_mb), POLLIN, on_video_frame, NULL);
 		v.video_tp = testpattern_start(v.video_mb, 30);
 	}
+#endif
 	v.video_src = src;
 	LOGI(TAG, "video source %d", src);
 	return 0;
@@ -269,6 +277,7 @@ static void on_ctx(int fd, short revents, void *ud)
  */
 static void snapshot(bool on_request)
 {
+#ifdef CONFIG_SNAPSHOT
 	const char *path = getenv("BARE_APP_SHOT");
 
 	if (!path || !*path) {
@@ -280,6 +289,9 @@ static void snapshot(bool on_request)
 		v.display->ops->snapshot(v.display, path);
 	else
 		LOGW(TAG, "display \"%s\" cannot take snapshots", v.display->ops->name);
+#else
+	(void)on_request;
+#endif
 }
 
 static void on_notify(int fd, short revents, void *ud)

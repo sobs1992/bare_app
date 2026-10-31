@@ -11,6 +11,29 @@ GUI-приложение для OdroidLinux SDK на LVGL. Первая цель
 git submodule update --init --recursive apps/bare_app      # из корня SDK
 ```
 
+## Состав сборки (Kconfig)
+
+Что входит в бинарник — платформы, драйверы, сервисы, экраны, шрифты, языки,
+отладка, — задаёт `Kconfig` (Kconfiglib лежит в `tools/kconfig`, нужен только `python3`).
+Готовые наборы в `configs/`:
+
+| defconfig | Для чего |
+|---|---|
+| `pc_defconfig` | сборка на ПК (по умолчанию): симулятор SDL, `pc-mem`, платформа OGA, тесты |
+| `oga_defconfig` | образ OGA (по умолчанию при кросс-сборке и в пакете Buildroot) |
+| `oga_minimal_defconfig` | пример урезанной сборки: fbdev, только английский, без слоёв и настроек |
+
+```sh
+cmake -S . -B build-host -DBARE_APP_DEFCONFIG=pc_defconfig   # имя из configs/ или путь
+make -C build-host menuconfig          # поменять состав; следующая сборка его подхватит
+make -C build-host update-defconfig    # сохранить обратно в выбранный defconfig
+make -C build-host savedefconfig       # или в build-host/defconfig
+BARE_APP_DEFCONFIG=oga_minimal_defconfig tools/oga.sh run    # другой состав на плате
+```
+
+`.config` в каталоге сборки пересоздаётся из defconfig, когда тот изменился или выбран
+другой. Правки из `menuconfig` живут до этого момента.
+
 ## Сборка и запуск
 
 На ПК. Платформа `pc` открывает окно SDL2 (если при сборке был найден `libsdl2-dev`),

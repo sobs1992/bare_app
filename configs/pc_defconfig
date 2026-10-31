@@ -1,0 +1,8 @@
+# Host build: simulator (SDL window, pc-mem) plus the OGA platform, which
+# compiles on the PC as well; unit tests
+CONFIG_PLATFORM_OGA=y
+CONFIG_PLATFORM_PC=y
+CONFIG_DISPLAY_SDL=y
+CONFIG_VIEW_LVGL=y
+CONFIG_VIEW_HEADLESS=y
+CONFIG_BUILD_TESTS=y

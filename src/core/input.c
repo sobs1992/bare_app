@@ -28,6 +28,7 @@ static struct {
 	uint32_t virt;		/* from the stick */
 	uint32_t state;		/* phys | virt, what listeners saw */
 	float axes[GP_AXIS_COUNT];
+	uint32_t buttons_present, axes_present;
 	int stick_x, stick_y;	/* -1/0/+1 */
 	struct ml_timer *repeat;
 	enum gp_button repeat_btn;
@@ -150,6 +151,22 @@ uint32_t input_buttons(void)
 float input_axis(enum gp_axis a)
 {
 	return a >= 0 && a < GP_AXIS_COUNT ? in.axes[a] : 0;
+}
+
+void input_declare(uint32_t buttons, uint32_t axes)
+{
+	in.buttons_present |= buttons;
+	in.axes_present |= axes;
+}
+
+uint32_t input_buttons_present(void)
+{
+	return in.buttons_present;
+}
+
+uint32_t input_axes_present(void)
+{
+	return in.axes_present;
 }
 
 const char *gp_button_name(enum gp_button b)

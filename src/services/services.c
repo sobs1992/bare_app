@@ -42,11 +42,13 @@ static void power_poll(void *ud)
 	bus_post(&e);
 }
 
+#ifdef CONFIG_POWER_UEVENT
 static void on_power_uevent(const struct uevent *u, void *ud)
 {
 	(void)u;
 	power_poll(ud);
 }
+#endif
 
 int services_start(struct mainloop *ml, const struct platform *pf)
 {
@@ -56,7 +58,9 @@ int services_start(struct mainloop *ml, const struct platform *pf)
 		sv.power_ops = pf->power.ops;
 		sv.power = sv.power_ops->open(pf->power.params);
 		if (sv.power) {
+#ifdef CONFIG_POWER_UEVENT
 			sv.power_mon = uevent_open(ml, "power_supply", on_power_uevent, NULL);
+#endif
 			sv.power_timer = mainloop_add_timer(ml, 0, sv.power_mon ? POWER_POLL_MS
 										: POWER_POLL_NO_UEVENT_MS,
 							    power_poll, NULL);
@@ -73,7 +77,9 @@ int services_start(struct mainloop *ml, const struct platform *pf)
 void services_stop(void)
 {
 	if (sv.power) {
+#ifdef CONFIG_POWER_UEVENT
 		uevent_close(sv.power_mon);
+#endif
 		mainloop_timer_cancel(sv.ml, sv.power_timer);
 		sv.power_ops->close(sv.power);
 	}

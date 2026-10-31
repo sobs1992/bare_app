@@ -1,0 +1,8 @@
+# ODROID-GO Advance image (Buildroot package bare-app): everything the board can use
+CONFIG_PLATFORM_OGA=y
+# CONFIG_PLATFORM_PC is not set
+CONFIG_DISPLAY_DRM=y
+CONFIG_DISPLAY_FBDEV=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_VIEW_LVGL=y
+CONFIG_VIEW_HEADLESS=y

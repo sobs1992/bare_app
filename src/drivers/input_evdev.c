@@ -152,17 +152,36 @@ static void on_readable(int fd, short revents, void *ud)
 		detach(ev);	/* ENODEV after the device was removed */
 }
 
+/* Tell the input core which mapped keys and axes this device really has */
+static void declare(struct evdev *ev)
+{
+	uint8_t keys[KEY_MAX / 8 + 1] = { 0 };
+	const struct evdev_key_map *k;
+	uint32_t buttons = 0, axes = 0;
+	int i;
+
+	if (ev->p->keys && ioctl(ev->fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys) >= 0)
+		for (k = ev->p->keys; k->code; k++)
+			if (keys[k->code / 8] & (1 << (k->code % 8)))
+				buttons |= GP_BIT(k->button);
+	for (i = 0; i < ev->naxes; i++)
+		axes |= GP_BIT(ev->axes[i].axis);
+	input_declare(buttons, axes);
+}
+
 static bool attach(struct evdev *ev)
 {
 	ev->fd = open_by_name(ev->p->name, ev->path, sizeof(ev->path));
 	if (ev->fd < 0)
 		return false;
 	setup_axes(ev);
+	declare(ev);
 	mainloop_add_fd(ev->ml, ev->fd, POLLIN, on_readable, ev);
 	LOGI(TAG, "%s: %s", ev->p->name, ev->path);
 	return true;
 }
 
+#ifdef CONFIG_INPUT_HOTPLUG
 static void on_retry(void *ud)
 {
 	struct evdev *ev = ud;
@@ -184,6 +203,7 @@ static void on_uevent(const struct uevent *u, void *ud)
 	if (!ev->retry)
 		ev->retry = mainloop_add_timer(ev->ml, RETRY_MS, RETRY_MS, on_retry, ev);
 }
+#endif
 
 static void *evdev_open(const void *params, struct mainloop *ml)
 {
@@ -194,7 +214,9 @@ static void *evdev_open(const void *params, struct mainloop *ml)
 	ev->ml = ml;
 	ev->p = params;
 	ev->fd = -1;
+#ifdef CONFIG_INPUT_HOTPLUG
 	ev->mon = uevent_open(ml, "input", on_uevent, ev);
+#endif
 	if (!attach(ev)) {
 		if (!ev->mon) {
 			LOGW(TAG, "input device \"%s\" not found", ev->p->name);
@@ -210,8 +232,10 @@ static void evdev_close(void *h)
 {
 	struct evdev *ev = h;
 
+#ifdef CONFIG_INPUT_HOTPLUG
 	mainloop_timer_cancel(ev->ml, ev->retry);
 	uevent_close(ev->mon);
+#endif
 	if (ev->fd >= 0) {
 		mainloop_remove_fd(ev->ml, ev->fd);
 		close(ev->fd);

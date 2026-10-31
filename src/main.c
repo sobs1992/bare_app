@@ -30,16 +30,15 @@
 
 #define TAG "main"
 
-extern const struct view_backend_ops view_backend_headless;
-#ifdef BARE_APP_WITH_LVGL
-extern const struct view_backend_ops view_backend_lvgl;
-#endif
+extern const struct view_backend_ops view_backend_headless, view_backend_lvgl;
 
 static const struct view_backend_ops *const backends[] = {
-#ifdef BARE_APP_WITH_LVGL
+#ifdef CONFIG_VIEW_LVGL
 	&view_backend_lvgl,	/* the first one is the default */
 #endif
+#ifdef CONFIG_VIEW_HEADLESS
 	&view_backend_headless,
+#endif
 };
 
 static void usage(FILE *f)
@@ -63,10 +62,12 @@ static void on_signal(int fd, short revents, void *ud)
 	(void)revents;
 	if (read(fd, &si, sizeof(si)) != sizeof(si))
 		return;
+#ifdef CONFIG_SNAPSHOT
 	if (si.ssi_signo == SIGUSR1) {
 		gui_notify_post(NOTIFY_SNAPSHOT, 0);	/* screenshot, see view.c */
 		return;
 	}
+#endif
 	LOGI(TAG, "signal %u, quitting", si.ssi_signo);
 	mainloop_quit(ud);
 }
@@ -133,7 +134,9 @@ int main(int argc, char **argv)
 	sigaddset(&sigs, SIGINT);
 	sigaddset(&sigs, SIGTERM);
 	sigaddset(&sigs, SIGHUP);
+#ifdef CONFIG_SNAPSHOT
 	sigaddset(&sigs, SIGUSR1);
+#endif
 	pthread_sigmask(SIG_BLOCK, &sigs, NULL);
 	signal(SIGPIPE, SIG_IGN);
 	sfd = signalfd(-1, &sigs, SFD_NONBLOCK | SFD_CLOEXEC);
@@ -145,7 +148,11 @@ int main(int argc, char **argv)
 	}
 	mainloop_add_fd(ml, sfd, POLLIN, on_signal, ml);
 
+#ifdef CONFIG_SETTINGS_FILE
 	config_open(ml, pf->config_path);
+#else
+	config_open(ml, NULL);		/* settings live in memory only */
+#endif
 	if (services_start(ml, pf) || control_start(&(struct control_env){ ml, pf, lang }))
 		goto out;
 	if (view_start(be, pf))

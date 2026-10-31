@@ -53,5 +53,10 @@ void input_report_axis(enum gp_axis a, float value);
 uint32_t input_buttons(void);		/* GP_BIT() mask of pressed buttons */
 float input_axis(enum gp_axis a);
 
+/* What the hardware has: drivers declare it when a device appears */
+void input_declare(uint32_t buttons, uint32_t axes);	/* GP_BIT() masks, added up */
+uint32_t input_buttons_present(void);
+uint32_t input_axes_present(void);
+
 const char *gp_button_name(enum gp_button b);
 enum gp_button gp_button_from_name(const char *name);
