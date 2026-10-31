@@ -12,6 +12,7 @@
 #include "core/util.h"
 #include "gui/action.h"
 #include "hal/platform.h"
+#include "media/testpattern.h"
 
 #define TAG "view"
 #define MAX_SUBS 128
@@ -38,6 +39,8 @@ static struct {
 	view_grab_cb grab;
 	void *grab_ud;
 	bool quit_sent;
+	enum video_source video_src;
+	struct testpattern *video_tp;
 } v;
 
 /* ---- subscriptions ---------------------------------------------------- */
@@ -163,6 +166,35 @@ const char *ui_key_name(enum ui_key key)
 	return key < UI_KEY_COUNT ? names[key] : "?";
 }
 
+/* ---- video layer ------------------------------------------------------ */
+
+static struct hal_layer *video_layer(void)
+{
+	return v.display ? hal_display_layer(v.display, LAYER_VIDEO) : NULL;
+}
+
+bool view_video_available(void)
+{
+	return video_layer() != NULL;
+}
+
+int view_video_set(enum video_source src)
+{
+	struct hal_layer *l = video_layer();
+
+	if (!l)
+		return src == VIDEO_NONE ? 0 : -1;
+	if (src == v.video_src)
+		return 0;
+	testpattern_stop(v.video_tp);
+	v.video_tp = NULL;
+	if (src == VIDEO_TEST_PATTERN)
+		v.video_tp = testpattern_start(v.ml, l, 30);
+	v.video_src = src;
+	LOGI(TAG, "video source %d", src);
+	return 0;
+}
+
 /* ---- loop ------------------------------------------------------------- */
 
 static void on_ctx(int fd, short revents, void *ud)
@@ -173,6 +205,26 @@ static void on_ctx(int fd, short revents, void *ud)
 	ctx_ack();	/* the snapshot is taken in prepare(), once per iteration */
 }
 
+/*
+ * Screenshot of the composed layers as PPM: on SIGUSR1 (to BARE_APP_SHOT or
+ * /tmp/bare_app.ppm), and on exit if BARE_APP_SHOT is set, taken before the
+ * UI is torn down.
+ */
+static void snapshot(bool on_request)
+{
+	const char *path = getenv("BARE_APP_SHOT");
+
+	if (!path || !*path) {
+		if (!on_request)
+			return;
+		path = "/tmp/bare_app.ppm";
+	}
+	if (v.display->ops->snapshot)
+		v.display->ops->snapshot(v.display, path);
+	else
+		LOGW(TAG, "display \"%s\" cannot take snapshots", v.display->ops->name);
+}
+
 static void on_notify(int fd, short revents, void *ud)
 {
 	struct gui_notify n;
@@ -181,9 +233,12 @@ static void on_notify(int fd, short revents, void *ud)
 	(void)revents;
 	(void)ud;
 	notify_ack();
-	while (notify_pop(&n))
-		if (v.be->on_notify)
+	while (notify_pop(&n)) {
+		if (n.kind == NOTIFY_SNAPSHOT)
+			snapshot(true);
+		else if (v.be->on_notify)
 			v.be->on_notify(&n);
+	}
 }
 
 static int prepare(void *ud)
@@ -214,15 +269,22 @@ static void close_devices(void)
 
 static int open_devices(void)
 {
-	const struct hal_display_ops *dops = v.pf->display.ops;
 	int i, n = 0;
 
-	if (dops) {
-		v.display = dops->open(v.pf->display.params, v.ml);
-		if (!v.display) {
-			LOGE(TAG, "display \"%s\" did not open", dops->name);
-			return -1;
-		}
+	for (i = 0; i < PLATFORM_MAX_DISPLAYS && !v.display; i++) {
+		const struct hal_display_ops *dops = v.pf->displays[i].ops;
+
+		if (!dops)
+			continue;
+		v.display = dops->open(v.pf->displays[i].params, v.ml);
+		if (!v.display)
+			LOGW(TAG, "display \"%s\" did not open", dops->name);
+		else
+			LOGI(TAG, "display \"%s\"", dops->name);
+	}
+	if (!v.display) {
+		LOGE(TAG, "no display");
+		return -1;
 	}
 	for (i = 0; i < PLATFORM_MAX_INPUTS; i++) {
 		const struct hal_input_ops *iops = v.pf->inputs[i].ops;
@@ -263,7 +325,9 @@ static void *view_thread(void *arg)
 	if (!v.status) {
 		LOGI(TAG, "running, backend \"%s\"", v.be->name);
 		mainloop_run(v.ml);
+		snapshot(false);
 		v.be->deinit();
+		view_video_set(VIDEO_NONE);
 	}
 	close_devices();
 	input_deinit();

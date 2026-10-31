@@ -59,3 +59,15 @@ void view_input_grab(view_grab_cb cb, void *ud);
 void view_input_release(void *ud);
 
 const char *ui_key_name(enum ui_key key);
+
+/*
+ * Video layer under the UI (hardware plane). Screens that show video make
+ * their background transparent and pick a source; only one source runs.
+ */
+enum video_source {
+	VIDEO_NONE,
+	VIDEO_TEST_PATTERN,
+};
+
+bool view_video_available(void);
+int view_video_set(enum video_source src);	/* -1 if there is no video layer */

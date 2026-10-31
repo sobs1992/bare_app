@@ -6,6 +6,7 @@
 #include <linux/input-event-codes.h>
 #include <stddef.h>
 
+#include "drivers/display_drm.h"
 #include "drivers/display_fbdev.h"
 #include "drivers/input_evdev.h"
 #include "drivers/sysfs.h"
@@ -40,8 +41,13 @@ static const char *const oga_compatible[] = {
 const struct platform platform_oga = {
 	.name = "oga",
 	.compatible = oga_compatible,
-	.display = { &display_fbdev, &(const struct fbdev_params){
-		.device = "/dev/fb0", .tty = "/dev/tty1", .rotation = HAL_ROT_AUTO } },
+	.displays = {
+		/* planes: video under the UI; fbdev if DRM is busy or missing */
+		{ &display_drm, &(const struct drm_params){
+			.device = "/dev/dri/card0", .tty = "/dev/tty1", .rotation = HAL_ROT_AUTO } },
+		{ &display_fbdev, &(const struct fbdev_params){
+			.device = "/dev/fb0", .tty = "/dev/tty1", .rotation = HAL_ROT_AUTO } },
+	},
 	.inputs = {
 		{ &input_evdev, &(const struct evdev_params){ .name = "gpio-keys", .keys = oga_keys } },
 		{ &input_evdev, &(const struct evdev_params){

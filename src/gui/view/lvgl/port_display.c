@@ -44,11 +44,13 @@ lv_display_t *port_display_init(struct hal_display *d)
 	disp = lv_display_create(info.width, info.height);
 	if (!disp)
 		return NULL;
-	lv_display_set_color_format(disp, LV_COLOR_FORMAT_XRGB8888);
+	/* with alpha the layers below (video) show through transparent pixels */
+	lv_display_set_color_format(disp, fb->format == HAL_FMT_ARGB8888 ? LV_COLOR_FORMAT_ARGB8888
+									  : LV_COLOR_FORMAT_XRGB8888);
 	lv_display_set_buffers(disp, fb->pixels, NULL, (uint32_t)fb->stride * fb->height,
 			       LV_DISPLAY_RENDER_MODE_DIRECT);
 	lv_display_set_flush_cb(disp, flush);
-	LOGI(TAG, "display %dx%d (rotation %d done by the driver)", info.width, info.height,
-	     info.rotation);
+	LOGI(TAG, "display %dx%d %s (rotation %d done by the driver)", info.width, info.height,
+	     fb->format == HAL_FMT_ARGB8888 ? "ARGB8888" : "XRGB8888", info.rotation);
 	return disp;
 }

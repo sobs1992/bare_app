@@ -36,14 +36,19 @@ add_library(bare_app_core STATIC
 	src/core/uevent.c
 	src/core/util.c
 	src/hal/platform.c
+	src/drivers/blit.c
+	src/drivers/console.c
+	src/drivers/display_drm.c
 	src/drivers/display_fbdev.c
 	src/drivers/display_mem.c
 	src/drivers/input_evdev.c
 	src/drivers/input_script.c
+	src/drivers/shot.c
 	src/drivers/sysfs.c
 	src/platforms/oga.c
 	src/platforms/pc.c
 	src/services/services.c
+	src/media/testpattern.c
 	src/gui/ctx.c
 	src/gui/action.c
 	src/gui/notify.c
@@ -89,6 +94,7 @@ if(BARE_APP_WITH_LVGL)
 		src/gui/view/lvgl/screens/home.c
 		src/gui/view/lvgl/screens/settings.c
 		src/gui/view/lvgl/screens/input_test.c
+		src/gui/view/lvgl/screens/layers.c
 	)
 	target_include_directories(bare_app_view_lvgl PRIVATE ${LVGL_BACKEND_DIR})
 	target_compile_options(bare_app_view_lvgl PRIVATE ${WARN})

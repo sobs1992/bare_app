@@ -62,6 +62,10 @@ static int backend_init(struct hal_display *display, struct mainloop *ml)
 	lv_display_set_theme(disp, lv_theme_default_init(disp, lv_palette_main(LV_PALETTE_BLUE),
 							 lv_palette_main(LV_PALETTE_ORANGE),
 							 true, UI_FONT_SMALL));
+	/* The theme makes the bottom layer opaque. With alpha it has to let the
+	 * video through wherever a screen is transparent. */
+	if (lv_color_format_has_alpha(lv_display_get_color_format(disp)))
+		lv_obj_set_style_bg_opa(lv_display_get_layer_bottom(disp), LV_OPA_TRANSP, 0);
 	lv_style_init(&focus_style);
 	lv_style_set_outline_color(&focus_style, lv_color_white());
 	lv_style_set_outline_width(&focus_style, 3);

@@ -17,6 +17,7 @@ struct entry {
 static const struct entry entries[] = {
 	{ LV_SYMBOL_KEYBOARD, "Input test", ACT_OPEN_SCREEN, SCREEN_INPUT_TEST },
 	{ LV_SYMBOL_SETTINGS, "Settings", ACT_OPEN_SCREEN, SCREEN_SETTINGS },
+	{ LV_SYMBOL_IMAGE, "Layers", ACT_OPEN_SCREEN, SCREEN_LAYERS },
 	{ LV_SYMBOL_POWER, "Quit", ACT_QUIT, 0 },
 };
 
@@ -43,7 +44,7 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 
 	for (i = 0; i < sizeof(entries) / sizeof(entries[0]); i++) {
 		btn = lv_button_create(body);
-		lv_obj_set_size(btn, 280, 56);
+		lv_obj_set_size(btn, 280, 48);
 		ui_focus_style(btn);
 		lv_obj_add_event_cb(btn, on_click, LV_EVENT_CLICKED, (void *)&entries[i]);
 		label = lv_label_create(btn);

@@ -6,7 +6,8 @@
 #   tools/oga.sh run [ARGS]     build, copy to /tmp/bare_app if changed, restart in background
 #   tools/oga.sh stop           stop it and show the end of the log
 #   tools/oga.sh log            whole log (/tmp/bare_app.log)
-#   tools/oga.sh shot FILE.png  screenshot
+#   tools/oga.sh shot FILE.png  screenshot: all layers from the running app (SIGUSR1),
+#                               else /dev/fb0
 #   tools/oga.sh key NAMES...   press buttons (up down left right a b x y l r f1..f6)
 set -e
 
@@ -49,7 +50,15 @@ run)
 	;;
 stop) "$SERIAL" sh "killall bare_app 2>/dev/null; sleep 0.5; tail -n 20 /tmp/bare_app.log" ;;
 log)  "$SERIAL" sh "cat /tmp/bare_app.log" ;;
-shot) "$SERIAL" shot "${1:?file.png}" ;;
+shot)
+	out=${1:?file.png}
+	if "$SERIAL" sh 'kill -USR1 $(pidof bare_app) 2>/dev/null && sleep 0.5' > /dev/null; then
+		"$SERIAL" pull /tmp/bare_app.ppm "$out.ppm"
+		python3 "$APP/tools/ppm2png.py" "$out.ppm" "$out" && rm -f "$out.ppm"
+	else
+		"$SERIAL" shot "$out"
+	fi
+	;;
 key)  "$SERIAL" key --delay 0.3 "$@" ;;
-*)    sed -n '2,12p' "$0"; exit 1 ;;
+*)    sed -n '2,13p' "$0"; exit 1 ;;
 esac

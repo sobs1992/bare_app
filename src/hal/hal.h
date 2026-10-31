@@ -31,11 +31,17 @@ struct hal_rect {
 	int x1, y1, x2, y2;
 };
 
-/* CPU-accessible XRGB8888 buffer in logical orientation */
+enum hal_format {
+	HAL_FMT_XRGB8888,	/* opaque */
+	HAL_FMT_ARGB8888,	/* straight alpha: layers below show through */
+};
+
+/* CPU-accessible buffer in logical orientation */
 struct hal_fb {
 	uint32_t *pixels;
 	int width, height;
 	int stride;		/* bytes per row */
+	enum hal_format format;	/* chosen by the driver for this layer */
 };
 
 struct hal_display_info {
@@ -61,6 +67,8 @@ struct hal_display_ops {
 	void (*layer_damage)(struct hal_layer *l, const struct hal_rect *r);
 	/* Show what was drawn: damaged areas reach the panel (rotated) */
 	void (*layer_submit)(struct hal_layer *l);
+	/* Optional: write the composed layers (logical orientation) as PPM */
+	int (*snapshot)(struct hal_display *d, const char *path);
 };
 
 /* Drivers embed these as the first member of their own structs */

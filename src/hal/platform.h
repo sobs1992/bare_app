@@ -11,6 +11,7 @@
 #include "hal.h"
 
 #define PLATFORM_MAX_INPUTS 4
+#define PLATFORM_MAX_DISPLAYS 2
 
 struct hal_dev {
 	const void *ops;	/* struct hal_*_ops matching the field */
@@ -21,7 +22,8 @@ struct platform {
 	const char *name;
 	/* Device tree "compatible" strings this platform takes; NULL-terminated */
 	const char *const *compatible;
-	struct hal_dev display;			/* hal_display_ops */
+	/* hal_display_ops, tried in order until one opens */
+	struct hal_dev displays[PLATFORM_MAX_DISPLAYS];
 	struct hal_dev inputs[PLATFORM_MAX_INPUTS];	/* hal_input_ops */
 	struct hal_dev power;			/* hal_power_ops, optional */
 	struct hal_dev backlight;		/* hal_backlight_ops, optional */

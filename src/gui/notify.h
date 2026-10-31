@@ -10,6 +10,7 @@
 enum notify_kind {
 	NOTIFY_BATTERY_LOW,	/* value = capacity */
 	NOTIFY_CHARGER,		/* value = 1 connected, 0 disconnected */
+	NOTIFY_SNAPSHOT,	/* debug: write a screenshot (handled by the view core) */
 };
 
 struct gui_notify {

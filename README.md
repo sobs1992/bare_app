@@ -29,11 +29,14 @@ echo "down a wait:500 f6" | BARE_APP_SHOT=shot.ppm ./bare_app -p pc-mem   # сц
 ```sh
 tools/oga.sh run            # собрать, скопировать в /tmp/bare_app (если изменился), запустить
 tools/oga.sh key down a     # нажать кнопки
-tools/oga.sh shot s.png     # снимок экрана
+tools/oga.sh shot s.png     # снимок всех слоёв работающего приложения (SIGUSR1)
 tools/oga.sh stop           # остановить, показать конец лога
 ```
 
 Опции программы: `-p PLATFORM` (без него — по device tree), `-b lvgl|headless`, `-v` — отладочный лог.
+На OGA экран выводится через DRM с аппаратными плоскостями (видео под UI, экран «Layers»),
+если DRM недоступен — через fbdev. Снимок: `kill -USR1 $(pidof bare_app)` → `/tmp/bare_app.ppm`
+(или `BARE_APP_SHOT`).
 Выход: F6 (`quit_combo` платформы), пункт Quit, SIGTERM/SIGINT.
 
 ## Управление

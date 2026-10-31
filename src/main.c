@@ -59,8 +59,13 @@ static void on_signal(int fd, short revents, void *ud)
 	struct signalfd_siginfo si;
 
 	(void)revents;
-	if (read(fd, &si, sizeof(si)) == sizeof(si))
-		LOGI(TAG, "signal %u, quitting", si.ssi_signo);
+	if (read(fd, &si, sizeof(si)) != sizeof(si))
+		return;
+	if (si.ssi_signo == SIGUSR1) {
+		gui_notify_post(NOTIFY_SNAPSHOT, 0);	/* screenshot, see view.c */
+		return;
+	}
+	LOGI(TAG, "signal %u, quitting", si.ssi_signo);
 	mainloop_quit(ud);
 }
 
@@ -122,6 +127,7 @@ int main(int argc, char **argv)
 	sigaddset(&sigs, SIGINT);
 	sigaddset(&sigs, SIGTERM);
 	sigaddset(&sigs, SIGHUP);
+	sigaddset(&sigs, SIGUSR1);
 	pthread_sigmask(SIG_BLOCK, &sigs, NULL);
 	signal(SIGPIPE, SIG_IGN);
 	sfd = signalfd(-1, &sigs, SFD_NONBLOCK | SFD_CLOEXEC);
