@@ -4,8 +4,10 @@
  * core/input as press events with 'repeat' set; LVGL needs a release in
  * between to see a new press.
  *
- * Up/Down move the focus (PREV/NEXT), Left/Right go to the focused widget
- * (sliders, rollers), Accept is ENTER.
+ * Up/Down move the focus (PREV/NEXT), except in a button matrix (the
+ * on-screen keyboard), which takes them like Left/Right; Left/Right go to
+ * the focused widget (sliders, rollers), Accept is ENTER, X is
+ * UI_LV_KEY_ALT for screens that give the focused item a second action.
  */
 #include <string.h>
 
@@ -48,15 +50,20 @@ static void push(uint32_t key, lv_indev_state_t state)
 
 static uint32_t to_lv_key(enum ui_key key)
 {
+	lv_group_t *g = lv_indev_get_group(pi.indev);
+	lv_obj_t *f = g ? lv_group_get_focused(g) : NULL;
+	bool grid = f && lv_obj_has_class(f, &lv_buttonmatrix_class);
+
 	switch (key) {
-	case UI_KEY_UP:     return LV_KEY_PREV;
-	case UI_KEY_DOWN:   return LV_KEY_NEXT;
+	case UI_KEY_UP:     return grid ? LV_KEY_UP : LV_KEY_PREV;
+	case UI_KEY_DOWN:   return grid ? LV_KEY_DOWN : LV_KEY_NEXT;
 	case UI_KEY_LEFT:   return LV_KEY_LEFT;
 	case UI_KEY_RIGHT:  return LV_KEY_RIGHT;
 	case UI_KEY_ACCEPT: return LV_KEY_ENTER;
 	case UI_KEY_BACK:   return LV_KEY_ESC;
 	case UI_KEY_PREV:   return LV_KEY_PREV;
 	case UI_KEY_NEXT:   return LV_KEY_NEXT;
+	case UI_KEY_ALT:    return UI_LV_KEY_ALT;
 	default:            return 0;
 	}
 }

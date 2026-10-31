@@ -11,6 +11,10 @@ enum notify_kind {
 	NOTIFY_BATTERY_LOW,	/* value = capacity */
 	NOTIFY_CHARGER,		/* value = 1 connected, 0 disconnected */
 	NOTIFY_SNAPSHOT,	/* debug: write a screenshot (handled by the view core) */
+	NOTIFY_VOLUME,		/* value = percent, after a volume key */
+	NOTIFY_WIFI_CONNECTED,	/* to the network the user picked */
+	NOTIFY_WIFI_WRONG_KEY,
+	NOTIFY_WIFI_FAILED,	/* the connection could not be started */
 };
 
 struct gui_notify {

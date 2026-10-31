@@ -19,14 +19,7 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_QUIT]            = { "Quit" RU("Выход") },
 	[S_BRIGHTNESS]      = { "Brightness" RU("Яркость") },
 	[S_NOT_AVAILABLE]   = { "not available" RU("недоступна") },
-	[S_BATTERY]         = { "Battery" RU("Батарея") },
 	[S_CHANGE_BACK]     = { "change    B  back" RU("изменить    B  назад") },
-	[S_UNKNOWN]         = { "unknown" RU("неизвестно") },
-	[S_NONE]            = { "none" RU("нет") },
-	[S_FULL]            = { "full" RU("заряжена") },
-	[S_CHARGING]        = { "charging" RU("заряжается") },
-	[S_DISCHARGING]     = { "discharging" RU("разряжается") },
-	[S_CHARGER_ON]      = { ", charger on" RU(", зарядка подключена") },
 	[S_TWICE_BACK]      = { "B twice: back" RU("B дважды: назад") },
 	[S_LAYERS_VIDEO]    = { "Video layer: test pattern (hardware plane)\n"
 				"UI layer: LVGL with alpha on top\n"
@@ -55,6 +48,37 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 				RU("Doom завершился с ошибкой (код %d), подробности в логе\nB  назад") },
 	[S_DOOM_SIGNAL_FMT] = { "Doom crashed (signal %d)\nB  back"
 				RU("Doom упал (сигнал %d)\nB  назад") },
+	[S_VOLUME]          = { "Volume" RU("Громкость") },
+	[S_OUTPUT]          = { "Output" RU("Вывод звука") },
+	[S_OUT_AUTO]        = { "Auto" RU("Авто") },
+	[S_OUT_SPEAKER]     = { "Speaker" RU("Динамик") },
+	[S_OUT_HEADPHONES]  = { "Headphones" RU("Наушники") },
+	[S_OUT_AUTO_NOW_FMT] = { "Auto: %s" RU("Авто: %s") },
+	[S_NOW_SPEAKER]     = { "speaker" RU("динамик") },
+	[S_NOW_HEADPHONES]  = { "headphones" RU("наушники") },
+	[S_WIFI]            = { "Wi-Fi" },
+	[S_WIFI_OFF]        = { "off" RU("выключен") },
+	[S_WIFI_UNAVAILABLE] = { "not available" RU("недоступен") },
+	[S_WIFI_DISCONNECTED] = { "not connected" RU("не подключён") },
+	[S_WIFI_CONNECTING_FMT] = { "connecting to %s..." RU("подключение к %s...") },
+	[S_WIFI_NO_IP_FMT]  = { "%s, getting an address..." RU("%s, получение адреса...") },
+	[S_WIFI_NO_DAEMON]  = { "Wi-Fi is not available: no adapter, or wpa_supplicant is not running"
+				RU("Wi-Fi недоступен: нет адаптера или не запущен wpa_supplicant") },
+	[S_NETWORKS]        = { "Networks" RU("Сети") },
+	[S_SEARCHING]       = { "searching..." RU("поиск...") },
+	[S_NO_NETWORKS]     = { "No networks found" RU("Сети не найдены") },
+	[S_SAVED]           = { "saved" RU("сохранена") },
+	[S_OPEN]            = { "open" RU("открытая") },
+	[S_WIFI_HINT]       = { "A  connect    X  forget    B  back"
+				RU("A  подключить    X  забыть    B  назад") },
+	[S_WIFI_FORGET_AGAIN_FMT] = { "X again: forget %s" RU("X ещё раз: забыть %s") },
+	[S_WIFI_KEY]        = { "Network key" RU("Ключ сети") },
+	[S_WIFI_KEY_HINT_FMT] = { "X  delete    %s  connect    B  back"
+				  RU("X  стереть    %s  подключить    B  назад") },
+	[S_WIFI_KEY_SHORT]  = { "The key has 8 to 63 characters" RU("В ключе от 8 до 63 символов") },
+	[S_WIFI_JOINED]     = { "Connected" RU("Подключено") },
+	[S_WIFI_WRONG_KEY]  = { "Wrong key" RU("Неверный ключ") },
+	[S_WIFI_FAILED]     = { "Could not connect" RU("Не удалось подключиться") },
 };
 
 static int lang = LANG_EN;

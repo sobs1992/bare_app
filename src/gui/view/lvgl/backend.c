@@ -8,9 +8,16 @@
 
 #define TAG "lvgl"
 #define TOAST_MS 2500
+#define OSD_MS 1500
+#define FOCUS_WIDTH 3
+#define FOCUS_PAD 3
 
 static lv_display_t *disp;
 static lv_style_t focus_style;
+static struct {
+	lv_obj_t *box, *icon, *bar, *value;
+	lv_timer_t *timer;
+} osd;
 
 static uint32_t tick(void)
 {
@@ -43,9 +50,99 @@ void ui_toast(const char *text)
 	lv_timer_set_repeat_count(t, 1);
 }
 
-void ui_focus_style(lv_obj_t *obj)
+static void osd_done(lv_timer_t *t)
 {
+	(void)t;
+	lv_obj_delete(osd.box);
+	memset(&osd, 0, sizeof(osd));	/* the one-shot timer deletes itself */
+}
+
+void ui_volume_osd(int percent)
+{
+	if (!osd.box) {
+		osd.box = lv_obj_create(lv_layer_top());
+		lv_obj_remove_style_all(osd.box);
+		lv_obj_set_size(osd.box, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+		lv_obj_set_style_bg_opa(osd.box, LV_OPA_90, 0);
+		lv_obj_set_style_bg_color(osd.box, lv_color_hex(0x30343c), 0);
+		lv_obj_set_style_radius(osd.box, 8, 0);
+		lv_obj_set_style_pad_all(osd.box, 10, 0);
+		lv_obj_set_style_pad_column(osd.box, 12, 0);
+		lv_obj_set_flex_flow(osd.box, LV_FLEX_FLOW_ROW);
+		lv_obj_set_flex_align(osd.box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+				      LV_FLEX_ALIGN_CENTER);
+		osd.icon = lv_label_create(osd.box);
+		lv_obj_set_style_text_font(osd.icon, UI_FONT_MID, 0);
+		osd.bar = lv_bar_create(osd.box);
+		lv_obj_set_size(osd.bar, 180, 10);
+		osd.value = lv_label_create(osd.box);
+		lv_obj_set_style_text_font(osd.value, UI_FONT_MID, 0);
+		lv_obj_set_width(osd.value, 56);
+		lv_obj_align(osd.box, LV_ALIGN_TOP_MID, 0, UI_STATUSBAR_H + 8);
+		osd.timer = lv_timer_create(osd_done, OSD_MS, NULL);
+		lv_timer_set_repeat_count(osd.timer, 1);
+	} else {
+		lv_timer_reset(osd.timer);
+	}
+	lv_label_set_text(osd.icon, percent == 0 ? LV_SYMBOL_MUTE :
+				    percent < 50 ? LV_SYMBOL_VOLUME_MID : LV_SYMBOL_VOLUME_MAX);
+	lv_bar_set_value(osd.bar, percent, LV_ANIM_OFF);
+	lv_label_set_text_fmt(osd.value, "%d%%", percent);
+}
+
+/*
+ * A slider's knob is centred on the end of the track and sticks out by its
+ * radius sideways, but only by its padding up and down. An outline has one
+ * distance for all sides, so sliders draw their frame themselves: wide
+ * enough for the knob, as low as a button's.
+ */
+static struct ui_frame slider_frame(lv_obj_t *obj)
+{
+	int32_t knob = lv_obj_get_style_pad_top(obj, LV_PART_KNOB);
+
+	return (struct ui_frame){
+		.hor = lv_obj_get_style_height(obj, LV_PART_MAIN) / 2 + knob + FOCUS_PAD + FOCUS_WIDTH,
+		.ver = knob + FOCUS_PAD + FOCUS_WIDTH,
+	};
+}
+
+static void on_slider_draw(lv_event_t *e)
+{
+	lv_obj_t *obj = lv_event_get_current_target(e);
+	struct ui_frame f = slider_frame(obj);
+	lv_draw_rect_dsc_t dsc;
+	lv_area_t a;
+
+	if (lv_event_get_code(e) == LV_EVENT_REFR_EXT_DRAW_SIZE) {
+		lv_event_set_ext_draw_size(e, LV_MAX(f.hor, f.ver));
+		return;
+	}
+	if (!lv_obj_has_state(obj, LV_STATE_FOCUS_KEY))
+		return;
+	lv_obj_get_coords(obj, &a);
+	a.x1 -= f.hor;
+	a.x2 += f.hor;
+	a.y1 -= f.ver;
+	a.y2 += f.ver;
+	lv_draw_rect_dsc_init(&dsc);
+	dsc.bg_opa = LV_OPA_TRANSP;
+	dsc.border_color = lv_color_white();
+	dsc.border_width = FOCUS_WIDTH;
+	dsc.radius = LV_RADIUS_CIRCLE;
+	lv_draw_rect(lv_event_get_layer(e), &dsc, &a);
+}
+
+struct ui_frame ui_focus_style(lv_obj_t *obj)
+{
+	if (lv_obj_has_class(obj, &lv_slider_class)) {
+		lv_obj_set_style_outline_width(obj, 0, LV_STATE_FOCUS_KEY);	/* the theme's */
+		lv_obj_add_event_cb(obj, on_slider_draw, LV_EVENT_DRAW_POST, NULL);
+		lv_obj_add_event_cb(obj, on_slider_draw, LV_EVENT_REFR_EXT_DRAW_SIZE, NULL);
+		lv_obj_refresh_ext_draw_size(obj);
+		return slider_frame(obj);
+	}
 	lv_obj_add_style(obj, &focus_style, LV_STATE_FOCUS_KEY);
+	return (struct ui_frame){ FOCUS_PAD + FOCUS_WIDTH, FOCUS_PAD + FOCUS_WIDTH };
 }
 
 static int backend_init(struct hal_display *display, struct mainloop *ml)
@@ -70,8 +167,8 @@ static int backend_init(struct hal_display *display, struct mainloop *ml)
 		lv_obj_set_style_bg_opa(lv_display_get_layer_bottom(disp), LV_OPA_TRANSP, 0);
 	lv_style_init(&focus_style);
 	lv_style_set_outline_color(&focus_style, lv_color_white());
-	lv_style_set_outline_width(&focus_style, 3);
-	lv_style_set_outline_pad(&focus_style, 3);
+	lv_style_set_outline_width(&focus_style, FOCUS_WIDTH);
+	lv_style_set_outline_pad(&focus_style, FOCUS_PAD);
 	if (port_input_init() || screens_init())
 		return -1;
 	return 0;
@@ -84,7 +181,7 @@ static bool backend_key(enum ui_key key, bool pressed, bool repeat)
 
 static void backend_notify(const struct gui_notify *n)
 {
-	char text[64];
+	char text[96];
 
 	switch (n->kind) {
 	case NOTIFY_BATTERY_LOW:
@@ -97,6 +194,18 @@ static void backend_notify(const struct gui_notify *n)
 			lv_snprintf(text, sizeof(text), LV_SYMBOL_CHARGE "  %s", tr(S_CHARGER_CONNECTED));
 		else
 			lv_snprintf(text, sizeof(text), "%s", tr(S_CHARGER_DISCONNECTED));
+		break;
+	case NOTIFY_VOLUME:
+		ui_volume_osd(n->value);
+		return;
+	case NOTIFY_WIFI_CONNECTED:
+		lv_snprintf(text, sizeof(text), LV_SYMBOL_WIFI "  %s", tr(S_WIFI_JOINED));
+		break;
+	case NOTIFY_WIFI_WRONG_KEY:
+		lv_snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  %s", tr(S_WIFI_WRONG_KEY));
+		break;
+	case NOTIFY_WIFI_FAILED:
+		lv_snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  %s", tr(S_WIFI_FAILED));
 		break;
 	default:
 		return;
@@ -116,6 +225,7 @@ static void backend_deinit(void)
 	screens_deinit();
 	port_input_deinit();
 	lv_deinit();
+	memset(&osd, 0, sizeof(osd));
 	lv_style_reset(&focus_style);
 	disp = NULL;
 }

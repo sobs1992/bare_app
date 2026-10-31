@@ -29,6 +29,13 @@ static void on_ctx(void *self, const struct gui_ctx *c, uint32_t changed)
 		LOGI(TAG, "language: %s", c->settings.lang);
 	if (changed & CTX_SYSTEM)
 		LOGI(TAG, "system: %s on %s", c->system.platform, c->system.model);
+	if (changed & CTX_AUDIO)
+		LOGI(TAG, "audio: %s %d%%, output %d (%s)", c->audio.available ? "yes" : "no",
+		     c->audio.volume, c->audio.output, c->audio.headphones ? "headphones" : "speaker");
+	if (changed & CTX_WIFI)
+		LOGI(TAG, "wifi: %s%s, link %d \"%s\" %s, %d networks%s",
+		     c->wifi.available ? "yes" : "no", c->wifi.enabled ? "" : " (off)", c->wifi.link,
+		     c->wifi.ssid, c->wifi.ip, c->wifi.count, c->wifi.scanning ? ", scanning" : "");
 }
 
 static int headless_init(struct hal_display *display, struct mainloop *ml)

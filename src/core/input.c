@@ -8,6 +8,7 @@
 #include "util.h"
 
 #define DIR_MASK (GP_BIT(GP_UP) | GP_BIT(GP_DOWN) | GP_BIT(GP_LEFT) | GP_BIT(GP_RIGHT))
+#define REPEAT_MASK (DIR_MASK | GP_BIT(GP_VOL_UP) | GP_BIT(GP_VOL_DOWN))
 
 static const char *const names[GP_COUNT] = {
 	[GP_UP] = "up", [GP_DOWN] = "down", [GP_LEFT] = "left", [GP_RIGHT] = "right",
@@ -68,9 +69,9 @@ static void sync_state(void)
 			continue;
 		pressed = want & GP_BIT(b);
 		in.state ^= GP_BIT(b);
-		if (GP_BIT(b) & DIR_MASK) {
+		if (GP_BIT(b) & REPEAT_MASK) {
 			if (pressed) {
-				/* the latest direction repeats */
+				/* the latest direction (or volume key) repeats */
 				stop_repeat();
 				in.repeat_btn = b;
 				in.repeat = mainloop_add_timer(in.ml, in.cfg.repeat_delay_ms,

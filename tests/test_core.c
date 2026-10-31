@@ -11,11 +11,15 @@
 #include "core/mainloop.h"
 #include "core/msgq.h"
 #include "core/uevent.h"
+#include "core/volume.h"
 #include "media/mailbox.h"
 #include "gui/action.h"
 #include "gui/control/control.h"
 #include "gui/ctx.h"
 #include "services/config.h"
+#if defined(CONFIG_WIFI) && defined(CONFIG_PLATFORM_OGA)
+#include "drivers/wifi_wpa.h"
+#endif
 
 static int failures;
 
@@ -283,6 +287,64 @@ static void test_input(void)
 	mainloop_free(ml);
 }
 
+static void test_volume(void)
+{
+	/* rk817 "Master Playback Volume": -95..0 dB in 0.01 dB */
+	int p, db, back;
+
+	CHECK(volume_db_to_percent(-9500, -9500, 0) == 0);
+	CHECK(volume_db_to_percent(0, -9500, 0) == 100);
+	CHECK(volume_percent_to_db(0, -9500, 0) == -9500);
+	CHECK(volume_percent_to_db(100, -9500, 0) == 0);
+	/* half way sounds like half: about -18 dB, nowhere near -47.5 */
+	db = volume_percent_to_db(50, -9500, 0);
+	CHECK(db > -2000 && db < -1600);
+	for (p = 0; p <= 100; p++) {
+		db = volume_percent_to_db(p, -9500, 0);
+		back = volume_db_to_percent(db, -9500, 0);
+		CHECK(back == p);
+		if (p > 0)
+			CHECK(db > volume_percent_to_db(p - 1, -9500, 0));
+	}
+	CHECK(volume_db_to_percent(-500, 0, 0) == 100);	/* no range */
+}
+
+#if defined(CONFIG_WIFI) && defined(CONFIG_PLATFORM_OGA)
+static void test_wpa(void)
+{
+	static const char results[] =
+		"bssid / frequency / signal level / flags / ssid\n"
+		"10:7c:61:80:07:40\t2432\t-48\t[WPA2-PSK-CCMP][WPS][ESS]\t46B\n"
+		"10:7c:61:80:07:41\t2412\t-80\t[WPA2-PSK-CCMP][ESS]\t46B\n"
+		"aa:bb:cc:00:00:01\t2437\t-70\t[ESS]\tCafe \\\"Free\\\"\n"
+		"aa:bb:cc:00:00:02\t2462\t-90\t[RSN-SAE-CCMP][ESS]\t\\xd0\\x94\\xd0\\xbe\\xd0\\xbc\n"
+		"aa:bb:cc:00:00:03\t2462\t-60\t[WPA2-PSK-CCMP][ESS]\t\\x00\\x00\n"
+		"aa:bb:cc:00:00:04\t2462\t-30\t[WEP][ESS]\t\n";
+	static const char saved[] =
+		"network id / ssid / bssid / flags\n"
+		"0\t46B\tany\t[CURRENT]\n"
+		"1\tsobs1992\tany\t\n";
+	struct hal_wifi_net nets[8];
+	char out[40];
+	int n;
+
+	wpa_unescape("a\\\\b\\\"c\\x41\\n", out, sizeof(out));
+	CHECK(!strcmp(out, "a\\b\"cA\n"));
+	wpa_unescape("abcdef", out, 4);
+	CHECK(!strcmp(out, "abc"));
+
+	n = wpa_parse_scan(results, saved, nets, 8);
+	CHECK(n == 3);		/* 46B once, hidden ones dropped */
+	CHECK(!strcmp(nets[0].ssid, "46B") && nets[0].signal == 100 && nets[0].secured &&
+	      nets[0].saved);
+	CHECK(!strcmp(nets[1].ssid, "Cafe \"Free\"") && nets[1].signal == 60 && !nets[1].secured &&
+	      !nets[1].saved);
+	CHECK(!strcmp(nets[2].ssid, "\xd0\x94\xd0\xbe\xd0\xbc") && nets[2].signal == 20 &&
+	      nets[2].secured);
+	CHECK(wpa_parse_scan(results, NULL, nets, 1) == 1);
+}
+#endif
+
 int main(void)
 {
 	test_joystick();
@@ -293,6 +355,10 @@ int main(void)
 	test_config();
 	test_mailbox();
 	test_input();
+	test_volume();
+#if defined(CONFIG_WIFI) && defined(CONFIG_PLATFORM_OGA)
+	test_wpa();
+#endif
 	if (failures) {
 		fprintf(stderr, "%d check(s) failed\n", failures);
 		return 1;

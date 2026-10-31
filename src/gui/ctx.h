@@ -20,6 +20,8 @@ enum screen_id {
 	SCREEN_SETTINGS,
 	SCREEN_LAYERS,
 	SCREEN_DOOM,
+	SCREEN_WIFI,
+	SCREEN_WIFI_KEY,	/* key for the network in wifi.asked */
 	SCREEN_COUNT
 };
 
@@ -29,10 +31,26 @@ enum ctx_section {
 	CTX_NAV		= 1u << 2,
 	CTX_SYSTEM	= 1u << 3,
 	CTX_SETTINGS	= 1u << 4,
+	CTX_AUDIO	= 1u << 5,
+	CTX_WIFI	= 1u << 6,
 	CTX_ALL		= 0xffffffffu,
 };
 
 #define NAV_DEPTH 8
+#define WIFI_SSID_MAX 32
+#define WIFI_MAX_NETS 16
+
+/* Where the sound goes: the setting */
+enum audio_output { AUDIO_OUT_AUTO, AUDIO_OUT_SPEAKER, AUDIO_OUT_HEADPHONES, AUDIO_OUT_COUNT };
+
+enum wifi_link { WIFI_OFF, WIFI_DISCONNECTED, WIFI_CONNECTING, WIFI_CONNECTED };
+
+struct wifi_net {
+	char ssid[WIFI_SSID_MAX + 1];
+	int signal;		/* percent */
+	bool secured;		/* needs a key */
+	bool saved;		/* known: connects without asking */
+};
 
 struct gui_ctx {
 	struct {
@@ -56,6 +74,25 @@ struct gui_ctx {
 	struct {
 		char lang[16];		/* UI language code, "en", "ru"... */
 	} settings;
+	struct {
+		bool available;		/* the platform has a mixer */
+		int volume;		/* percent, -1 unknown */
+		bool can_route;		/* the output can be chosen */
+		enum audio_output output;
+		bool headphones;	/* the sound goes to the headphones now */
+		bool has_jack, jack;	/* plug detection, headphones plugged in */
+	} audio;
+	struct {
+		bool available;		/* the Wi-Fi daemon answers */
+		bool enabled;		/* the setting */
+		enum wifi_link link;
+		char ssid[WIFI_SSID_MAX + 1];	/* connected or connecting to */
+		char ip[16];		/* "" until DHCP gives one */
+		bool scanning;
+		int count;		/* networks in range, connected one first */
+		struct wifi_net nets[WIFI_MAX_NETS];
+		char asked[WIFI_SSID_MAX + 1];	/* the key screen asks for this one */
+	} wifi;
 };
 
 int ctx_init(void);

@@ -25,6 +25,7 @@ enum ui_key {
 	UI_KEY_BACK,		/* B */
 	UI_KEY_PREV, UI_KEY_NEXT,	/* L1 / R1 */
 	UI_KEY_MENU,		/* Start */
+	UI_KEY_ALT,		/* X: second action on the focused item */
 	UI_KEY_COUNT
 };
 

@@ -22,9 +22,10 @@ struct doom;
 /* IWAD: $BARE_APP_DOOM_WAD or CONFIG_GAME_DOOM_WAD */
 const char *doom_wad(void);
 
-/* Start the game for a width x height video layer; NULL with errno set
- * (ENOENT: no IWAD or no bare_app_doom) */
-struct doom *doom_start(int width, int height);
+/* Start the game for a width x height video layer, with sound on the ALSA
+ * PCM device pcm (NULL: silent); NULL with errno set (ENOENT: no IWAD or
+ * no bare_app_doom) */
+struct doom *doom_start(int width, int height, const char *pcm);
 /* Readable when a frame is published or the game has ended */
 int doom_fd(struct doom *d);
 /* After doom_fd() was readable: the newest frame or NULL; *ended is set

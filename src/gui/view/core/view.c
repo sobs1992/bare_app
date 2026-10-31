@@ -18,6 +18,7 @@
 
 #define TAG "view"
 #define MAX_SUBS 128
+#define VOLUME_KEY_STEP 5	/* percent */
 
 struct vsub {
 	int id;			/* 0: free */
@@ -131,6 +132,7 @@ static int button_to_key(enum gp_button b)
 	case GP_L1:    return UI_KEY_PREV;
 	case GP_R1:    return UI_KEY_NEXT;
 	case GP_START: return UI_KEY_MENU;
+	case GP_X:     return UI_KEY_ALT;
 	default:       return -1;
 	}
 }
@@ -149,6 +151,10 @@ static void on_gamepad(const struct gp_event *ev, void *ud)
 			gui_action_post(ACT_QUIT, 0);
 			return;
 		}
+		/* volume keys work everywhere, also in a game that grabbed the gamepad */
+		if (ev->pressed && (ev->code == GP_VOL_UP || ev->code == GP_VOL_DOWN))
+			gui_action_post(ACT_VOLUME_STEP, ev->code == GP_VOL_UP ? VOLUME_KEY_STEP
+									 : -VOLUME_KEY_STEP);
 	}
 	if (v.grab) {
 		v.grab(ev, v.grab_ud);
@@ -167,7 +173,7 @@ static void on_gamepad(const struct gp_event *ev, void *ud)
 const char *ui_key_name(enum ui_key key)
 {
 	static const char *const names[UI_KEY_COUNT] = {
-		"up", "down", "left", "right", "accept", "back", "prev", "next", "menu",
+		"up", "down", "left", "right", "accept", "back", "prev", "next", "menu", "alt",
 	};
 
 	return key < UI_KEY_COUNT ? names[key] : "?";
@@ -340,7 +346,7 @@ int view_video_set(enum video_source src)
 #ifdef CONFIG_GAME_DOOM
 	case VIDEO_DOOM:
 		fb = hal_layer_acquire(l);
-		v.video_doom = doom_start(fb->width, fb->height);
+		v.video_doom = doom_start(fb->width, fb->height, v.pf->game_pcm);
 		if (!v.video_doom)
 			return -1;
 		mainloop_add_fd(v.ml, doom_fd(v.video_doom), POLLIN, on_doom, NULL);

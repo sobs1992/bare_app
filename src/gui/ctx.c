@@ -16,6 +16,7 @@ int ctx_init(void)
 {
 	memset(&cx.live, 0, sizeof(cx.live));
 	cx.live.power.capacity = -1;
+	cx.live.audio.volume = -1;
 	cx.live.nav.stack[0] = SCREEN_HOME;
 	cx.live.nav.depth = 1;
 	cx.dirty = CTX_ALL;	/* the first snapshot sees everything */

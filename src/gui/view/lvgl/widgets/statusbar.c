@@ -1,12 +1,13 @@
-/* Status bar: screen title on the left, battery on the right (CTX_POWER). */
+/* Status bar: screen title on the left, Wi-Fi (CTX_WIFI) and battery (CTX_POWER) on the right. */
 #include <stdlib.h>
 
 #include "../widget.h"
 
 struct statusbar {
-	lv_obj_t *title, *battery;
+	lv_obj_t *title, *wifi, *battery;
 	int shown_cap;
 	int shown_flags;	/* bit 0 charging, 1 online, 2 available, -1 nothing yet */
+	int shown_link;		/* enum wifi_link, -1 nothing yet */
 };
 
 static const char *battery_symbol(int cap)
@@ -25,11 +26,12 @@ static const char *battery_symbol(int cap)
 static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 {
 	struct statusbar *s = calloc(1, sizeof(*s));
-	lv_obj_t *bar;
+	lv_obj_t *bar, *right;
 
 	if (!s)
 		return NULL;
 	s->shown_flags = -1;
+	s->shown_link = -1;
 	bar = lv_obj_create(parent);
 	lv_obj_remove_style_all(bar);
 	lv_obj_set_size(bar, LV_PCT(100), UI_STATUSBAR_H);
@@ -43,13 +45,36 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_align(s->title, LV_ALIGN_LEFT_MID, 0, 0);
 	lv_label_set_text(s->title, "");
 
-	s->battery = lv_label_create(bar);
+	right = lv_obj_create(bar);
+	lv_obj_remove_style_all(right);
+	lv_obj_set_size(right, LV_SIZE_CONTENT, LV_PCT(100));
+	lv_obj_align(right, LV_ALIGN_RIGHT_MID, 0, 0);
+	lv_obj_set_flex_flow(right, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(right, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_style_pad_column(right, 14, 0);
+	s->wifi = lv_label_create(right);
+	lv_obj_set_style_text_font(s->wifi, UI_FONT_MID, 0);
+	lv_label_set_text(s->wifi, LV_SYMBOL_WIFI);
+	lv_obj_set_hidden(s->wifi, true);
+	s->battery = lv_label_create(right);
 	lv_obj_set_style_text_font(s->battery, UI_FONT_MID, 0);
-	lv_obj_align(s->battery, LV_ALIGN_RIGHT_MID, 0, 0);
 	lv_label_set_text(s->battery, "");
 
 	*root = bar;
 	return s;
+}
+
+/* Connected: white; joining or waiting for an address: dim; otherwise none */
+static void update_wifi(struct statusbar *s, const struct gui_ctx *c)
+{
+	int link = c->wifi.link == WIFI_CONNECTED && !c->wifi.ip[0] ? WIFI_CONNECTING : c->wifi.link;
+
+	if (link == s->shown_link)
+		return;
+	s->shown_link = link;
+	lv_obj_set_hidden(s->wifi, link < WIFI_CONNECTING);
+	lv_obj_set_style_text_color(s->wifi, link == WIFI_CONNECTED ? lv_color_white() : UI_COLOR_DIM,
+				    0);
 }
 
 static void statusbar_update(void *self, const struct gui_ctx *c, uint32_t changed)
@@ -57,8 +82,9 @@ static void statusbar_update(void *self, const struct gui_ctx *c, uint32_t chang
 	struct statusbar *s = self;
 	int flags = c->power.charging | c->power.online << 1 | c->power.available << 2;
 
-	(void)changed;
-	if (flags == s->shown_flags && c->power.capacity == s->shown_cap)
+	if (changed & CTX_WIFI)
+		update_wifi(s, c);
+	if (!(changed & CTX_POWER) || (flags == s->shown_flags && c->power.capacity == s->shown_cap))
 		return;
 	s->shown_flags = flags;
 	s->shown_cap = c->power.capacity;
@@ -80,7 +106,7 @@ static void statusbar_deinit(void *self)
 
 const struct widget_ops statusbar_widget = {
 	.name = "statusbar",
-	.deps = CTX_POWER,
+	.deps = CTX_POWER | CTX_WIFI,
 	.init = statusbar_init,
 	.update = statusbar_update,
 	.deinit = statusbar_deinit,

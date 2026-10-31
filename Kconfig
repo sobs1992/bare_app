@@ -92,12 +92,40 @@ config BACKLIGHT
 	bool "Backlight control (sysfs)"
 	default y
 
+config AUDIO
+	bool "Volume and audio output (ALSA mixer)"
+	default y
+	help
+	  Volume, speaker or headphones (by hand or following the plug),
+	  the volume keys. Talks to /dev/snd/controlC* directly: no
+	  alsa-lib needed. Simulated on the PC.
+
+config SOUND_FEEDBACK
+	bool "Click when the volume changes"
+	depends on AUDIO
+	default y
+	help
+	  A short tone at the new level, played on the platform's PCM
+	  device (raw ALSA ioctls). The device is released a second after
+	  the click, so a game can take it.
+
+config WIFI
+	bool "Wi-Fi through wpa_supplicant"
+	default y
+	help
+	  On/off, the networks in range, connecting with a key typed on
+	  the on-screen keyboard, forgetting saved networks. Uses the
+	  control socket of a running wpa_supplicant (no libwpa_client);
+	  the networks are saved in its config file, which needs
+	  update_config=1. Getting an address is left to the system's
+	  DHCP client. Simulated on the PC.
+
 config SETTINGS_FILE
 	bool "Keep settings between runs"
 	default y
 	help
-	  Brightness and language in the platform's settings file
-	  (/etc/bare_app.conf on the OGA).
+	  Brightness, volume, audio output, Wi-Fi on/off and language in
+	  the platform's settings file (/etc/bare_app.conf on the OGA).
 
 endmenu
 
@@ -120,8 +148,15 @@ config SCREEN_INPUT_TEST
 	default y
 
 config SCREEN_SETTINGS
-	bool "Settings screen (brightness, language)"
+	bool "Settings screen (brightness, sound, language, Wi-Fi status)"
 	default y
+
+config SCREEN_WIFI
+	bool "Wi-Fi screens (networks, key entry)"
+	depends on WIFI && SCREEN_SETTINGS
+	default y
+	help
+	  Opened from the settings screen.
 
 config SCREEN_LAYERS
 	bool "Layers screen (UI over the video layer)"
@@ -159,8 +194,8 @@ config GAME_DOOM
 	  which starts it for each game and talks to it over a socket and
 	  shared memory: no GPL code goes into bare_app itself. Needs the
 	  ports/doom/doomgeneric submodule. It draws into the video layer,
-	  so it needs DRM on the device (pc-mem on the PC). No sound, no
-	  network.
+	  so it needs DRM on the device (pc-mem on the PC). Sound effects
+	  go to the platform's ALSA device; no music, no network.
 
 if GAME_DOOM
 

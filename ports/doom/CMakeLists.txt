@@ -21,19 +21,22 @@ set(DOOM_FILES am_map d_event d_items d_iwad d_loop d_main d_mode d_net doomdef
 list(TRANSFORM DOOM_FILES PREPEND ${DOOM_DIR}/)
 list(TRANSFORM DOOM_FILES APPEND .c)
 
-add_executable(bare_app_doom doom_main.c ${DOOM_FILES})
+add_executable(bare_app_doom doom_main.c doom_sound.c ${DOOM_FILES})
 # next to bare_app: that is where it looks for the game
 set_target_properties(bare_app_doom PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
 # 320x200: the game scales into the video layer itself
+# FEATURE_SOUND: sound effects through doom_sound.c (ALSA, no SDL)
 target_compile_definitions(bare_app_doom PRIVATE NORMALUNIX LINUX _DEFAULT_SOURCE
-	DOOMGENERIC_RESX=320 DOOMGENERIC_RESY=200)
+	DOOMGENERIC_RESX=320 DOOMGENERIC_RESY=200 FEATURE_SOUND)
 # bare_app's src/ only for the exchange: games/doom_ipc.h, core/input.h (headers)
 target_include_directories(bare_app_doom PRIVATE ${DOOM_DIR} ${PROJECT_SOURCE_DIR}/src)
+# an empty SDL_mixer.h for i_sound.c
+target_include_directories(bare_app_doom PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # 1990s code: no warnings, and what newer compilers made errors is accepted
 set_source_files_properties(${DOOM_FILES} PROPERTIES COMPILE_OPTIONS "-w;-fpermissive")
-set_source_files_properties(doom_main.c PROPERTIES COMPILE_OPTIONS
+set_source_files_properties(doom_main.c doom_sound.c PROPERTIES COMPILE_OPTIONS
 	"-Wall;-Wextra;-Wno-unused-parameter")
 target_compile_options(bare_app_doom PRIVATE -fno-strict-aliasing)
 target_link_options(bare_app_doom PRIVATE -Wl,--gc-sections)
-target_link_libraries(bare_app_doom PRIVATE m)
+target_link_libraries(bare_app_doom PRIVATE m Threads::Threads)
 install(TARGETS bare_app_doom RUNTIME DESTINATION bin)

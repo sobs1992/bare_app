@@ -11,6 +11,10 @@ struct mainloop;
 
 enum ev_type {
 	EV_POWER_CHANGED,	/* u.power */
+	EV_MIXER_CHANGED,	/* u.mixer */
+	EV_WIFI_STATUS,		/* u.wifi */
+	EV_WIFI_SCAN,		/* new results for wifi_networks() */
+	EV_WIFI_WRONG_KEY,	/* a network refused the key */
 	EV_COUNT
 };
 
@@ -18,6 +22,12 @@ struct ev {
 	enum ev_type type;
 	union {
 		struct hal_power_state power;
+		struct hal_mixer_state mixer;
+		struct {
+			bool available;		/* the daemon answers */
+			bool enabled;		/* wifi_set_enabled() */
+			struct hal_wifi_status st;	/* link HAL_WIFI_DOWN when off */
+		} wifi;
 	} u;
 };
 

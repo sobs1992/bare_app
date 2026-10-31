@@ -11,6 +11,7 @@
 
 #include "drivers/display_mem.h"
 #include "drivers/input_script.h"
+#include "drivers/sim.h"
 #include "hal/platform.h"
 
 #ifdef CONFIG_DISPLAY_SDL
@@ -39,6 +40,12 @@ const struct platform platform_pc = {
 #endif
 		{ &input_script, &script_params },
 	},
+#ifdef CONFIG_AUDIO
+	.mixer = { &mixer_sim, NULL },
+#endif
+#ifdef CONFIG_WIFI
+	.wifi = { &wifi_sim, NULL },
+#endif
 	.quit_combo = GP_BIT(GP_F6),
 	.config_path = "~/.config/bare_app.conf",
 };
@@ -50,5 +57,11 @@ const struct platform platform_pc_mem = {
 	.inputs = {
 		{ &input_script, &script_params },
 	},
+#ifdef CONFIG_AUDIO
+	.mixer = { &mixer_sim, NULL },
+#endif
+#ifdef CONFIG_WIFI
+	.wifi = { &wifi_sim, NULL },
+#endif
 	.quit_combo = GP_BIT(GP_F6),
 };

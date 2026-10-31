@@ -40,9 +40,12 @@ set(CORE_SOURCES
 	src/core/mainloop.c
 	src/core/msgq.c
 	src/core/util.c
+	src/core/volume.c
 	src/hal/platform.c
 	src/services/config.c
 	src/services/services.c
+	src/services/wifi.c
+	src/services/sound.c
 	src/gui/ctx.c
 	src/gui/action.c
 	src/gui/notify.c
@@ -50,6 +53,8 @@ set(CORE_SOURCES
 	src/gui/control/ctl_basic.c
 	src/gui/control/ctl_display.c
 	src/gui/control/ctl_power.c
+	src/gui/control/ctl_audio.c
+	src/gui/control/ctl_wifi.c
 	src/gui/view/core/i18n.c
 	src/gui/view/core/view.c
 )
@@ -68,6 +73,14 @@ add_if(CONFIG_INPUT_EVDEV       src/drivers/input_evdev.c)
 add_if(CONFIG_INPUT_SCRIPT      src/drivers/input_script.c)
 add_if(CONFIG_POWER             src/drivers/sysfs.c)
 add_if(CONFIG_BACKLIGHT         src/drivers/sysfs.c)
+if(CONFIG_PLATFORM_OGA)
+	add_if(CONFIG_AUDIO     src/drivers/mixer_alsa.c)
+	add_if(CONFIG_SOUND_FEEDBACK src/drivers/pcm_alsa.c)
+	add_if(CONFIG_WIFI      src/drivers/wifi_wpa.c)
+endif()
+if(CONFIG_PLATFORM_PC AND (CONFIG_AUDIO OR CONFIG_WIFI))
+	list(APPEND CORE_SOURCES src/drivers/sim.c)
+endif()
 add_if(CONFIG_VIDEO_TESTPATTERN src/media/mailbox.c src/media/testpattern.c)
 add_if(CONFIG_SNAPSHOT          src/drivers/shot.c)
 add_if(CONFIG_VIEW_HEADLESS     src/gui/view/headless/headless.c)
@@ -88,7 +101,7 @@ target_include_directories(bare_app_core PUBLIC src)
 # CONFIG_* of the Kconfig in every bare_app source (not in LVGL)
 target_compile_options(bare_app_core PUBLIC "SHELL:-include ${KCONFIG_HEADER}")
 target_compile_options(bare_app_core PRIVATE ${WARN})
-target_link_libraries(bare_app_core PUBLIC Threads::Threads)
+target_link_libraries(bare_app_core PUBLIC Threads::Threads m)
 if(CONFIG_DISPLAY_SDL)
 	target_link_libraries(bare_app_core PUBLIC PkgConfig::SDL2)
 endif()
@@ -133,6 +146,10 @@ if(CONFIG_VIEW_LVGL)
 	endif()
 	if(CONFIG_GAME_DOOM)
 		list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/doom.c)
+	endif()
+	if(CONFIG_SCREEN_WIFI)
+		list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/wifi.c
+					 src/gui/view/lvgl/screens/wifi_key.c)
 	endif()
 	add_library(bare_app_view_lvgl STATIC ${LVGL_SOURCES})
 	target_include_directories(bare_app_view_lvgl PRIVATE ${LVGL_BACKEND_DIR})

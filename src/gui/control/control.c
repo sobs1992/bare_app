@@ -1,6 +1,7 @@
 #include "control.h"
 
 #include <poll.h>
+#include <string.h>
 
 #include "core/log.h"
 #include "core/mainloop.h"
@@ -9,7 +10,8 @@
 #define TAG "control"
 
 static const struct control_ops *const modules[] = {
-	&ctl_app, &ctl_nav, &ctl_system, &ctl_settings, &ctl_power, &ctl_display,
+	&ctl_app, &ctl_nav, &ctl_system, &ctl_settings, &ctl_power, &ctl_display, &ctl_audio,
+	&ctl_wifi,
 };
 
 static struct mainloop *loop;
@@ -29,6 +31,7 @@ static void on_actions(int fd, short revents, void *ud)
 			if (modules[i]->on_action)
 				modules[i]->on_action(&a);
 	}
+	memset(&a, 0, sizeof(a));	/* may hold a Wi-Fi key */
 }
 
 int control_start(const struct control_env *env)

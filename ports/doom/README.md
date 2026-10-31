@@ -1,6 +1,8 @@
 # ports/doom — Doom для bare_app (GPLv2)
 
-Единственная часть репозитория под GPL: `doom_main.c` (платформенный слой) и сабмодуль
+Единственная часть репозитория под GPL: `doom_main.c` (платформенный слой),
+`doom_sound.c` (звуковые эффекты: микширование в своём потоке и вывод в ALSA через ioctl,
+без SDL; музыки нет), `include/SDL_mixer.h` (пустая заглушка для `i_sound.c`) и сабмодуль
 `doomgeneric` (движок, [ozkl/doomgeneric](https://github.com/ozkl/doomgeneric)). Лицензия —
 [LICENSE](LICENSE) (GNU GPL v2).
 

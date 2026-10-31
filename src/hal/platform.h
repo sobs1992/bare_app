@@ -27,6 +27,11 @@ struct platform {
 	struct hal_dev inputs[PLATFORM_MAX_INPUTS];	/* hal_input_ops */
 	struct hal_dev power;			/* hal_power_ops, optional */
 	struct hal_dev backlight;		/* hal_backlight_ops, optional */
+	struct hal_dev mixer;			/* hal_mixer_ops, optional */
+	struct hal_dev pcm;			/* hal_pcm_ops, optional: interface sounds */
+	/* ALSA PCM device games play to (bare_app_doom -pcm), NULL: games are silent */
+	const char *game_pcm;
+	struct hal_dev wifi;			/* hal_wifi_ops, optional */
 	/* GP_BIT() mask: pressing all of them quits the application */
 	uint32_t quit_combo;
 	/* settings file ("~/" = $HOME), NULL: nothing is kept between runs */

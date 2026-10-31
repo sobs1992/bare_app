@@ -144,3 +144,89 @@ struct hal_backlight_ops {
 	int (*set)(void *h, int percent);
 	void (*close)(void *h);
 };
+
+/* ---- audio mixer ------------------------------------------------------ */
+
+enum hal_audio_route { HAL_ROUTE_SPEAKER, HAL_ROUTE_HEADPHONES };
+
+struct hal_mixer_state {
+	int volume;		/* percent, -1 unknown */
+	bool has_route;		/* the output can be switched */
+	enum hal_audio_route route;
+	bool has_jack;		/* a headphone plug is detected */
+	bool jack;		/* headphones are plugged in */
+};
+
+struct hal_mixer_ops {
+	const char *name;
+	void *(*open)(const void *params);
+	/* readable when something changed the mixer (the jack, another program) */
+	int (*fd)(void *h);
+	/* takes pending change events too */
+	int (*read)(void *h, struct hal_mixer_state *st);
+	int (*set_volume)(void *h, int percent);
+	int (*set_route)(void *h, enum hal_audio_route route);
+	void (*close)(void *h);
+};
+
+/* ---- sound output ----------------------------------------------------- */
+
+struct hal_pcm_ops {
+	const char *name;
+	/* 16-bit stereo; *rate is a wish, the driver puts what it took there */
+	void *(*open)(const void *params, int *rate);
+	int (*write)(void *h, const int16_t *frames, int count);	/* blocks */
+	void (*drain)(void *h);		/* returns when all is played */
+	void (*close)(void *h);
+};
+
+/* ---- Wi-Fi ------------------------------------------------------------ */
+
+#define HAL_SSID_MAX 32		/* bytes, without the terminating NUL */
+#define HAL_WIFI_KEY_MAX 63	/* WPA passphrase */
+
+enum hal_wifi_link {
+	HAL_WIFI_DOWN,		/* switched off, or no interface */
+	HAL_WIFI_DISCONNECTED,	/* includes scanning */
+	HAL_WIFI_CONNECTING,	/* authentication, association, handshake */
+	HAL_WIFI_CONNECTED,
+};
+
+struct hal_wifi_status {
+	enum hal_wifi_link link;
+	char ssid[HAL_SSID_MAX + 1];
+	char ip[16];		/* IPv4, "" until DHCP gives one */
+};
+
+struct hal_wifi_net {
+	char ssid[HAL_SSID_MAX + 1];
+	int signal;		/* percent */
+	bool secured;		/* needs a key */
+	bool saved;		/* known: connects without asking */
+};
+
+/* What process() saw */
+enum hal_wifi_event {
+	HAL_WIFI_EV_STATUS	= 1u << 0,	/* read the status again */
+	HAL_WIFI_EV_SCAN	= 1u << 1,	/* new scan results */
+	HAL_WIFI_EV_WRONG_KEY	= 1u << 2,	/* the network refused the key */
+	HAL_WIFI_EV_LOST	= 1u << 3,	/* the daemon went away: close, open later */
+};
+
+struct hal_wifi_ops {
+	const char *name;
+	/* NULL when the interface or its daemon is not there (yet) */
+	void *(*open)(const void *params);
+	int (*fd)(void *h);			/* readable: call process() */
+	uint32_t (*process)(void *h);		/* hal_wifi_event mask */
+	int (*status)(void *h, struct hal_wifi_status *st);
+	/* Results come later with HAL_WIFI_EV_SCAN */
+	int (*scan)(void *h);
+	/* Last scan, one entry per network name, strongest first; returns the count */
+	int (*networks)(void *h, struct hal_wifi_net *nets, int max);
+	/* key NULL: an open network or a saved one with its saved key */
+	int (*connect)(void *h, const char *ssid, const char *key);
+	int (*forget)(void *h, const char *ssid);
+	int (*set_enabled)(void *h, bool on);
+	void (*close)(void *h);
+};

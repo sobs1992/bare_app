@@ -24,6 +24,10 @@ static const struct widget_ops *const screen_ops[SCREEN_COUNT] = {
 #ifdef CONFIG_GAME_DOOM
 	[SCREEN_DOOM] = &doom_screen,
 #endif
+#ifdef CONFIG_SCREEN_WIFI
+	[SCREEN_WIFI] = &wifi_screen,
+	[SCREEN_WIFI_KEY] = &wifi_key_screen,
+#endif
 };
 
 static struct {

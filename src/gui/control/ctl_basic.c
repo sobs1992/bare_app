@@ -99,7 +99,8 @@ static void set_lang(const char *lang)
 {
 	struct gui_ctx *c = ctx_lock();
 
-	snprintf(c->settings.lang, sizeof(c->settings.lang), "%s", lang);
+	snprintf(c->settings.lang, sizeof(c->settings.lang), "%.*s",
+		 (int)sizeof(c->settings.lang) - 1, lang);
 	ctx_unlock(CTX_SETTINGS);
 }
 

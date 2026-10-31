@@ -9,7 +9,10 @@
 #include "drivers/display_drm.h"
 #include "drivers/display_fbdev.h"
 #include "drivers/input_evdev.h"
+#include "drivers/mixer_alsa.h"
+#include "drivers/pcm_alsa.h"
 #include "drivers/sysfs.h"
+#include "drivers/wifi_wpa.h"
 #include "hal/platform.h"
 
 static const struct evdev_key_map oga_keys[] = {
@@ -66,6 +69,22 @@ const struct platform platform_oga = {
 #ifdef CONFIG_BACKLIGHT
 	.backlight = { &backlight_sysfs, &(const struct backlight_sysfs_params){
 		.path = "/sys/class/backlight/backlight", .min_percent = 5 } },
+#endif
+#ifdef CONFIG_AUDIO
+	/* rk817 codec: the output is not switched by the jack, userspace does it */
+	.mixer = { &mixer_alsa, &(const struct mixer_alsa_params){
+		.device = "/dev/snd/controlC0", .volume = "Master Playback Volume",
+		.route = "Playback Mux", .route_speaker = "SPK", .route_headphones = "HP",
+		.jack = "Headphones Jack" } },
+#endif
+#ifdef CONFIG_SOUND_FEEDBACK
+	.pcm = { &pcm_alsa, &(const struct pcm_alsa_params){ .device = "/dev/snd/pcmC0D0p" } },
+#endif
+	.game_pcm = "/dev/snd/pcmC0D0p",
+#ifdef CONFIG_WIFI
+	/* ESP8089 on the Black Edition; rev 1.0 has no wlan0 and never answers */
+	.wifi = { &wifi_wpa, &(const struct wifi_wpa_params){
+		.ctrl = "/var/run/wpa_supplicant/wlan0" } },
 #endif
 	.quit_combo = GP_BIT(GP_F6),
 	.config_path = "/etc/bare_app.conf",

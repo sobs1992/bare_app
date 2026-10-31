@@ -78,9 +78,11 @@ static int game_path(char *buf, size_t size)
 	return snprintf(buf, size, "%s/" GAME, self) < (int)size ? 0 : -1;
 }
 
-static int spawn(struct doom *d, const char *game, const char *dir, int sock, int shm)
+static int spawn(struct doom *d, const char *game, const char *dir, int sock, int shm,
+		 const char *pcm)
 {
-	char *const argv[] = { (char *)GAME, (char *)"-iwad", (char *)doom_wad(), NULL };
+	char *const argv[] = { (char *)GAME, (char *)"-iwad", (char *)doom_wad(),
+			       (char *)(pcm ? "-pcm" : "-nosound"), (char *)pcm, NULL };
 	posix_spawn_file_actions_t fa;
 	posix_spawnattr_t attr;
 	sigset_t none, all;
@@ -105,11 +107,12 @@ static int spawn(struct doom *d, const char *game, const char *dir, int sock, in
 		errno = err;
 		return -1;
 	}
-	LOGI(TAG, "started %s -iwad %s (pid %d, in %s)", game, doom_wad(), (int)d->pid, dir);
+	LOGI(TAG, "started %s -iwad %s, sound %s (pid %d, in %s)", game, doom_wad(),
+	     pcm ? pcm : "off", (int)d->pid, dir);
 	return 0;
 }
 
-struct doom *doom_start(int width, int height)
+struct doom *doom_start(int width, int height, const char *pcm)
 {
 	struct doom *d;
 	char game[PATH_MAX], dir[PATH_MAX];
@@ -152,7 +155,7 @@ struct doom *doom_start(int width, int height)
 	/* above the target numbers, so that dup2() always makes a copy */
 	child_sock = fcntl(sv[1], F_DUPFD_CLOEXEC, 10);
 	child_mem = fcntl(mem, F_DUPFD_CLOEXEC, 10);
-	if (child_sock < 0 || child_mem < 0 || spawn(d, game, dir, child_sock, child_mem) < 0)
+	if (child_sock < 0 || child_mem < 0 || spawn(d, game, dir, child_sock, child_mem, pcm) < 0)
 		goto fail;
 	d->sock = sv[0];
 	close(sv[1]);

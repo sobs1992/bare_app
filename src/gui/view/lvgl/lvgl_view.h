@@ -23,6 +23,9 @@ extern const lv_font_t ui_font_14, ui_font_20;
 #define UI_COLOR_ON   lv_color_hex(0x2f8cff)
 #define UI_COLOR_WARN lv_color_hex(0xff6a3d)
 #define UI_STATUSBAR_H 36
+/* X as an LVGL key (LV_EVENT_KEY on the focused object); beyond Unicode, so
+ * nothing types it */
+#define UI_LV_KEY_ALT 0x110000u
 
 /* port_display.c: LVGL display drawing into the HAL UI layer */
 lv_display_t *port_display_init(struct hal_display *d);
@@ -39,5 +42,12 @@ void screens_deinit(void);
 
 /* backend.c */
 void ui_toast(const char *text);
-/* Clear keypad focus frame; the default theme's outline is hard to see */
-void ui_focus_style(lv_obj_t *obj);
+/* Volume level over everything; repeated calls update the same box */
+void ui_volume_osd(int percent);
+/* How far a focus frame reaches out of its object: keep that much free */
+struct ui_frame {
+	int32_t hor, ver;
+};
+/* Clear keypad focus frame; the default theme's outline is hard to see.
+ * Around a slider it leaves room for the knob. */
+struct ui_frame ui_focus_style(lv_obj_t *obj);
