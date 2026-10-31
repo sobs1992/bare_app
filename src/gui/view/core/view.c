@@ -10,6 +10,7 @@
 #include "core/log.h"
 #include "core/mainloop.h"
 #include "core/util.h"
+#include "games/doom.h"
 #include "gui/action.h"
 #include "hal/platform.h"
 #include "media/mailbox.h"
@@ -43,7 +44,10 @@ static struct {
 	enum video_source video_src;
 	struct mailbox *video_mb;
 	struct testpattern *video_tp;
+	struct doom *video_doom;
 	unsigned video_frames;
+	view_video_end_cb video_end;
+	void *video_end_ud;
 } v;
 
 /* ---- subscriptions ---------------------------------------------------- */
@@ -181,23 +185,18 @@ bool view_video_available(void)
 	return video_layer() != NULL;
 }
 
-#ifdef CONFIG_VIDEO_TESTPATTERN
-/* A new frame from the producer thread: copy it into the video layer */
-static void on_video_frame(int fd, short revents, void *ud)
+#if defined(CONFIG_VIDEO_TESTPATTERN) || defined(CONFIG_GAME_DOOM)
+#define HAVE_VIDEO_SOURCES
+#endif
+
+#ifdef HAVE_VIDEO_SOURCES
+/* Copy a whole frame of a source into the video layer and show it */
+static void video_show(struct hal_layer *l, const struct hal_fb *src)
 {
-	struct hal_layer *l = video_layer();
-	struct hal_fb *src, *dst;
+	struct hal_fb *dst = hal_layer_acquire(l);
 	struct hal_rect all;
 	int y;
 
-	(void)fd;
-	(void)revents;
-	(void)ud;
-	mailbox_ack(v.video_mb);
-	src = mailbox_take(v.video_mb);
-	if (!src || !l)
-		return;
-	dst = hal_layer_acquire(l);
 	for (y = 0; y < dst->height && y < src->height; y++)
 		memcpy((uint8_t *)dst->pixels + (size_t)y * dst->stride,
 		       (uint8_t *)src->pixels + (size_t)y * src->stride,
@@ -208,53 +207,150 @@ static void on_video_frame(int fd, short revents, void *ud)
 	v.video_frames++;
 }
 
-static void video_stop(struct hal_layer *l)
+static void video_clear(struct hal_layer *l)
 {
-	struct hal_fb *fb;
+	struct hal_fb *fb = hal_layer_acquire(l);
 	struct hal_rect all;
 
-	if (!v.video_mb)
-		return;
-	testpattern_stop(v.video_tp);
-	mainloop_remove_fd(v.ml, mailbox_fd(v.video_mb));
-	LOGI(TAG, "video: %u frames shown, %u dropped", v.video_frames, mailbox_dropped(v.video_mb));
-	mailbox_free(v.video_mb);
-	v.video_tp = NULL;
-	v.video_mb = NULL;
-	/* leave the layer black */
-	fb = hal_layer_acquire(l);
 	memset(fb->pixels, 0, (size_t)fb->stride * fb->height);
 	all = (struct hal_rect){ 0, 0, fb->width - 1, fb->height - 1 };
 	hal_layer_damage(l, &all);
 	hal_layer_submit(l);
 }
+#endif
 
-#endif /* CONFIG_VIDEO_TESTPATTERN */
+#ifdef CONFIG_VIDEO_TESTPATTERN
+/* A new frame from the producer thread: copy it into the video layer */
+static void on_video_frame(int fd, short revents, void *ud)
+{
+	struct hal_layer *l = video_layer();
+	struct hal_fb *src;
+
+	(void)fd;
+	(void)revents;
+	(void)ud;
+	mailbox_ack(v.video_mb);
+	src = mailbox_take(v.video_mb);
+	if (src && l)
+		video_show(l, src);
+}
+#endif
+
+#ifdef CONFIG_GAME_DOOM
+/* A frame from the game, or the game has ended */
+static void on_doom(int fd, short revents, void *ud)
+{
+	struct hal_layer *l = video_layer();
+	const struct hal_fb *fb;
+	bool ended;
+	int status;
+
+	(void)revents;
+	(void)ud;
+	fb = doom_frame(v.video_doom, &ended);
+	if (fb && l)
+		video_show(l, fb);
+	if (!ended)
+		return;
+	mainloop_remove_fd(v.ml, fd);
+	status = doom_stop(v.video_doom);
+	v.video_doom = NULL;
+	LOGI(TAG, "video: %u frames shown", v.video_frames);
+	if (l)
+		video_clear(l);
+	v.video_src = VIDEO_NONE;
+	if (v.video_end)
+		v.video_end(status, v.video_end_ud);
+}
+#endif
+
+#ifdef HAVE_VIDEO_SOURCES
+static void video_stop(struct hal_layer *l)
+{
+	if (v.video_src == VIDEO_NONE)
+		return;
+#ifdef CONFIG_VIDEO_TESTPATTERN
+	if (v.video_mb) {
+		testpattern_stop(v.video_tp);
+		mainloop_remove_fd(v.ml, mailbox_fd(v.video_mb));
+		LOGI(TAG, "video: %u frames shown, %u dropped", v.video_frames,
+		     mailbox_dropped(v.video_mb));
+		mailbox_free(v.video_mb);
+		v.video_tp = NULL;
+		v.video_mb = NULL;
+	}
+#endif
+#ifdef CONFIG_GAME_DOOM
+	if (v.video_doom) {
+		mainloop_remove_fd(v.ml, doom_fd(v.video_doom));
+		doom_stop(v.video_doom);
+		v.video_doom = NULL;
+		LOGI(TAG, "video: %u frames shown", v.video_frames);
+	}
+#endif
+	video_clear(l);	/* leave the layer black */
+}
+#endif
+
+void view_video_input(const struct gp_event *ev)
+{
+#ifdef CONFIG_GAME_DOOM
+	if (v.video_doom)
+		doom_input(v.video_doom, ev);
+#else
+	(void)ev;
+#endif
+}
+
+void view_video_on_end(view_video_end_cb cb, void *ud)
+{
+	v.video_end = cb;
+	v.video_end_ud = ud;
+}
 
 int view_video_set(enum video_source src)
 {
 	struct hal_layer *l = video_layer();
+	struct hal_fb *fb;
 
-	if (!l)
+	if (!l) {
+		errno = ENODEV;
 		return src == VIDEO_NONE ? 0 : -1;
+	}
 	if (src == v.video_src)
 		return 0;
-#ifndef CONFIG_VIDEO_TESTPATTERN
-	if (src != VIDEO_NONE)
-		return -1;	/* not in this build */
-#else
+#ifdef HAVE_VIDEO_SOURCES
 	video_stop(l);
-	if (src == VIDEO_TEST_PATTERN) {
-		struct hal_fb *fb = hal_layer_acquire(l);
-
+#endif
+	v.video_src = VIDEO_NONE;
+	v.video_frames = 0;
+	switch (src) {
+	case VIDEO_NONE:
+		break;
+#ifdef CONFIG_VIDEO_TESTPATTERN
+	case VIDEO_TEST_PATTERN:
+		fb = hal_layer_acquire(l);
 		v.video_mb = mailbox_new(fb->width, fb->height);
 		if (!v.video_mb)
 			return -1;
-		v.video_frames = 0;
 		mainloop_add_fd(v.ml, mailbox_fd(v.video_mb), POLLIN, on_video_frame, NULL);
 		v.video_tp = testpattern_start(v.video_mb, 30);
-	}
+		break;
 #endif
+#ifdef CONFIG_GAME_DOOM
+	case VIDEO_DOOM:
+		fb = hal_layer_acquire(l);
+		v.video_doom = doom_start(fb->width, fb->height);
+		if (!v.video_doom)
+			return -1;
+		mainloop_add_fd(v.ml, doom_fd(v.video_doom), POLLIN, on_doom, NULL);
+		break;
+#endif
+	default:
+		(void)fb;
+		errno = ENOTSUP;	/* not in this build */
+		return -1;
+	}
 	v.video_src = src;
 	LOGI(TAG, "video source %d", src);
 	return 0;

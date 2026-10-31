@@ -2,3 +2,7 @@
 	path = third_party/lvgl
 	url = https://github.com/lvgl/lvgl.git
 	shallow = true
+[submodule "ports/doom/doomgeneric"]
+	path = ports/doom/doomgeneric
+	url = https://github.com/ozkl/doomgeneric.git
+	shallow = true

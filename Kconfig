@@ -148,6 +148,40 @@ config VIDEO_TESTPATTERN
 
 endmenu
 
+menu "Games"
+
+config GAME_DOOM
+	bool "Doom (separate program under GPLv2)"
+	depends on VIEW_LVGL
+	help
+	  "Doom" in the main menu. The game is bare_app_doom, built from
+	  ports/doom (doomgeneric, GPLv2) and installed next to bare_app,
+	  which starts it for each game and talks to it over a socket and
+	  shared memory: no GPL code goes into bare_app itself. Needs the
+	  ports/doom/doomgeneric submodule. It draws into the video layer,
+	  so it needs DRM on the device (pc-mem on the PC). No sound, no
+	  network.
+
+if GAME_DOOM
+
+config GAME_DOOM_WAD
+	string "IWAD file"
+	default "/usr/share/games/doom/doom1.wad"
+	help
+	  The game data: doom1.wad (shareware), doom.wad, doom2.wad...
+	  BARE_APP_DOOM_WAD overrides it at run time. The SDK package
+	  installs the shareware one when asked to.
+
+config GAME_DOOM_DIR
+	string "Directory for Doom's settings and saved games"
+	default "~/.local/share/bare_app/doom"
+	help
+	  "~/" means $HOME. Created when the game starts.
+
+endif
+
+endmenu
+
 menu "Debugging"
 
 config SNAPSHOT

@@ -47,6 +47,16 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_CHARGER_DISCONNECTED] = { "Charger disconnected" RU("Зарядка отключена") },
 	[S_LANGUAGE]        = { "Language" RU("Язык") },
 	[S_LANG_NAME]       = { "English" RU("Русский") },
+	[S_DOOM]            = { "Doom" },
+	[S_DOOM_HINT]       = { "F1  menu    F5  leave" RU("F1  меню    F5  выйти") },
+	[S_DOOM_NO_WAD_FMT] = { "No Doom IWAD file:\n%s\nB  back"
+				RU("Нет IWAD-файла Doom:\n%s\nB  назад") },
+	[S_DOOM_FAILED]     = { "Doom did not start, see the log\nB  back"
+				RU("Doom не запустился, подробности в логе\nB  назад") },
+	[S_DOOM_EXIT_FMT]   = { "Doom stopped with an error (status %d), see the log\nB  back"
+				RU("Doom завершился с ошибкой (код %d), подробности в логе\nB  назад") },
+	[S_DOOM_SIGNAL_FMT] = { "Doom crashed (signal %d)\nB  back"
+				RU("Doom упал (сигнал %d)\nB  назад") },
 };
 
 static int lang = LANG_EN;

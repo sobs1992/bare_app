@@ -67,7 +67,17 @@ const char *ui_key_name(enum ui_key key);
 enum video_source {
 	VIDEO_NONE,
 	VIDEO_TEST_PATTERN,
+	VIDEO_DOOM,		/* the game in its own process, takes the gamepad */
 };
 
 bool view_video_available(void);
-int view_video_set(enum video_source src);	/* -1 if there is no video layer */
+/* -1 if there is no video layer or the source did not start (errno) */
+int view_video_set(enum video_source src);
+
+/* Gamepad events for a source that takes them (a game) */
+void view_video_input(const struct gp_event *ev);
+
+/* Called when the running source ends by itself (the game quit), with its
+ * waitpid() status; not when view_video_set() stops it. One listener. */
+typedef void (*view_video_end_cb)(int status, void *ud);
+void view_video_on_end(view_video_end_cb cb, void *ud);

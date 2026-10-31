@@ -16,6 +16,11 @@ enum str_id {
 	S_CHARGER_CONNECTED, S_CHARGER_DISCONNECTED,
 	S_LANGUAGE,
 	S_LANG_NAME,		/* name of the current language in itself */
+	S_DOOM, S_DOOM_HINT,
+	S_DOOM_NO_WAD_FMT,	/* "%s": IWAD path */
+	S_DOOM_FAILED,
+	S_DOOM_EXIT_FMT,	/* "%d": exit status */
+	S_DOOM_SIGNAL_FMT,	/* "%d": signal */
 	S_COUNT
 };
 

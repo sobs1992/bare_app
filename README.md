@@ -4,11 +4,61 @@ GUI-приложение для OdroidLinux SDK на LVGL. Первая цель
 экран, кнопки и стик. Архитектура рассчитана на добавление плат и оборудования
 и на замену LVGL другим тулкитом: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-Репозиторий подключается к SDK сабмодулем `apps/bare_app`, LVGL (v9.6.0) — сабмодуль
-`third_party/lvgl`:
+Репозиторий подключается к SDK сабмодулем `apps/bare_app`. Сабмодули внутри:
+LVGL (v9.6.0) — `third_party/lvgl`, doomgeneric — `ports/doom/doomgeneric` (нужен
+только для `GAME_DOOM`):
 
 ```sh
 git submodule update --init --recursive apps/bare_app      # из корня SDK
+```
+
+## Лицензии
+
+Всё, кроме каталога [`ports/doom/`](ports/doom/), — код bare_app. В `ports/doom/` лежит
+Doom под GPLv2: из него собирается отдельная программа `bare_app_doom`, которая
+в `bare_app` не линкуется. bare_app запускает её и обменивается с ней только кадрами
+и кодами кнопок.
+
+## Doom
+
+Пункт «Doom» в главном меню (символ `GAME_DOOM` в Kconfig, включён в `oga_defconfig`
+и `pc_defconfig`). Движок [doomgeneric](https://github.com/ozkl/doomgeneric) (GPLv2)
+собирается из `ports/doom/` в отдельную программу `bare_app_doom`, которая ставится рядом
+с `bare_app`. Движок хранит состояние в глобальных переменных и выходит через `exit()`,
+поэтому на каждую игру запускается новый процесс. Падение игры не роняет приложение,
+а лицензия GPL не распространяется на `bare_app`.
+
+- Игра рисует кадры 320×200, растянутые до 4:3 по высоте экрана, в общую память
+  (memfd, тройной буфер без блокировок). Приложение кладёт их в видеослой (на OGA —
+  плоскость DRM). Кнопки идут в игру через сокет (`src/games/doom_ipc.h`).
+- Нужен видеослой: DRM на плате, `pc-mem` на ПК. В окне SDL и на fbdev экран покажет
+  сообщение. Звука и сети нет.
+- IWAD: `GAME_DOOM_WAD` (по умолчанию `/usr/share/games/doom/doom1.wad`), во время работы
+  его можно заменить через `BARE_APP_DOOM_WAD`. Настройки и сохранения хранятся
+  в `GAME_DOOM_DIR` (`~/.local/share/bare_app/doom`).
+- Из игры в меню приложения возвращают F5 или пункт Quit Game в меню Doom.
+  F6 закрывает всё приложение. Если игра не запустилась или упала, экран покажет причину.
+
+| Кнопка | В игре | В меню Doom |
+|---|---|---|
+| крестовина / стик | ходьба, поворот | выбор пункта |
+| A | огонь | Enter («y» в вопросе да/нет) |
+| B | использовать (двери, кнопки) | назад |
+| X | бег (удерживать) | |
+| Y | следующее оружие | |
+| L1 / R1 | шаг влево / вправо | |
+| L2 | карта | |
+| R2 | огонь | |
+| F1 (Start) | меню Doom | закрыть |
+| F2 / F3 | сохранить / загрузить | |
+| F4 | пауза | |
+| F5 | выйти в меню bare_app | |
+
+На ПК (shareware-WAD можно взять в пакете `doom1-wad` SDK):
+
+```sh
+echo "wait:500 a wait:3000 f6" | BARE_APP_DOOM_WAD=doom1.wad BARE_APP_SHOT=doom.ppm \
+    build-host/bare_app -p pc-mem
 ```
 
 ## Состав сборки (Kconfig)
@@ -50,10 +100,12 @@ echo "down a wait:500 f6" | BARE_APP_SHOT=shot.ppm ./bare_app -p pc-mem   # сц
 Нужен собранный тулчейн прошивки (`make FW=oga rootfs` в SDK):
 
 ```sh
-tools/oga.sh run            # собрать, скопировать в /tmp/bare_app (если изменился), запустить
+tools/oga.sh run            # собрать, скопировать в /tmp/ изменившиеся bare_app и
+                            # bare_app_doom, запустить
 tools/oga.sh key down a     # нажать кнопки
 tools/oga.sh shot s.png     # снимок всех слоёв работающего приложения (SIGUSR1)
 tools/oga.sh stop           # остановить, показать конец лога
+tools/oga.sh wad doom1.wad  # положить IWAD в /usr/share/games/doom/ (через консоль — минуты)
 ```
 
 Опции программы: `-p PLATFORM` (без него — по device tree), `-b lvgl|headless`,

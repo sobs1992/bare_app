@@ -33,7 +33,8 @@ void statusbar_set_title(lv_obj_t *bar, const char *symbol, const char *title);
 lv_obj_t *statusbar_create(lv_obj_t *parent, const char *symbol, const char *title);
 
 /* screens/ */
-extern const struct widget_ops home_screen, settings_screen, input_test_screen, layers_screen;
+extern const struct widget_ops home_screen, settings_screen, input_test_screen, layers_screen,
+	doom_screen;
 
 /* A vertical screen body under the status bar */
 lv_obj_t *screen_body(lv_obj_t *screen);

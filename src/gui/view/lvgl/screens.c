@@ -21,6 +21,9 @@ static const struct widget_ops *const screen_ops[SCREEN_COUNT] = {
 #ifdef CONFIG_SCREEN_LAYERS
 	[SCREEN_LAYERS] = &layers_screen,
 #endif
+#ifdef CONFIG_GAME_DOOM
+	[SCREEN_DOOM] = &doom_screen,
+#endif
 };
 
 static struct {
