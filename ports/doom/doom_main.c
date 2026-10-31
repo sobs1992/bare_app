@@ -1,8 +1,9 @@
 /*
  * bare_app_doom: the doomgeneric platform layer for bare_app (GPLv2, like
  * doomgeneric it is linked with). Started by bare_app's src/games/doom.c
- * with the socket and the frame memory of doom_ipc.h; draws frames scaled to the video layer (4:3, centred) and
- * turns gamepad buttons into Doom keys. Arguments are Doom's own
+ * with the socket and the frame memory of game_ipc.h; draws frames scaled
+ * to the video layer (4:3, centred) and turns gamepad buttons into Doom
+ * keys (axes are not used: the stick comes as a D-pad too). Arguments are Doom's own
  * (bare_app passes -iwad). Config and saved games go to the
  * current directory.
  */
@@ -25,7 +26,7 @@
 #include "m_controls.h"
 
 #include "core/input.h"
-#include "games/doom_ipc.h"
+#include "games/game_ipc.h"
 
 #define SRC_W DOOMGENERIC_RESX
 #define SRC_H DOOMGENERIC_RESY
@@ -36,7 +37,7 @@
 extern int messageToPrint;
 extern boolean messageNeedsInput;
 
-static struct doom_shm *shm;
+static struct game_shm *shm;
 static unsigned back;		/* buffer being drawn */
 static int dst_x, dst_y, dst_w, dst_h;
 static int *xmap, *ymap;
@@ -153,14 +154,14 @@ static void on_button(enum gp_button b, bool pressed)
 
 static void pump(void)
 {
-	struct doom_msg m;
+	struct game_msg m;
 	ssize_t n;
 
 	if (stop)
 		I_Quit();	/* SIGTERM from bare_app: leave saving the config */
 	for (;;) {
-		n = recv(DOOM_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT);
-		if (n == sizeof(m) && m.type == DOOM_MSG_BUTTON)
+		n = recv(GAME_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT);
+		if (n == sizeof(m) && m.type == GAME_MSG_BUTTON)
 			on_button(m.code, m.pressed);
 		else if (n == 0)
 			I_Quit();	/* bare_app is gone */
@@ -201,8 +202,8 @@ void DG_Init(void)
 
 void DG_DrawFrame(void)
 {
-	uint8_t *frame = doom_shm_frame(shm, back);
-	struct doom_msg m = { DOOM_MSG_FRAME, 0, 0 };
+	uint8_t *frame = game_shm_frame(shm, back);
+	struct game_msg m = { .type = GAME_MSG_FRAME };
 	int x, y;
 
 	/*
@@ -227,9 +228,9 @@ void DG_DrawFrame(void)
 		for (x = 0; x < dst_w; x++)
 			out[x] = in[xmap[x]] & 0xffffff;
 	}
-	back = atomic_exchange(&shm->middle, back | DOOM_SHM_FRESH) & ~DOOM_SHM_FRESH;
+	back = atomic_exchange(&shm->middle, back | GAME_SHM_FRESH) & ~GAME_SHM_FRESH;
 	/* a full socket already holds a "frame" message: nothing to add */
-	if (send(DOOM_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT | MSG_NOSIGNAL) < 0 && errno == EPIPE)
+	if (send(GAME_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT | MSG_NOSIGNAL) < 0 && errno == EPIPE)
 		I_Quit();
 	pump();
 }
@@ -277,13 +278,13 @@ int main(int argc, char **argv)
 	struct stat st;
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
-	if (fstat(DOOM_IPC_SHM, &st) < 0 || st.st_size < DOOM_SHM_HEADER) {
+	if (fstat(GAME_IPC_SHM, &st) < 0 || st.st_size < GAME_SHM_HEADER) {
 		fprintf(stderr, "bare_app_doom: started by bare_app only\n");
 		return 2;
 	}
-	shm = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, DOOM_IPC_SHM, 0);
-	if (shm == MAP_FAILED || shm->magic != DOOM_SHM_MAGIC ||
-	    doom_shm_size(shm) > (size_t)st.st_size) {
+	shm = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, GAME_IPC_SHM, 0);
+	if (shm == MAP_FAILED || shm->magic != GAME_SHM_MAGIC ||
+	    game_shm_size(shm) > (size_t)st.st_size) {
 		fprintf(stderr, "bare_app_doom: bad frame memory\n");
 		return 2;
 	}

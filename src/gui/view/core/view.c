@@ -11,8 +11,10 @@
 #include "core/mainloop.h"
 #include "core/util.h"
 #include "games/doom.h"
+#include "games/homm3.h"
 #include "gui/action.h"
 #include "hal/platform.h"
+#include "i18n.h"
 #include "media/mailbox.h"
 #include "media/testpattern.h"
 
@@ -45,7 +47,7 @@ static struct {
 	enum video_source video_src;
 	struct mailbox *video_mb;
 	struct testpattern *video_tp;
-	struct doom *video_doom;
+	struct game_proc *video_game;	/* VIDEO_DOOM, VIDEO_HOMM3 */
 	unsigned video_frames;
 	view_video_end_cb video_end;
 	void *video_end_ud;
@@ -191,7 +193,10 @@ bool view_video_available(void)
 	return video_layer() != NULL;
 }
 
-#if defined(CONFIG_VIDEO_TESTPATTERN) || defined(CONFIG_GAME_DOOM)
+#if defined(CONFIG_GAME_DOOM) || defined(CONFIG_GAME_HOMM3)
+#define HAVE_GAMES
+#endif
+#if defined(CONFIG_VIDEO_TESTPATTERN) || defined(HAVE_GAMES)
 #define HAVE_VIDEO_SOURCES
 #endif
 
@@ -242,9 +247,9 @@ static void on_video_frame(int fd, short revents, void *ud)
 }
 #endif
 
-#ifdef CONFIG_GAME_DOOM
+#ifdef HAVE_GAMES
 /* A frame from the game, or the game has ended */
-static void on_doom(int fd, short revents, void *ud)
+static void on_game(int fd, short revents, void *ud)
 {
 	struct hal_layer *l = video_layer();
 	const struct hal_fb *fb;
@@ -253,14 +258,14 @@ static void on_doom(int fd, short revents, void *ud)
 
 	(void)revents;
 	(void)ud;
-	fb = doom_frame(v.video_doom, &ended);
+	fb = game_proc_frame(v.video_game, &ended);
 	if (fb && l)
 		video_show(l, fb);
 	if (!ended)
 		return;
 	mainloop_remove_fd(v.ml, fd);
-	status = doom_stop(v.video_doom);
-	v.video_doom = NULL;
+	status = game_proc_stop(v.video_game);
+	v.video_game = NULL;
 	LOGI(TAG, "video: %u frames shown", v.video_frames);
 	if (l)
 		video_clear(l);
@@ -286,11 +291,11 @@ static void video_stop(struct hal_layer *l)
 		v.video_mb = NULL;
 	}
 #endif
-#ifdef CONFIG_GAME_DOOM
-	if (v.video_doom) {
-		mainloop_remove_fd(v.ml, doom_fd(v.video_doom));
-		doom_stop(v.video_doom);
-		v.video_doom = NULL;
+#ifdef HAVE_GAMES
+	if (v.video_game) {
+		mainloop_remove_fd(v.ml, game_proc_fd(v.video_game));
+		game_proc_stop(v.video_game);
+		v.video_game = NULL;
 		LOGI(TAG, "video: %u frames shown", v.video_frames);
 	}
 #endif
@@ -300,12 +305,17 @@ static void video_stop(struct hal_layer *l)
 
 void view_video_input(const struct gp_event *ev)
 {
-#ifdef CONFIG_GAME_DOOM
-	if (v.video_doom)
-		doom_input(v.video_doom, ev);
+#ifdef HAVE_GAMES
+	if (v.video_game)
+		game_proc_input(v.video_game, ev);
 #else
 	(void)ev;
 #endif
+}
+
+unsigned view_video_frames(void)
+{
+	return v.video_frames;
 }
 
 void view_video_on_end(view_video_end_cb cb, void *ud)
@@ -346,10 +356,19 @@ int view_video_set(enum video_source src)
 #ifdef CONFIG_GAME_DOOM
 	case VIDEO_DOOM:
 		fb = hal_layer_acquire(l);
-		v.video_doom = doom_start(fb->width, fb->height, v.pf->game_pcm);
-		if (!v.video_doom)
+		v.video_game = doom_start(fb->width, fb->height, v.pf->game_pcm);
+		if (!v.video_game)
 			return -1;
-		mainloop_add_fd(v.ml, doom_fd(v.video_doom), POLLIN, on_doom, NULL);
+		mainloop_add_fd(v.ml, game_proc_fd(v.video_game), POLLIN, on_game, NULL);
+		break;
+#endif
+#ifdef CONFIG_GAME_HOMM3
+	case VIDEO_HOMM3:
+		fb = hal_layer_acquire(l);
+		v.video_game = homm3_start(fb->width, fb->height, v.pf->game_pcm, i18n_lang());
+		if (!v.video_game)
+			return -1;
+		mainloop_add_fd(v.ml, game_proc_fd(v.video_game), POLLIN, on_game, NULL);
 		break;
 #endif
 	default:

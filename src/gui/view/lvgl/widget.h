@@ -34,7 +34,7 @@ lv_obj_t *statusbar_create(lv_obj_t *parent, const char *symbol, const char *tit
 
 /* screens/ */
 extern const struct widget_ops home_screen, settings_screen, input_test_screen, layers_screen,
-	doom_screen, wifi_screen, wifi_key_screen;
+	doom_screen, homm3_screen, wifi_screen, wifi_key_screen;
 
 /* A vertical screen body under the status bar */
 lv_obj_t *screen_body(lv_obj_t *screen);

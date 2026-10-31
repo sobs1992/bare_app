@@ -15,9 +15,12 @@ enum str_id {
 	S_LANG_NAME,		/* name of the current language in itself */
 	S_DOOM, S_DOOM_HINT,
 	S_DOOM_NO_WAD_FMT,	/* "%s": IWAD path */
-	S_DOOM_FAILED,
-	S_DOOM_EXIT_FMT,	/* "%d": exit status */
-	S_DOOM_SIGNAL_FMT,	/* "%d": signal */
+	S_HOMM3, S_HOMM3_HINT,
+	S_GAME_LOADING,
+	S_GAME_MISSING_FMT,	/* "%s": path */
+	S_GAME_FAILED,
+	S_GAME_EXIT_FMT,	/* "%d": exit status */
+	S_GAME_SIGNAL_FMT,	/* "%d": signal */
 	S_VOLUME, S_OUTPUT, S_OUT_AUTO, S_OUT_SPEAKER, S_OUT_HEADPHONES,
 	S_OUT_AUTO_NOW_FMT,	/* "%s": S_NOW_* */
 	S_NOW_SPEAKER, S_NOW_HEADPHONES,

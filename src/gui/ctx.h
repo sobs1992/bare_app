@@ -20,6 +20,7 @@ enum screen_id {
 	SCREEN_SETTINGS,
 	SCREEN_LAYERS,
 	SCREEN_DOOM,
+	SCREEN_HOMM3,
 	SCREEN_WIFI,
 	SCREEN_WIFI_KEY,	/* key for the network in wifi.asked */
 	SCREEN_COUNT

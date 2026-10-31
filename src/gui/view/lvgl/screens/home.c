@@ -13,6 +13,9 @@ struct entry {
 };
 
 static const struct entry entries[] = {
+#ifdef CONFIG_GAME_HOMM3
+	{ LV_SYMBOL_PLAY, S_HOMM3, ACT_OPEN_SCREEN, SCREEN_HOMM3 },
+#endif
 #ifdef CONFIG_GAME_DOOM
 	{ LV_SYMBOL_PLAY, S_DOOM, ACT_OPEN_SCREEN, SCREEN_DOOM },
 #endif

@@ -28,7 +28,7 @@ set_target_properties(bare_app_doom PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJEC
 # FEATURE_SOUND: sound effects through doom_sound.c (ALSA, no SDL)
 target_compile_definitions(bare_app_doom PRIVATE NORMALUNIX LINUX _DEFAULT_SOURCE
 	DOOMGENERIC_RESX=320 DOOMGENERIC_RESY=200 FEATURE_SOUND)
-# bare_app's src/ only for the exchange: games/doom_ipc.h, core/input.h (headers)
+# bare_app's src/ only for the exchange: games/game_ipc.h, core/input.h (headers)
 target_include_directories(bare_app_doom PRIVATE ${DOOM_DIR} ${PROJECT_SOURCE_DIR}/src)
 # an empty SDL_mixer.h for i_sound.c
 target_include_directories(bare_app_doom PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

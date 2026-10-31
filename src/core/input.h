@@ -31,6 +31,7 @@ struct gp_event {
 	int code;		/* enum gp_button or enum gp_axis */
 	bool pressed;		/* buttons */
 	bool repeat;		/* auto-repeat of a held direction */
+	bool stick;		/* a direction made by the left stick, not the D-pad */
 	float value;		/* axes: -1..1 */
 };
 

@@ -42,12 +42,16 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_DOOM_HINT]       = { "F1  menu    F5  leave" RU("F1  меню    F5  выйти") },
 	[S_DOOM_NO_WAD_FMT] = { "No Doom IWAD file:\n%s\nB  back"
 				RU("Нет IWAD-файла Doom:\n%s\nB  назад") },
-	[S_DOOM_FAILED]     = { "Doom did not start, see the log\nB  back"
-				RU("Doom не запустился, подробности в логе\nB  назад") },
-	[S_DOOM_EXIT_FMT]   = { "Doom stopped with an error (status %d), see the log\nB  back"
-				RU("Doom завершился с ошибкой (код %d), подробности в логе\nB  назад") },
-	[S_DOOM_SIGNAL_FMT] = { "Doom crashed (signal %d)\nB  back"
-				RU("Doom упал (сигнал %d)\nB  назад") },
+	[S_HOMM3]           = { "Heroes III" RU("Герои III") },
+	[S_HOMM3_HINT]      = { "L1  zoom    F5  leave" RU("L1  масштаб    F5  выйти") },
+	[S_GAME_LOADING]    = { "Loading..." RU("Загрузка...") },
+	[S_GAME_MISSING_FMT] = { "Not found:\n%s\nB  back" RU("Не найдено:\n%s\nB  назад") },
+	[S_GAME_FAILED]     = { "The game did not start, see the log\nB  back"
+				RU("Игра не запустилась, подробности в логе\nB  назад") },
+	[S_GAME_EXIT_FMT]   = { "The game stopped with an error (status %d), see the log\nB  back"
+				RU("Игра завершилась с ошибкой (код %d), подробности в логе\nB  назад") },
+	[S_GAME_SIGNAL_FMT] = { "The game crashed (signal %d)\nB  back"
+				RU("Игра упала (сигнал %d)\nB  назад") },
 	[S_VOLUME]          = { "Volume" RU("Громкость") },
 	[S_OUTPUT]          = { "Output" RU("Вывод звука") },
 	[S_OUT_AUTO]        = { "Auto" RU("Авто") },

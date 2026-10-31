@@ -28,6 +28,7 @@ static struct {
 	uint32_t phys;		/* reported by drivers */
 	uint32_t virt;		/* from the stick */
 	uint32_t state;		/* phys | virt, what listeners saw */
+	uint32_t from_stick;	/* of 'state': pressed by the stick alone */
 	float axes[GP_AXIS_COUNT];
 	uint32_t buttons_present, axes_present;
 	int stick_x, stick_y;	/* -1/0/+1 */
@@ -37,7 +38,8 @@ static struct {
 
 static void emit_button(enum gp_button b, bool pressed, bool repeat)
 {
-	struct gp_event ev = { .type = GP_EV_BUTTON, .code = b, .pressed = pressed, .repeat = repeat };
+	struct gp_event ev = { .type = GP_EV_BUTTON, .code = b, .pressed = pressed, .repeat = repeat,
+			       .stick = in.from_stick & GP_BIT(b) };
 
 	if (in.cb)
 		in.cb(&ev, in.ud);
@@ -69,6 +71,11 @@ static void sync_state(void)
 			continue;
 		pressed = want & GP_BIT(b);
 		in.state ^= GP_BIT(b);
+		/* a release keeps the source of its press */
+		if (pressed && !(in.phys & GP_BIT(b)))
+			in.from_stick |= GP_BIT(b);
+		else if (pressed)
+			in.from_stick &= ~GP_BIT(b);
 		if (GP_BIT(b) & REPEAT_MASK) {
 			if (pressed) {
 				/* the latest direction (or volume key) repeats */
@@ -81,6 +88,8 @@ static void sync_state(void)
 			}
 		}
 		emit_button(b, pressed, false);
+		if (!pressed)
+			in.from_stick &= ~GP_BIT(b);
 	}
 }
 

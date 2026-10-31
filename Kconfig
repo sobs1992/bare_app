@@ -215,6 +215,36 @@ config GAME_DOOM_DIR
 
 endif
 
+config GAME_HOMM3
+	bool "Heroes of Might and Magic III (VCMI, separate program)"
+	depends on VIEW_LVGL
+	help
+	  "Heroes III" in the main menu: VCMI's client, built with its
+	  bare_app link by the SDK package vcmi (GPLv2, APPS_CONFIG
+	  bare-app.HOMM3=y), started for each game like Doom. It draws in
+	  software into twice the video layer and sends it scaled down 2:1,
+	  or 1:1 around the cursor (L1 switches); the gamepad drives it as
+	  a game controller. The game data (Data, Maps, Mp3 of an original
+	  installation, optionally the Horn of the Abyss mod) is not
+	  included: the SDK's scripts/homm3-install.sh copies it.
+
+if GAME_HOMM3
+
+config GAME_HOMM3_PROGRAM
+	string "VCMI client"
+	default "/usr/bin/vcmiclient"
+
+config GAME_HOMM3_DATA
+	string "Data directory"
+	default "/data"
+	help
+	  VCMI finds the game in <dir>/vcmi (Data, Maps, Mp3, Mods) and
+	  keeps its settings in <dir>/config/vcmi and its logs in
+	  <dir>/cache/vcmi. BARE_APP_HOMM3_DATA overrides it at run time.
+	  /data is the SDK's data partition.
+
+endif
+
 endmenu
 
 menu "Debugging"

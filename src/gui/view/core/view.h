@@ -68,7 +68,8 @@ const char *ui_key_name(enum ui_key key);
 enum video_source {
 	VIDEO_NONE,
 	VIDEO_TEST_PATTERN,
-	VIDEO_DOOM,		/* the game in its own process, takes the gamepad */
+	VIDEO_DOOM,		/* games run in their own process and take the gamepad */
+	VIDEO_HOMM3,
 };
 
 bool view_video_available(void);
@@ -77,6 +78,9 @@ int view_video_set(enum video_source src);
 
 /* Gamepad events for a source that takes them (a game) */
 void view_video_input(const struct gp_event *ev);
+
+/* Frames shown since the source was set (a game that is still loading: 0) */
+unsigned view_video_frames(void);
 
 /* Called when the running source ends by itself (the game quit), with its
  * waitpid() status; not when view_video_set() stops it. One listener. */
