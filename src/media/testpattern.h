@@ -1,13 +1,13 @@
 /*
- * Test video source: animated colour bars and a bouncing box drawn into a
- * HAL layer from a timer of the given loop. Stands in for a camera or a
- * GPU renderer until there is one; uses only the HAL layer API.
+ * Test video source: animated colour bars and a bouncing box, drawn by its
+ * own thread into a frame mailbox at a fixed rate. Stands in for a camera
+ * or a GPU renderer and exercises the same path: producer thread ->
+ * mailbox -> view thread -> video layer.
  */
 #pragma once
 
-struct hal_layer;
-struct mainloop;
+struct mailbox;
 struct testpattern;
 
-struct testpattern *testpattern_start(struct mainloop *ml, struct hal_layer *layer, int fps);
-void testpattern_stop(struct testpattern *tp);	/* leaves the layer black */
+struct testpattern *testpattern_start(struct mailbox *mb, int fps);
+void testpattern_stop(struct testpattern *tp);	/* joins the thread */

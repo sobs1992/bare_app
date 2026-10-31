@@ -12,6 +12,7 @@
 #include "core/util.h"
 #include "gui/action.h"
 #include "hal/platform.h"
+#include "media/mailbox.h"
 #include "media/testpattern.h"
 
 #define TAG "view"
@@ -40,7 +41,9 @@ static struct {
 	void *grab_ud;
 	bool quit_sent;
 	enum video_source video_src;
+	struct mailbox *video_mb;
 	struct testpattern *video_tp;
+	unsigned video_frames;
 } v;
 
 /* ---- subscriptions ---------------------------------------------------- */
@@ -178,18 +181,72 @@ bool view_video_available(void)
 	return video_layer() != NULL;
 }
 
+/* A new frame from the producer thread: copy it into the video layer */
+static void on_video_frame(int fd, short revents, void *ud)
+{
+	struct hal_layer *l = video_layer();
+	struct hal_fb *src, *dst;
+	struct hal_rect all;
+	int y;
+
+	(void)fd;
+	(void)revents;
+	(void)ud;
+	mailbox_ack(v.video_mb);
+	src = mailbox_take(v.video_mb);
+	if (!src || !l)
+		return;
+	dst = hal_layer_acquire(l);
+	for (y = 0; y < dst->height && y < src->height; y++)
+		memcpy((uint8_t *)dst->pixels + (size_t)y * dst->stride,
+		       (uint8_t *)src->pixels + (size_t)y * src->stride,
+		       (size_t)(dst->width < src->width ? dst->width : src->width) * 4);
+	all = (struct hal_rect){ 0, 0, dst->width - 1, dst->height - 1 };
+	hal_layer_damage(l, &all);
+	hal_layer_submit(l);
+	v.video_frames++;
+}
+
+static void video_stop(struct hal_layer *l)
+{
+	struct hal_fb *fb;
+	struct hal_rect all;
+
+	if (!v.video_mb)
+		return;
+	testpattern_stop(v.video_tp);
+	mainloop_remove_fd(v.ml, mailbox_fd(v.video_mb));
+	LOGI(TAG, "video: %u frames shown, %u dropped", v.video_frames, mailbox_dropped(v.video_mb));
+	mailbox_free(v.video_mb);
+	v.video_tp = NULL;
+	v.video_mb = NULL;
+	/* leave the layer black */
+	fb = hal_layer_acquire(l);
+	memset(fb->pixels, 0, (size_t)fb->stride * fb->height);
+	all = (struct hal_rect){ 0, 0, fb->width - 1, fb->height - 1 };
+	hal_layer_damage(l, &all);
+	hal_layer_submit(l);
+}
+
 int view_video_set(enum video_source src)
 {
 	struct hal_layer *l = video_layer();
+	struct hal_fb *fb;
 
 	if (!l)
 		return src == VIDEO_NONE ? 0 : -1;
 	if (src == v.video_src)
 		return 0;
-	testpattern_stop(v.video_tp);
-	v.video_tp = NULL;
-	if (src == VIDEO_TEST_PATTERN)
-		v.video_tp = testpattern_start(v.ml, l, 30);
+	video_stop(l);
+	if (src == VIDEO_TEST_PATTERN) {
+		fb = hal_layer_acquire(l);
+		v.video_mb = mailbox_new(fb->width, fb->height);
+		if (!v.video_mb)
+			return -1;
+		v.video_frames = 0;
+		mainloop_add_fd(v.ml, mailbox_fd(v.video_mb), POLLIN, on_video_frame, NULL);
+		v.video_tp = testpattern_start(v.video_mb, 30);
+	}
 	v.video_src = src;
 	LOGI(TAG, "video source %d", src);
 	return 0;

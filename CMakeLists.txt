@@ -49,6 +49,7 @@ add_library(bare_app_core STATIC
 	src/platforms/pc.c
 	src/services/config.c
 	src/services/services.c
+	src/media/mailbox.c
 	src/media/testpattern.c
 	src/gui/ctx.c
 	src/gui/action.c

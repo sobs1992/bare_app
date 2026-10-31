@@ -1,5 +1,6 @@
 /* Host unit tests for the toolkit independent core. */
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 #include "core/mainloop.h"
 #include "core/msgq.h"
 #include "core/uevent.h"
+#include "media/mailbox.h"
 #include "gui/action.h"
 #include "gui/control/control.h"
 #include "gui/ctx.h"
@@ -172,6 +174,53 @@ static void test_config(void)
 	mainloop_free(ml);
 }
 
+/* Producer fills every pixel of a frame with its number; a torn frame
+ * would mix two numbers, a lost order would go backwards. */
+#define MB_FRAMES 3000
+
+static void *mb_producer(void *arg)
+{
+	struct mailbox *mb = arg;
+	uint32_t n;
+	int i;
+
+	for (n = 1; n <= MB_FRAMES; n++) {
+		struct hal_fb *fb = mailbox_begin(mb);
+
+		for (i = 0; i < fb->width * fb->height; i++)
+			fb->pixels[i] = n;
+		mailbox_end(mb);
+	}
+	return NULL;
+}
+
+static void test_mailbox(void)
+{
+	struct mailbox *mb = mailbox_new(64, 32);
+	uint32_t last = 0, taken = 0;
+	pthread_t t;
+	int i, torn = 0, backwards = 0;
+
+	CHECK(mb && mailbox_take(mb) == NULL);
+	pthread_create(&t, NULL, mb_producer, mb);
+	while (last < MB_FRAMES) {
+		struct hal_fb *fb = mailbox_take(mb);
+
+		if (!fb)
+			continue;
+		for (i = 1; i < fb->width * fb->height; i++)
+			torn += fb->pixels[i] != fb->pixels[0];
+		backwards += fb->pixels[0] <= last;
+		last = fb->pixels[0];
+		taken++;
+	}
+	pthread_join(t, NULL);
+	CHECK(torn == 0);
+	CHECK(backwards == 0);
+	CHECK(taken + mailbox_dropped(mb) == MB_FRAMES);
+	mailbox_free(mb);
+}
+
 /* ---- input: repeat and stick -> D-pad, driven by a real loop ---------- */
 
 static struct {
@@ -242,6 +291,7 @@ int main(void)
 	test_nav();
 	test_uevent();
 	test_config();
+	test_mailbox();
 	test_input();
 	if (failures) {
 		fprintf(stderr, "%d check(s) failed\n", failures);

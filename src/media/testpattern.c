@@ -1,17 +1,23 @@
 #include "testpattern.h"
 
+#include <pthread.h>
+#include <signal.h>
+#include <stdatomic.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
-#include "core/mainloop.h"
-#include "hal/hal.h"
+#include "core/log.h"
+#include "mailbox.h"
 
 #define BOX 48
 
 struct testpattern {
-	struct mainloop *ml;
-	struct hal_layer *layer;
-	struct ml_timer *timer;
+	struct mailbox *mb;
+	pthread_t thread;
+	atomic_bool stop;
+	long period_ns;
 	unsigned frame;
 	int bx, by, vx, vy;
 };
@@ -32,11 +38,8 @@ static void fill(struct hal_fb *fb, int x0, int y0, int w, int h, uint32_t c)
 	}
 }
 
-static void draw(void *ud)
+static void draw(struct testpattern *tp, struct hal_fb *fb)
 {
-	struct testpattern *tp = ud;
-	struct hal_fb *fb = hal_layer_acquire(tp->layer);
-	struct hal_rect all = { 0, 0, fb->width - 1, fb->height - 1 };
 	int n = sizeof(bars) / sizeof(bars[0]), bw = fb->width / n + 1, x, y;
 	uint32_t *first = fb->pixels;
 
@@ -54,38 +57,59 @@ static void draw(void *ud)
 		tp->vy = -tp->vy, tp->by += 2 * tp->vy;
 	fill(fb, tp->bx, tp->by, BOX, BOX, 0x000000);
 	fill(fb, tp->bx + 6, tp->by + 6, BOX - 12, BOX - 12, 0xffffff);
-	hal_layer_damage(tp->layer, &all);
-	hal_layer_submit(tp->layer);
 }
 
-struct testpattern *testpattern_start(struct mainloop *ml, struct hal_layer *layer, int fps)
+static void *producer(void *arg)
+{
+	struct testpattern *tp = arg;
+	struct timespec next;
+
+	clock_gettime(CLOCK_MONOTONIC, &next);
+	while (!atomic_load(&tp->stop)) {
+		draw(tp, mailbox_begin(tp->mb));
+		mailbox_end(tp->mb);
+		next.tv_nsec += tp->period_ns;
+		while (next.tv_nsec >= 1000000000L) {
+			next.tv_nsec -= 1000000000L;
+			next.tv_sec++;
+		}
+		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
+	}
+	return NULL;
+}
+
+struct testpattern *testpattern_start(struct mailbox *mb, int fps)
 {
 	struct testpattern *tp = calloc(1, sizeof(*tp));
+	sigset_t all, old;
+	int err;
 
 	if (!tp)
 		return NULL;
-	tp->ml = ml;
-	tp->layer = layer;
+	tp->mb = mb;
+	tp->period_ns = 1000000000L / (fps > 0 ? fps : 30);
 	tp->bx = 20;
 	tp->by = 20;
 	tp->vx = 3;
 	tp->vy = 2;
-	tp->timer = mainloop_add_timer(ml, 0, 1000 / (fps > 0 ? fps : 30), draw, tp);
+	/* signals belong to the control thread */
+	sigfillset(&all);
+	pthread_sigmask(SIG_BLOCK, &all, &old);
+	err = pthread_create(&tp->thread, NULL, producer, tp);
+	pthread_sigmask(SIG_SETMASK, &old, NULL);
+	if (err) {
+		LOGE("testpattern", "pthread_create: %s", strerror(err));
+		free(tp);
+		return NULL;
+	}
 	return tp;
 }
 
 void testpattern_stop(struct testpattern *tp)
 {
-	struct hal_fb *fb;
-	struct hal_rect all;
-
 	if (!tp)
 		return;
-	mainloop_timer_cancel(tp->ml, tp->timer);
-	fb = hal_layer_acquire(tp->layer);
-	all = (struct hal_rect){ 0, 0, fb->width - 1, fb->height - 1 };
-	memset(fb->pixels, 0, (size_t)fb->stride * fb->height);
-	hal_layer_damage(tp->layer, &all);
-	hal_layer_submit(tp->layer);
+	atomic_store(&tp->stop, true);
+	pthread_join(tp->thread, NULL);
 	free(tp);
 }
