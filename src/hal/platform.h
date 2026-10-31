@@ -29,6 +29,8 @@ struct platform {
 	struct hal_dev backlight;		/* hal_backlight_ops, optional */
 	/* GP_BIT() mask: pressing all of them quits the application */
 	uint32_t quit_combo;
+	/* settings file ("~/" = $HOME), NULL: nothing is kept between runs */
+	const char *config_path;
 };
 
 /* By name if given, otherwise by /proc/device-tree/compatible, otherwise "pc" */

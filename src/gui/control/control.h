@@ -14,6 +14,7 @@ struct platform;
 struct control_env {
 	struct mainloop *ml;
 	const struct platform *pf;
+	const char *lang;	/* -L / BARE_APP_LANG, overrides the saved one */
 };
 
 struct control_ops {
@@ -23,7 +24,7 @@ struct control_ops {
 	void (*deinit)(void);				/* may be NULL */
 };
 
-int control_start(struct mainloop *ml, const struct platform *pf);
+int control_start(const struct control_env *env);
 void control_stop(void);
 
-extern const struct control_ops ctl_app, ctl_nav, ctl_power, ctl_display, ctl_system;
+extern const struct control_ops ctl_app, ctl_nav, ctl_power, ctl_display, ctl_system, ctl_settings;

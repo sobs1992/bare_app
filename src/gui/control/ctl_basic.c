@@ -7,6 +7,7 @@
 #include "core/mainloop.h"
 #include "gui/ctx.h"
 #include "hal/platform.h"
+#include "services/config.h"
 
 /* ---- app: quitting ---------------------------------------------------- */
 
@@ -90,4 +91,36 @@ static int system_init(const struct control_env *env)
 const struct control_ops ctl_system = {
 	.name = "system",
 	.init = system_init,
+};
+
+/* ---- settings: UI language (kept in the config file) ------------------ */
+
+static void set_lang(const char *lang)
+{
+	struct gui_ctx *c = ctx_lock();
+
+	snprintf(c->settings.lang, sizeof(c->settings.lang), "%s", lang);
+	ctx_unlock(CTX_SETTINGS);
+}
+
+static int settings_init(const struct control_env *env)
+{
+	const char *lang = env->lang && *env->lang ? env->lang : config_get("lang");
+
+	set_lang(lang ? lang : "en");
+	return 0;
+}
+
+static void settings_action(const struct gui_action *a)
+{
+	if (a->type != ACT_SET_LANG || !a->str[0])
+		return;
+	set_lang(a->str);
+	config_set("lang", a->str);
+}
+
+const struct control_ops ctl_settings = {
+	.name = "settings",
+	.init = settings_init,
+	.on_action = settings_action,
 };

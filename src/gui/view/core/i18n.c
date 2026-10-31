@@ -39,6 +39,8 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_BATTERY_LOW_FMT] = { "Battery low: %d%%", "Батарея разряжена: %d%%" },
 	[S_CHARGER_CONNECTED]    = { "Charger connected", "Зарядка подключена" },
 	[S_CHARGER_DISCONNECTED] = { "Charger disconnected", "Зарядка отключена" },
+	[S_LANGUAGE]        = { "Language", "Язык" },
+	[S_LANG_NAME]       = { "English", "Русский" },
 };
 
 static int lang = LANG_EN;
@@ -58,6 +60,16 @@ int i18n_set(const char *name)
 const char *i18n_lang(void)
 {
 	return names[lang];
+}
+
+const char *i18n_next(const char *code)
+{
+	int i;
+
+	for (i = 0; i < LANG_COUNT; i++)
+		if (code && !strcmp(code, names[i]))
+			return names[(i + 1) % LANG_COUNT];
+	return names[0];
 }
 
 const char *tr(enum str_id id)

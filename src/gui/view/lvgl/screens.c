@@ -2,6 +2,9 @@
  * Screen manager: follows CTX_NAV. Each screen gets its own focus group,
  * so the focus never lands on objects of the screen being replaced.
  */
+#include <stdio.h>
+#include <string.h>
+
 #include "lvgl_view.h"
 
 #include "core/log.h"
@@ -19,18 +22,34 @@ static struct {
 	int shown;		/* enum screen_id, -1 none */
 	lv_obj_t *screen;
 	lv_group_t *group;
+	char lang[16];		/* language the screen was built in */
 } sm = { .shown = -1 };
 
-static void show(enum screen_id id)
+static int focused_index(lv_group_t *g)
+{
+	lv_obj_t *f = g ? lv_group_get_focused(g) : NULL;
+	uint32_t i;
+
+	for (i = 0; f && i < lv_group_get_obj_count(g); i++)
+		if (lv_group_get_obj_by_index(g, i) == f)
+			return (int)i;
+	return 0;
+}
+
+/* keep_focus: rebuilding the same screen (new language), focus the same widget */
+static void show(enum screen_id id, bool keep_focus)
 {
 	lv_obj_t *old = sm.screen;
 	lv_group_t *old_group = sm.group;
+	int focus = keep_focus ? focused_index(old_group) : 0;
 
 	sm.group = lv_group_create();
 	lv_group_set_wrap(sm.group, true);
 	lv_group_set_default(sm.group);	/* focusable widgets join it on creation */
 	sm.screen = widget_create(screen_ops[id], NULL);
 	port_input_set_group(sm.group);
+	if (focus > 0 && (uint32_t)focus < lv_group_get_obj_count(sm.group))
+		lv_group_focus_obj(lv_group_get_obj_by_index(sm.group, focus));
 	lv_screen_load(sm.screen);
 	/* the first widget is focused, show it as if the keypad moved there */
 	if (lv_group_get_focused(sm.group))
@@ -43,20 +62,30 @@ static void show(enum screen_id id)
 	LOGD("screens", "screen %d", id);
 }
 
-static void on_nav(void *self, const struct gui_ctx *c, uint32_t changed)
+static void on_ctx(void *self, const struct gui_ctx *c, uint32_t changed)
 {
 	enum screen_id id = ctx_screen(c);
+	bool relang = (changed & CTX_SETTINGS) && strcmp(c->settings.lang, sm.lang);
 
 	(void)self;
-	(void)changed;
-	if ((int)id != sm.shown && id < SCREEN_COUNT && screen_ops[id])
-		show(id);
+	if (relang) {
+		if (i18n_set(c->settings.lang) < 0)
+			LOGW("screens", "unknown language \"%s\", keeping %s", c->settings.lang, i18n_lang());
+		snprintf(sm.lang, sizeof(sm.lang), "%s", c->settings.lang);
+	}
+	if (id >= SCREEN_COUNT || !screen_ops[id])
+		return;
+	if ((int)id != sm.shown)
+		show(id, false);
+	else if (relang)
+		show(id, true);		/* every text comes back in the new language */
 }
 
 int screens_init(void)
 {
 	sm.shown = -1;
-	sm.sub = view_subscribe(CTX_NAV, on_nav, NULL);
+	sm.lang[0] = '\0';
+	sm.sub = view_subscribe(CTX_NAV | CTX_SETTINGS, on_ctx, NULL);
 	return sm.sub > 0 ? 0 : -1;
 }
 

@@ -25,6 +25,8 @@ static void on_ctx(void *self, const struct gui_ctx *c, uint32_t changed)
 	if (changed & CTX_DISPLAY)
 		LOGI(TAG, "backlight: %s %d%%", c->display.has_backlight ? "yes" : "no",
 		     c->display.brightness);
+	if (changed & CTX_SETTINGS)
+		LOGI(TAG, "language: %s", c->settings.lang);
 	if (changed & CTX_SYSTEM)
 		LOGI(TAG, "system: %s on %s", c->system.platform, c->system.model);
 }

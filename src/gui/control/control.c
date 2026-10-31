@@ -9,7 +9,7 @@
 #define TAG "control"
 
 static const struct control_ops *const modules[] = {
-	&ctl_app, &ctl_nav, &ctl_system, &ctl_power, &ctl_display,
+	&ctl_app, &ctl_nav, &ctl_system, &ctl_settings, &ctl_power, &ctl_display,
 };
 
 static struct mainloop *loop;
@@ -31,18 +31,17 @@ static void on_actions(int fd, short revents, void *ud)
 	}
 }
 
-int control_start(struct mainloop *ml, const struct platform *pf)
+int control_start(const struct control_env *env)
 {
-	struct control_env env = { ml, pf };
 	size_t i;
 
-	loop = ml;
+	loop = env->ml;
 	for (i = 0; i < ARRAY_SIZE(modules); i++)
-		if (modules[i]->init(&env) < 0) {
+		if (modules[i]->init(env) < 0) {
 			LOGE(TAG, "%s failed to start", modules[i]->name);
 			return -1;
 		}
-	return mainloop_add_fd(ml, action_fd(), POLLIN, on_actions, NULL);
+	return mainloop_add_fd(loop, action_fd(), POLLIN, on_actions, NULL);
 }
 
 void control_stop(void)

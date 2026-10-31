@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "core/input.h"
 #include "core/joystick.h"
@@ -12,6 +13,7 @@
 #include "gui/action.h"
 #include "gui/control/control.h"
 #include "gui/ctx.h"
+#include "services/config.h"
 
 static int failures;
 
@@ -98,21 +100,21 @@ static void test_nav(void)
 	ctx_snapshot(&snap);
 	CHECK(ctx_screen(&snap) == SCREEN_HOME);
 
-	a = (struct gui_action){ ACT_BACK, 0 };
+	a = (struct gui_action){ .type = ACT_BACK, .arg = 0 };
 	ctl_nav.on_action(&a);			/* home has nothing to go back to */
 	CHECK(ctx_snapshot(&snap) == 0);
 
-	a = (struct gui_action){ ACT_OPEN_SCREEN, SCREEN_SETTINGS };
+	a = (struct gui_action){ .type = ACT_OPEN_SCREEN, .arg = SCREEN_SETTINGS };
 	ctl_nav.on_action(&a);
 	ctl_nav.on_action(&a);			/* same screen twice: one entry */
 	CHECK(ctx_snapshot(&snap) == CTX_NAV);
 	CHECK(ctx_screen(&snap) == SCREEN_SETTINGS && snap.nav.depth == 2);
 
-	a = (struct gui_action){ ACT_OPEN_SCREEN, SCREEN_COUNT };
+	a = (struct gui_action){ .type = ACT_OPEN_SCREEN, .arg = SCREEN_COUNT };
 	ctl_nav.on_action(&a);			/* invalid id ignored */
 	CHECK(ctx_snapshot(&snap) == 0);
 
-	a = (struct gui_action){ ACT_BACK, 0 };
+	a = (struct gui_action){ .type = ACT_BACK, .arg = 0 };
 	ctl_nav.on_action(&a);
 	CHECK(ctx_snapshot(&snap) == CTX_NAV);
 	CHECK(ctx_screen(&snap) == SCREEN_HOME && snap.nav.depth == 1);
@@ -137,6 +139,37 @@ static void test_uevent(void)
 
 	memcpy(buf, udev, sizeof(udev));
 	CHECK(uevent_parse(buf, sizeof(udev), &ev) < 0);	/* udev monitor format ignored */
+}
+
+static void test_config(void)
+{
+	const char *path = "test_config.conf";
+	struct mainloop *ml = mainloop_new("test");
+	FILE *f;
+
+	unlink(path);
+	config_open(ml, path);
+	CHECK(config_get("lang") == NULL);
+	CHECK(config_get_int("brightness", -1) == -1);
+	config_set("lang", "ru");
+	config_set_int("brightness", 55);
+	config_close();				/* writes the delayed save now */
+
+	f = fopen(path, "r");
+	CHECK(f != NULL);
+	if (f)
+		fclose(f);
+	config_open(ml, path);
+	CHECK(config_get("lang") && !strcmp(config_get("lang"), "ru"));
+	CHECK(config_get_int("brightness", -1) == 55);
+	config_close();
+	unlink(path);
+
+	config_open(ml, NULL);			/* memory only */
+	config_set("lang", "en");
+	CHECK(!strcmp(config_get("lang"), "en"));
+	config_close();
+	mainloop_free(ml);
 }
 
 /* ---- input: repeat and stick -> D-pad, driven by a real loop ---------- */
@@ -208,6 +241,7 @@ int main(void)
 	test_ctx();
 	test_nav();
 	test_uevent();
+	test_config();
 	test_input();
 	if (failures) {
 		fprintf(stderr, "%d check(s) failed\n", failures);

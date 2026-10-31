@@ -40,6 +40,7 @@ const struct platform platform_pc = {
 		{ &input_script, &script_params },
 	},
 	.quit_combo = GP_BIT(GP_F6),
+	.config_path = "~/.config/bare_app.conf",
 };
 
 const struct platform platform_pc_mem = {

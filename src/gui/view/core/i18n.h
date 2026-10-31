@@ -14,6 +14,8 @@ enum str_id {
 	S_LAYERS_VIDEO, S_LAYERS_NO_VIDEO,
 	S_BATTERY_LOW_FMT,	/* "%d" */
 	S_CHARGER_CONNECTED, S_CHARGER_DISCONNECTED,
+	S_LANGUAGE,
+	S_LANG_NAME,		/* name of the current language in itself */
 	S_COUNT
 };
 
@@ -21,3 +23,5 @@ enum str_id {
 int i18n_set(const char *lang);
 const char *i18n_lang(void);
 const char *tr(enum str_id id);
+/* The language after 'code' in the list, wrapping around */
+const char *i18n_next(const char *code);

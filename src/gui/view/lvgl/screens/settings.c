@@ -11,6 +11,12 @@ struct settings {
 	int shown_brightness;
 };
 
+static void on_lang(lv_event_t *e)
+{
+	(void)e;
+	gui_action_post_str(ACT_SET_LANG, i18n_next(i18n_lang()));
+}
+
 static void on_slider(lv_event_t *e)
 {
 	lv_obj_t *slider = lv_event_get_target(e);
@@ -38,7 +44,7 @@ static lv_obj_t *row(lv_obj_t *parent, const char *name)
 static void *settings_init(lv_obj_t *parent, lv_obj_t **root)
 {
 	struct settings *s = calloc(1, sizeof(*s));
-	lv_obj_t *scr, *body, *r, *hint;
+	lv_obj_t *scr, *body, *r, *hint, *btn, *label;
 
 	(void)parent;
 	if (!s)
@@ -59,6 +65,14 @@ static void *settings_init(lv_obj_t *parent, lv_obj_t **root)
 	s->no_bl = lv_label_create(r);
 	lv_obj_set_style_text_color(s->no_bl, UI_COLOR_DIM, 0);
 	lv_label_set_text(s->no_bl, tr(S_NOT_AVAILABLE));
+
+	r = row(body, tr(S_LANGUAGE));
+	btn = lv_button_create(r);
+	ui_focus_style(btn);
+	lv_obj_add_event_cb(btn, on_lang, LV_EVENT_CLICKED, NULL);
+	label = lv_label_create(btn);
+	lv_obj_set_style_text_font(label, UI_FONT_MID, 0);
+	lv_label_set_text(label, tr(S_LANG_NAME));
 
 	r = row(body, tr(S_BATTERY));
 	s->battery = lv_label_create(r);

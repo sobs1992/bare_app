@@ -47,6 +47,7 @@ add_library(bare_app_core STATIC
 	src/drivers/sysfs.c
 	src/platforms/oga.c
 	src/platforms/pc.c
+	src/services/config.c
 	src/services/services.c
 	src/media/testpattern.c
 	src/gui/ctx.c

@@ -23,9 +23,9 @@
 #include "gui/control/control.h"
 #include "gui/ctx.h"
 #include "gui/notify.h"
-#include "gui/view/core/i18n.h"
 #include "gui/view/core/view.h"
 #include "hal/platform.h"
+#include "services/config.h"
 #include "services/services.h"
 
 #define TAG "main"
@@ -51,7 +51,7 @@ static void usage(FILE *f)
 		   "  -b, --backend NAME    view backend:");
 	for (i = 0; i < ARRAY_SIZE(backends); i++)
 		fprintf(f, " %s", backends[i]->name);
-	fprintf(f, "\n  -L, --lang en|ru      UI language (default: $BARE_APP_LANG, else en)\n"
+	fprintf(f, "\n  -L, --lang en|ru      UI language (default: $BARE_APP_LANG, the saved one, en)\n"
 		   "  -v, --verbose         debug log\n"
 		   "  -l, --list            list platforms\n");
 }
@@ -123,8 +123,6 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (lang && *lang && i18n_set(lang) < 0)
-		LOGW(TAG, "unknown language \"%s\", using %s", lang, i18n_lang());
 	pf = platform_probe(pf_name);
 	if (!pf)
 		return 1;
@@ -147,7 +145,8 @@ int main(int argc, char **argv)
 	}
 	mainloop_add_fd(ml, sfd, POLLIN, on_signal, ml);
 
-	if (services_start(ml, pf) || control_start(ml, pf))
+	config_open(ml, pf->config_path);
+	if (services_start(ml, pf) || control_start(&(struct control_env){ ml, pf, lang }))
 		goto out;
 	if (view_start(be, pf))
 		goto out_control;
@@ -159,6 +158,7 @@ int main(int argc, char **argv)
 out_control:
 	control_stop();
 out:
+	config_close();
 	services_stop();
 	notify_deinit();
 	action_deinit();

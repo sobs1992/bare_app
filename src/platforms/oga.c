@@ -59,4 +59,5 @@ const struct platform platform_oga = {
 	.backlight = { &backlight_sysfs, &(const struct backlight_sysfs_params){
 		.path = "/sys/class/backlight/backlight", .min_percent = 5 } },
 	.quit_combo = GP_BIT(GP_F6),
+	.config_path = "/etc/bare_app.conf",
 };

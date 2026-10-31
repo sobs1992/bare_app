@@ -27,6 +27,7 @@ enum ctx_section {
 	CTX_DISPLAY	= 1u << 1,
 	CTX_NAV		= 1u << 2,
 	CTX_SYSTEM	= 1u << 3,
+	CTX_SETTINGS	= 1u << 4,
 	CTX_ALL		= 0xffffffffu,
 };
 
@@ -51,6 +52,9 @@ struct gui_ctx {
 		char platform[16];
 		char model[64];
 	} system;
+	struct {
+		char lang[16];		/* UI language code, "en", "ru"... */
+	} settings;
 };
 
 int ctx_init(void);
