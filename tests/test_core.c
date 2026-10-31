@@ -8,6 +8,7 @@
 #include "core/joystick.h"
 #include "core/mainloop.h"
 #include "core/msgq.h"
+#include "core/uevent.h"
 #include "gui/action.h"
 #include "gui/control/control.h"
 #include "gui/ctx.h"
@@ -118,6 +119,26 @@ static void test_nav(void)
 	ctx_deinit();
 }
 
+static void test_uevent(void)
+{
+	static const char msg[] =
+		"add@/devices/platform/adc-joystick/input/input5/event5\0"
+		"ACTION=add\0DEVPATH=/devices/platform/adc-joystick/input/input5/event5\0"
+		"SUBSYSTEM=input\0MAJOR=13\0MINOR=69\0DEVNAME=input/event5\0SEQNUM=1234";
+	static const char udev[] = "libudev\0\xfe\xed\xca\xfe";
+	char buf[sizeof(msg)];
+	struct uevent ev;
+
+	memcpy(buf, msg, sizeof(msg));
+	CHECK(uevent_parse(buf, sizeof(buf), &ev) == 0);
+	CHECK(!strcmp(ev.action, "add") && !strcmp(ev.subsystem, "input"));
+	CHECK(ev.devname && !strcmp(ev.devname, "input/event5"));
+	CHECK(ev.name == NULL);
+
+	memcpy(buf, udev, sizeof(udev));
+	CHECK(uevent_parse(buf, sizeof(udev), &ev) < 0);	/* udev monitor format ignored */
+}
+
 /* ---- input: repeat and stick -> D-pad, driven by a real loop ---------- */
 
 static struct {
@@ -186,6 +207,7 @@ int main(void)
 	test_msgq();
 	test_ctx();
 	test_nav();
+	test_uevent();
 	test_input();
 	if (failures) {
 		fprintf(stderr, "%d check(s) failed\n", failures);

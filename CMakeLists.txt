@@ -33,6 +33,7 @@ add_library(bare_app_core STATIC
 	src/core/log.c
 	src/core/mainloop.c
 	src/core/msgq.c
+	src/core/uevent.c
 	src/core/util.c
 	src/hal/platform.c
 	src/drivers/display_fbdev.c
