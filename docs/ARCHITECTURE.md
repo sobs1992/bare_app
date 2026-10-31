@@ -85,7 +85,7 @@ control делится по областям данных, а не по видж
 
 | Модуль | Слушает | Пишет |
 |---|---|---|
-| `ctl_app` | `ACT_QUIT` | останавливает цикл control |
+| `ctl_app` | `ACT_QUIT`, `ACT_POWER_OFF` | останавливает цикл control; после `ACT_POWER_OFF` main() запускает `poweroff` платформы, если он есть |
 | `ctl_nav` | `ACT_OPEN_SCREEN`, `ACT_BACK` | `CTX_NAV` (стек экранов) |
 | `ctl_system` | — | `CTX_SYSTEM` (платформа, модель из DT) |
 | `ctl_power` | `EV_POWER_CHANGED` | `CTX_POWER`, уведомления |

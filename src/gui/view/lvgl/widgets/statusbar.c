@@ -1,10 +1,14 @@
-/* Status bar: screen title on the left, Wi-Fi (CTX_WIFI) and battery (CTX_POWER) on the right. */
+/*
+ * Status bar: screen title on the left; volume (CTX_AUDIO), Wi-Fi (CTX_WIFI)
+ * and battery (CTX_POWER) on the right.
+ */
 #include <stdlib.h>
 
 #include "../widget.h"
 
 struct statusbar {
-	lv_obj_t *title, *wifi, *battery;
+	lv_obj_t *title, *volume, *wifi, *battery;
+	int shown_volume;	/* percent, -1 hidden, -2 nothing yet */
 	int shown_cap;
 	int shown_flags;	/* bit 0 charging, 1 online, 2 available, -1 nothing yet */
 	int shown_link;		/* enum wifi_link, -1 nothing yet */
@@ -30,6 +34,7 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 
 	if (!s)
 		return NULL;
+	s->shown_volume = -2;
 	s->shown_flags = -1;
 	s->shown_link = -1;
 	bar = lv_obj_create(parent);
@@ -52,6 +57,10 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_flex_flow(right, LV_FLEX_FLOW_ROW);
 	lv_obj_set_flex_align(right, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	lv_obj_set_style_pad_column(right, 14, 0);
+	s->volume = lv_label_create(right);
+	lv_obj_set_style_text_font(s->volume, UI_FONT_MID, 0);
+	lv_label_set_text(s->volume, "");
+	lv_obj_set_hidden(s->volume, true);
 	s->wifi = lv_label_create(right);
 	lv_obj_set_style_text_font(s->wifi, UI_FONT_MID, 0);
 	lv_label_set_text(s->wifi, LV_SYMBOL_WIFI);
@@ -62,6 +71,24 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 
 	*root = bar;
 	return s;
+}
+
+/* Level and icon like the battery; muted: the icon alone, dim; no mixer: none */
+static void update_volume(struct statusbar *s, const struct gui_ctx *c)
+{
+	int vol = c->audio.available ? c->audio.volume : -1;
+
+	if (vol == s->shown_volume)
+		return;
+	s->shown_volume = vol;
+	lv_obj_set_hidden(s->volume, vol < 0);
+	if (vol < 0)
+		return;
+	if (vol == 0)
+		lv_label_set_text(s->volume, ui_volume_symbol(0));
+	else
+		lv_label_set_text_fmt(s->volume, "%d%% %s", vol, ui_volume_symbol(vol));
+	lv_obj_set_style_text_color(s->volume, vol == 0 ? UI_COLOR_DIM : lv_color_white(), 0);
 }
 
 /* Connected: white; joining or waiting for an address: dim; otherwise none */
@@ -82,6 +109,8 @@ static void statusbar_update(void *self, const struct gui_ctx *c, uint32_t chang
 	struct statusbar *s = self;
 	int flags = c->power.charging | c->power.online << 1 | c->power.available << 2;
 
+	if (changed & CTX_AUDIO)
+		update_volume(s, c);
 	if (changed & CTX_WIFI)
 		update_wifi(s, c);
 	if (!(changed & CTX_POWER) || (flags == s->shown_flags && c->power.capacity == s->shown_cap))
@@ -106,7 +135,7 @@ static void statusbar_deinit(void *self)
 
 const struct widget_ops statusbar_widget = {
 	.name = "statusbar",
-	.deps = CTX_POWER | CTX_WIFI,
+	.deps = CTX_POWER | CTX_AUDIO | CTX_WIFI,
 	.init = statusbar_init,
 	.update = statusbar_update,
 	.deinit = statusbar_deinit,

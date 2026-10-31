@@ -44,6 +44,8 @@ void screens_deinit(void);
 void ui_toast(const char *text);
 /* Volume level over everything; repeated calls update the same box */
 void ui_volume_osd(int percent);
+/* LV_SYMBOL_MUTE / VOLUME_MID / VOLUME_MAX for a level */
+const char *ui_volume_symbol(int percent);
 /* How far a focus frame reaches out of its object: keep that much free */
 struct ui_frame {
 	int32_t hor, ver;

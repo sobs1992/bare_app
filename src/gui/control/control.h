@@ -26,6 +26,8 @@ struct control_ops {
 
 int control_start(const struct control_env *env);
 void control_stop(void);
+/* The power-off command to run once everything has stopped, NULL: just exit */
+const char *control_poweroff_cmd(void);
 
 extern const struct control_ops ctl_app, ctl_nav, ctl_power, ctl_display, ctl_system, ctl_settings,
 	ctl_audio, ctl_wifi;

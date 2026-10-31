@@ -87,5 +87,6 @@ const struct platform platform_oga = {
 		.ctrl = "/var/run/wpa_supplicant/wlan0" } },
 #endif
 	.quit_combo = GP_BIT(GP_F6),
+	.poweroff = "/sbin/poweroff",	/* busybox: init runs rcK, then powers off */
 	.config_path = "/etc/bare_app.conf",
 };

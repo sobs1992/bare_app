@@ -5,6 +5,7 @@
  * modules); the view thread is started by view_start(). See
  * docs/ARCHITECTURE.md.
  */
+#include <errno.h>
 #include <getopt.h>
 #include <poll.h>
 #include <pthread.h>
@@ -173,6 +174,13 @@ out:
 	bus_deinit();
 	mainloop_free(ml);
 	close(sfd);
+	if (ret == 0 && control_poweroff_cmd()) {
+		LOGI(TAG, "powering off: %s", control_poweroff_cmd());
+		fflush(NULL);
+		execl(control_poweroff_cmd(), control_poweroff_cmd(), (char *)NULL);
+		LOGE(TAG, "%s: %s", control_poweroff_cmd(), strerror(errno));
+		return 1;
+	}
 	LOGI(TAG, "bye");
 	return ret;
 }

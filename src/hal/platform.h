@@ -34,6 +34,9 @@ struct platform {
 	struct hal_dev wifi;			/* hal_wifi_ops, optional */
 	/* GP_BIT() mask: pressing all of them quits the application */
 	uint32_t quit_combo;
+	/* Run after Quit in the menu has closed the application: turns the
+	 * device off. NULL: Quit only quits (the quit combo always does). */
+	const char *poweroff;
 	/* settings file ("~/" = $HOME), NULL: nothing is kept between runs */
 	const char *config_path;
 };

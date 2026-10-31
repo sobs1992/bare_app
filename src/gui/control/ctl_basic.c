@@ -9,22 +9,34 @@
 #include "hal/platform.h"
 #include "services/config.h"
 
-/* ---- app: quitting ---------------------------------------------------- */
+/* ---- app: quitting, powering off -------------------------------------- */
 
 static struct mainloop *app_loop;
+static const char *app_poweroff_avail, *app_poweroff;
 
 static int app_init(const struct control_env *env)
 {
 	app_loop = env->ml;
+	app_poweroff_avail = env->pf->poweroff;
 	return 0;
 }
 
 static void app_action(const struct gui_action *a)
 {
-	if (a->type == ACT_QUIT) {
+	if (a->type == ACT_POWER_OFF && app_poweroff_avail) {
+		LOGI("app", "power off requested");
+		app_poweroff = app_poweroff_avail;
+		mainloop_quit(app_loop);
+	} else if (a->type == ACT_QUIT || a->type == ACT_POWER_OFF) {
 		LOGI("app", "quit requested");
 		mainloop_quit(app_loop);
 	}
+}
+
+/* main() runs it after the screen has gone back to the console */
+const char *control_poweroff_cmd(void)
+{
+	return app_poweroff;
 }
 
 const struct control_ops ctl_app = {

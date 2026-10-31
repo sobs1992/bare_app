@@ -25,7 +25,7 @@ static const struct entry entries[] = {
 #ifdef CONFIG_SCREEN_LAYERS
 	{ LV_SYMBOL_IMAGE, S_LAYERS, ACT_OPEN_SCREEN, SCREEN_LAYERS },
 #endif
-	{ LV_SYMBOL_POWER, S_QUIT, ACT_QUIT, 0 },
+	{ LV_SYMBOL_POWER, S_QUIT, ACT_POWER_OFF, 0 },
 };
 
 static void on_click(lv_event_t *e)

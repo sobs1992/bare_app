@@ -76,6 +76,7 @@ const char *action_name(enum gui_action_type type)
 	case ACT_WIFI_CONNECT:   return "wifi-connect";
 	case ACT_WIFI_FORGET:    return "wifi-forget";
 	case ACT_QUIT:           return "quit";
+	case ACT_POWER_OFF:      return "power-off";
 	}
 	return "?";
 }

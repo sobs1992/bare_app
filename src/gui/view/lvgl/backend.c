@@ -57,6 +57,11 @@ static void osd_done(lv_timer_t *t)
 	memset(&osd, 0, sizeof(osd));	/* the one-shot timer deletes itself */
 }
 
+const char *ui_volume_symbol(int percent)
+{
+	return percent == 0 ? LV_SYMBOL_MUTE : percent < 50 ? LV_SYMBOL_VOLUME_MID : LV_SYMBOL_VOLUME_MAX;
+}
+
 void ui_volume_osd(int percent)
 {
 	if (!osd.box) {
@@ -84,8 +89,7 @@ void ui_volume_osd(int percent)
 	} else {
 		lv_timer_reset(osd.timer);
 	}
-	lv_label_set_text(osd.icon, percent == 0 ? LV_SYMBOL_MUTE :
-				    percent < 50 ? LV_SYMBOL_VOLUME_MID : LV_SYMBOL_VOLUME_MAX);
+	lv_label_set_text(osd.icon, ui_volume_symbol(percent));
 	lv_bar_set_value(osd.bar, percent, LV_ANIM_OFF);
 	lv_label_set_text_fmt(osd.value, "%d%%", percent);
 }

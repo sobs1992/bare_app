@@ -116,7 +116,9 @@ tools/oga.sh wad doom1.wad  # положить IWAD в /usr/share/games/doom/ (�
 На OGA экран выводится через DRM с аппаратными плоскостями (видео под UI, экран «Layers»),
 если DRM недоступен — через fbdev. Снимок: `kill -USR1 $(pidof bare_app)` → `/tmp/bare_app.ppm`
 (или `BARE_APP_SHOT`).
-Выход: F6 (`quit_combo` платформы), пункт Quit, SIGTERM/SIGINT.
+Выход: F6 (`quit_combo` платформы), SIGTERM/SIGINT. Пункт меню «Выход» на платформе
+с командой `poweroff` (OGA: `/sbin/poweroff`) после выхода выключает устройство,
+на ПК просто закрывает приложение.
 
 Шрифты с кириллицей пересоздаются так (нужен Pillow):
 
