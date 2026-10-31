@@ -73,6 +73,9 @@ if(BARE_APP_WITH_LVGL)
 	set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
 	set(LV_FETCH_DEPENDENCIES OFF CACHE BOOL "" FORCE)
 	set(LV_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
+	# One self-contained binary: Buildroot passes BUILD_SHARED_LIBS=ON, and
+	# a liblvgl.so would not be installed (LVGL install rules are off)
+	set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 	add_subdirectory(${LVGL_DIR} lvgl EXCLUDE_FROM_ALL)
 
 	add_library(bare_app_view_lvgl STATIC
