@@ -7,4 +7,6 @@ CONFIG_INPUT_EVDEV=y
 CONFIG_VIEW_LVGL=y
 CONFIG_VIEW_HEADLESS=y
 CONFIG_GAME_DOOM=y
+# Doom's settings and saved games on the SDK's data partition
+CONFIG_GAME_DOOM_DIR="/data/doom"
 CONFIG_GAME_HOMM3=y

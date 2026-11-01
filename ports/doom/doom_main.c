@@ -113,9 +113,7 @@ static unsigned char key_for(enum gp_button b)
 	case GP_X:      return KEY_RSHIFT;		/* run */
 	case GP_L1:     return KEY_STRAFE_L;
 	case GP_R1:     return KEY_STRAFE_R;
-	case GP_L2:     return KEY_TAB;		/* automap */
-	case GP_R2:     return KEY_FIRE;
-	case GP_SELECT: return KEY_TAB;
+	case GP_SELECT: return KEY_TAB;		/* automap */
 	case GP_START:
 	case GP_F1:     return KEY_ESCAPE;		/* menu */
 	case GP_F2:     return KEY_F2;		/* save */

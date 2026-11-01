@@ -5,11 +5,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "core/log.h"
 
 #define TAG "homm3"
+
+/* VCMI looks for the game in <dir>/vcmi of each $XDG_DATA_DIRS entry: this
+ * directory gets the link vcmi -> the game directory */
+#define LINK_DIR "/tmp/bare_app_homm3"
+
+const char *homm3_game(void)
+{
+	const char *env = getenv("BARE_APP_HOMM3_GAME");
+
+	return env && *env ? env : CONFIG_GAME_HOMM3_GAME;
+}
 
 const char *homm3_data(void)
 {
@@ -24,7 +36,7 @@ const char *homm3_missing(void)
 
 	if (access(CONFIG_GAME_HOMM3_PROGRAM, X_OK) < 0)
 		return CONFIG_GAME_HOMM3_PROGRAM;
-	snprintf(path, sizeof(path), "%s/vcmi/Data", homm3_data());
+	snprintf(path, sizeof(path), "%s/Data", homm3_game());
 	if (access(path, R_OK) < 0)
 		return path;
 	return NULL;
@@ -41,6 +53,14 @@ static int alsa_name(const char *node, char *buf, size_t size)
 	return 0;
 }
 
+static int game_link(void)
+{
+	if (mkdir(LINK_DIR, 0755) < 0 && errno != EEXIST)
+		return -1;
+	unlink(LINK_DIR "/vcmi");
+	return symlink(homm3_game(), LINK_DIR "/vcmi");
+}
+
 struct game_proc *homm3_start(int width, int height, const char *pcm, const char *lang)
 {
 	char xdg_data[PATH_MAX + 16], xdg_config[PATH_MAX + 32], xdg_cache[PATH_MAX + 32];
@@ -51,6 +71,10 @@ struct game_proc *homm3_start(int width, int height, const char *pcm, const char
 	if (missing) {
 		LOGE(TAG, "%s: %s", missing, strerror(ENOENT));
 		errno = ENOENT;
+		return NULL;
+	}
+	if (game_link() < 0) {
+		LOGE(TAG, "%s/vcmi: %s", LINK_DIR, strerror(errno));
 		return NULL;
 	}
 	snprintf(xdg_data, sizeof(xdg_data), "XDG_DATA_HOME=%s", homm3_data());
@@ -65,7 +89,7 @@ struct game_proc *homm3_start(int width, int height, const char *pcm, const char
 		"SDL_VIDEODRIVER=dummy",
 		/* SIGTERM ends the game; SDL would turn it into "quit?" */
 		"SDL_NO_SIGNAL_HANDLERS=1",
-		xdg_data, xdg_config, xdg_cache, language,
+		"XDG_DATA_DIRS=" LINK_DIR, xdg_data, xdg_config, xdg_cache, language,
 		audiodev[0] ? "SDL_AUDIODRIVER=alsa" : "SDL_AUDIODRIVER=dummy",
 		audiodev[0] ? audiodev : NULL,
 		NULL,
@@ -73,6 +97,7 @@ struct game_proc *homm3_start(int width, int height, const char *pcm, const char
 	struct game_spawn s = { .path = CONFIG_GAME_HOMM3_PROGRAM, .argv = argv, .env = env,
 				.dir = homm3_data(), .width = width, .height = height };
 
-	LOGI(TAG, "data %s, sound %s, language %s", homm3_data(), audiodev[0] ? name : "off", lang);
+	LOGI(TAG, "game %s, data %s, sound %s, language %s", homm3_game(), homm3_data(),
+	     audiodev[0] ? name : "off", lang);
 	return game_proc_start(&s);
 }

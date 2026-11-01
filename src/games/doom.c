@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -11,11 +12,25 @@
 #define TAG "doom"
 #define GAME "bare_app_doom"
 
+/* IWADs looked for in CONFIG_GAME_DOOM_GAME, the full games first */
+static const char *const iwads[] = {
+	"doom2.wad", "plutonia.wad", "tnt.wad", "doom.wad",
+	"freedoom2.wad", "freedoom1.wad", "doom1.wad",
+};
+
 const char *doom_wad(void)
 {
+	static char path[PATH_MAX];
 	const char *env = getenv("BARE_APP_DOOM_WAD");
 
-	return env && *env ? env : CONFIG_GAME_DOOM_WAD;
+	if (env && *env)
+		return env;
+	for (size_t i = 0; CONFIG_GAME_DOOM_GAME[0] && i < sizeof(iwads) / sizeof(iwads[0]); i++) {
+		snprintf(path, sizeof(path), "%s/%s", CONFIG_GAME_DOOM_GAME, iwads[i]);
+		if (access(path, R_OK) == 0)
+			return path;
+	}
+	return CONFIG_GAME_DOOM_WAD;
 }
 
 struct game_proc *doom_start(int width, int height, const char *pcm)

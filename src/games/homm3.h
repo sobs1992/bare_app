@@ -12,9 +12,12 @@
 
 #include "game_proc.h"
 
+/* Game directory (Data, Maps, Mp3, Mods): $BARE_APP_HOMM3_GAME or
+ * CONFIG_GAME_HOMM3_GAME */
+const char *homm3_game(void);
+
 /* Data directory: $BARE_APP_HOMM3_DATA or CONFIG_GAME_HOMM3_DATA. VCMI
- * finds the game in <data>/vcmi (Data, Maps, Mp3, Mods) and keeps its
- * settings in <data>/config/vcmi. */
+ * keeps saved games in <data>/vcmi and its settings in <data>/config/vcmi. */
 const char *homm3_data(void);
 
 /* What is missing to start the game (the program or the game data), NULL

@@ -199,13 +199,24 @@ config GAME_DOOM
 
 if GAME_DOOM
 
+config GAME_DOOM_GAME
+	string "Directory with IWADs"
+	default "/games/doom"
+	help
+	  The first IWAD found here is played, in this order: doom2.wad,
+	  plutonia.wad, tnt.wad, doom.wad, freedoom2.wad, freedoom1.wad,
+	  doom1.wad (on FAT the case of the names does not matter). /games
+	  is the SDK's FAT32 games partition, written from a PC. Empty: not
+	  looked at.
+
 config GAME_DOOM_WAD
 	string "IWAD file"
 	default "/usr/share/games/doom/doom1.wad"
 	help
-	  The game data: doom1.wad (shareware), doom.wad, doom2.wad...
-	  BARE_APP_DOOM_WAD overrides it at run time. The SDK package
-	  installs the shareware one when asked to.
+	  The game data when GAME_DOOM_GAME has none: doom1.wad
+	  (shareware), doom.wad, doom2.wad... BARE_APP_DOOM_WAD overrides
+	  both at run time. The SDK package installs the shareware one when
+	  asked to.
 
 config GAME_DOOM_DIR
 	string "Directory for Doom's settings and saved games"
@@ -224,9 +235,9 @@ config GAME_HOMM3
 	  bare-app.HOMM3=y), started for each game like Doom. It draws in
 	  software into twice the video layer and sends it scaled down 2:1,
 	  or 1:1 around the cursor (L1 switches); the gamepad drives it as
-	  a game controller. The game data (Data, Maps, Mp3 of an original
-	  installation, optionally the Horn of the Abyss mod) is not
-	  included: the SDK's scripts/homm3-install.sh copies it.
+	  a game controller. The game files (Data, Maps, Mp3 of an original
+	  installation, optionally the Horn of the Abyss mod) are not
+	  included: see GAME_HOMM3_GAME.
 
 if GAME_HOMM3
 
@@ -234,14 +245,25 @@ config GAME_HOMM3_PROGRAM
 	string "VCMI client"
 	default "/usr/bin/vcmiclient"
 
+config GAME_HOMM3_GAME
+	string "Game directory"
+	default "/games/heroes3"
+	help
+	  The game files: Data, Maps and Mp3 of an original installation
+	  and VCMI's mods in Mods, each in a directory named by its id
+	  (hota). Every mod there is active: remove its directory to turn
+	  it off. May be read-only. BARE_APP_HOMM3_GAME overrides it at run
+	  time. /games is the SDK's FAT32 games partition, written from a
+	  PC or by the SDK's scripts/homm3-install.sh.
+
 config GAME_HOMM3_DATA
 	string "Data directory"
 	default "/data"
 	help
-	  VCMI finds the game in <dir>/vcmi (Data, Maps, Mp3, Mods) and
-	  keeps its settings in <dir>/config/vcmi and its logs in
-	  <dir>/cache/vcmi. BARE_APP_HOMM3_DATA overrides it at run time.
-	  /data is the SDK's data partition.
+	  VCMI keeps saved games in <dir>/vcmi/Saves, its settings in
+	  <dir>/config/vcmi and its logs in <dir>/cache/vcmi; game files
+	  and mods in <dir>/vcmi are found too. BARE_APP_HOMM3_DATA
+	  overrides it at run time. /data is the SDK's data partition.
 
 endif
 

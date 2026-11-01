@@ -10,7 +10,8 @@
 
 #include "game_proc.h"
 
-/* IWAD: $BARE_APP_DOOM_WAD or CONFIG_GAME_DOOM_WAD */
+/* IWAD: $BARE_APP_DOOM_WAD, else the first known one in
+ * CONFIG_GAME_DOOM_GAME, else CONFIG_GAME_DOOM_WAD */
 const char *doom_wad(void);
 
 /* Start the game for a width x height video layer, with sound on the ALSA

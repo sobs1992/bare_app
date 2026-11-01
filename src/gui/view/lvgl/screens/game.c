@@ -164,7 +164,7 @@ static bool doom_missing(char *buf, size_t size)
 	return true;
 }
 
-static const struct game_desc doom_desc = { VIDEO_DOOM, S_DOOM, S_DOOM_HINT, false,
+static const struct game_desc doom_desc = { VIDEO_DOOM, S_DOOM, S_DOOM_HINT, true,
 					    doom_missing };
 
 static void *doom_init(lv_obj_t *parent, lv_obj_t **root)
