@@ -242,12 +242,24 @@ void DG_SleepMs(uint32_t ms)
 	nanosleep(&ts, NULL);
 }
 
+/*
+ * bare_app stops the game while it is minimised (SIGSTOP). The game's clock
+ * leaves such gaps out: Doom would otherwise run the missed tics at once.
+ */
+#define TICKS_GAP_MS 500
+
 uint32_t DG_GetTicksMs(void)
 {
+	static uint32_t last, skipped;
 	struct timespec ts;
+	uint32_t now;
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+	now = (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+	if (last && now - last > TICKS_GAP_MS)
+		skipped += now - last;
+	last = now;
+	return now - skipped;
 }
 
 int DG_GetKey(int *pressed, unsigned char *key)

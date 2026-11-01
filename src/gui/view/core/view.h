@@ -52,7 +52,8 @@ void view_unsubscribe(int id);
 const struct gui_ctx *view_ctx(void);
 
 /* Raw gamepad events to one owner (e.g. an input test screen). While
- * grabbed no UI keys are produced; the quit combo still works. Release
+ * grabbed no UI keys are produced; the quit combo still works (over a
+ * running game it ends the game instead of the application). Release
  * only drops the grab if 'ud' still owns it: a new screen may already
  * have grabbed before the old one is deleted. */
 typedef void (*view_grab_cb)(const struct gp_event *ev, void *ud);
@@ -81,6 +82,16 @@ int view_video_set(enum video_source src);
 
 /* Gamepad events for a source that takes them (a game) */
 void view_video_input(const struct gp_event *ev);
+
+/*
+ * A game can be minimised: its process stops in the background and keeps
+ * its last frame in the layer, under the UI. F5 on any screen without a
+ * grab opens its screen again, and view_video_set() of the same source
+ * continues it; any other source ends it.
+ */
+void view_video_minimize(void);
+/* The minimised game, VIDEO_NONE if there is none */
+enum video_source view_video_minimized(void);
 
 /* Frames shown since the source was set (a game that is still loading: 0) */
 unsigned view_video_frames(void);

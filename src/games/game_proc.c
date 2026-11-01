@@ -33,6 +33,9 @@ struct game_proc {
 	unsigned front;		/* buffer the view thread reads */
 	struct hal_fb fb;
 	bool ended;
+	bool paused;
+	uint32_t held;		/* GP_BIT()s sent as pressed */
+	uint32_t axes;		/* bits of the axes sent off centre */
 };
 
 int game_proc_mkdir(const char *dir, char *buf, size_t size)
@@ -214,11 +217,23 @@ const struct hal_fb *game_proc_frame(struct game_proc *g, bool *ended)
 	return &g->fb;
 }
 
+static void send_msg(struct game_proc *g, const struct game_msg *m)
+{
+	if (send(g->sock, m, sizeof(*m), MSG_DONTWAIT | MSG_NOSIGNAL) < 0) {
+		LOGD(TAG, "input %d/%d lost: %s", m->type, m->code, strerror(errno));
+		return;
+	}
+	if (m->type == GAME_MSG_BUTTON && m->code < 32)
+		g->held = m->pressed ? g->held | GP_BIT(m->code) : g->held & ~GP_BIT(m->code);
+	else if (m->type == GAME_MSG_AXIS && m->code < 32)
+		g->axes = m->value ? g->axes | 1u << m->code : g->axes & ~(1u << m->code);
+}
+
 void game_proc_input(struct game_proc *g, const struct gp_event *ev)
 {
 	struct game_msg m = { .code = (uint8_t)ev->code };
 
-	if (g->ended)
+	if (g->ended || g->paused)
 		return;
 	if (ev->type == GP_EV_BUTTON) {
 		if (ev->repeat)
@@ -230,8 +245,34 @@ void game_proc_input(struct game_proc *g, const struct gp_event *ev)
 		m.type = GAME_MSG_AXIS;
 		m.value = (int16_t)lrintf(ev->value * GAME_AXIS_MAX);
 	}
-	if (send(g->sock, &m, sizeof(m), MSG_DONTWAIT | MSG_NOSIGNAL) < 0)
-		LOGD(TAG, "input %d/%d lost: %s", m.type, m.code, strerror(errno));
+	send_msg(g, &m);
+}
+
+void game_proc_pause(struct game_proc *g)
+{
+	unsigned i;
+
+	if (g->ended || g->paused)
+		return;
+	/* the game reads them when it goes on: nothing stays held meanwhile */
+	for (i = 0; i < 32; i++) {
+		if (g->held & GP_BIT(i))
+			send_msg(g, &(struct game_msg){ .type = GAME_MSG_BUTTON, .code = i });
+		if (g->axes & 1u << i)
+			send_msg(g, &(struct game_msg){ .type = GAME_MSG_AXIS, .code = i });
+	}
+	kill(g->pid, SIGSTOP);
+	g->paused = true;
+	LOGI(TAG, "paused (pid %d)", (int)g->pid);
+}
+
+void game_proc_resume(struct game_proc *g)
+{
+	if (!g->paused)
+		return;
+	kill(g->pid, SIGCONT);
+	g->paused = false;
+	LOGI(TAG, "resumed (pid %d)", (int)g->pid);
 }
 
 /* waitpid() with a deadline; 0 if the process is still there */
@@ -257,6 +298,8 @@ int game_proc_stop(struct game_proc *g)
 		return 0;
 	if (!g->ended)
 		kill(g->pid, SIGTERM);
+	if (g->paused)
+		kill(g->pid, SIGCONT);	/* a stopped process gets SIGTERM only then */
 	if (wait_for(g->pid, &status, STOP_WAIT_MS) == 0) {
 		LOGW(TAG, "the game does not stop, killing it");
 		kill(g->pid, SIGKILL);

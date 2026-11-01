@@ -39,12 +39,17 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_LANGUAGE]        = { "Language" RU("Язык") },
 	[S_LANG_NAME]       = { "English" RU("Русский") },
 	[S_DOOM]            = { "Doom" },
-	[S_DOOM_HINT]       = { "F1  menu    F5  leave" RU("F1  меню    F5  выйти") },
+	[S_DOOM_HINT]       = { "F1  menu    F5  minimise\nF6 (hold)  quit"
+				RU("F1  меню    F5  свернуть\nF6 (держать)  выйти") },
 	[S_DOOM_NO_WAD_FMT] = { "No Doom IWAD file:\n%s\nB  back"
 				RU("Нет IWAD-файла Doom:\n%s\nB  назад") },
 	[S_HOMM3]           = { "Heroes III" RU("Герои III") },
-	[S_HOMM3_HINT]      = { "L1  zoom    F5  leave\nL2 R2  volume"
-				RU("L1  масштаб    F5  выйти\nL2 R2  громкость") },
+	[S_HOMM3_HINT]      = { "L1  zoom    F3  cancel    F4  options\n"
+				"F1  Ctrl    F2  Shift    L2 R2  volume\n"
+				"F5  minimise    F6 (hold)  quit"
+				RU("L1  масштаб    F3  отмена    F4  меню\n"
+				   "F1  Ctrl    F2  Shift    L2 R2  громкость\n"
+				   "F5  свернуть    F6 (держать)  выйти") },
 	[S_GAME_LOADING]    = { "Loading..." RU("Загрузка...") },
 	[S_GAME_MISSING_FMT] = { "Not found:\n%s\nB  back" RU("Не найдено:\n%s\nB  назад") },
 	[S_GAME_FAILED]     = { "The game did not start, see the log\nB  back"
@@ -86,6 +91,12 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_WIFI_FAILED]     = { "Could not connect" RU("Не удалось подключиться") },
 	[S_QUIT_HOLD]       = { "Keep holding to quit" RU("Удерживайте, чтобы выйти") },
 	[S_POWER_HOLD]      = { "Keep holding to turn off" RU("Удерживайте, чтобы выключить") },
+	[S_GAME_QUIT_HOLD]  = { "Keep holding to quit the game"
+				RU("Удерживайте, чтобы выйти из игры") },
+	[S_GAME_MINIMIZED_FMT] = { "%s is minimised.\nClose it and start %s?"
+				   RU("Игра «%s» свёрнута.\nЗакрыть её и запустить «%s»?") },
+	[S_CANCEL]          = { "Cancel" RU("Отмена") },
+	[S_CLOSE_AND_START] = { "Close and start" RU("Закрыть и запустить") },
 };
 
 static int lang = LANG_EN;

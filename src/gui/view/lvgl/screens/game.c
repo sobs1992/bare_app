@@ -2,9 +2,11 @@
  * Games (GAME_DOOM, GAME_HOMM3): the game draws into the video layer under
  * a transparent screen and gets the gamepad. "Loading..." stays until its
  * first frame, then a hint shows the controls. Games that do not need the
- * triggers leave them for the volume (L2 down, R2 up). F5 or Quit in the
- * game comes back here (the quit combo still ends the application). When
- * the game cannot start or ends with an error the screen says why.
+ * triggers leave them for the volume (L2 down, R2 up). F5 minimises the
+ * game: it stops in the background, and F5 or its menu entry brings it
+ * back. Holding the quit combo (F6) or Quit in the game ends it and comes
+ * back here. When the game cannot start or ends with an error the screen
+ * says why.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,8 +74,10 @@ static void on_input(const struct gp_event *ev, void *ud)
 	struct game_screen *g = ud;
 
 	if (ev->type == GP_EV_BUTTON && ev->code == GP_F5) {
-		if (ev->pressed && !ev->repeat)
-			gui_action_post(ACT_BACK, 0);	/* deinit stops the game */
+		if (ev->pressed && !ev->repeat) {
+			view_video_minimize();
+			gui_action_post(ACT_BACK, 0);	/* deinit leaves it running */
+		}
 		return;
 	}
 	if (ev->type == GP_EV_BUTTON && g->desc->trigger_volume &&
@@ -114,10 +118,14 @@ static void *game_init(const struct game_desc *desc, lv_obj_t **root)
 	g->desc = desc;
 	g->scr = lv_obj_create(NULL);
 	*root = g->scr;
-	if (view_video_set(desc->src) == 0) {
+	if (view_video_set(desc->src) == 0) {	/* or back from minimised */
 		lv_obj_set_style_bg_opa(g->scr, LV_OPA_TRANSP, 0);
 		view_input_grab(on_input, g);
 		view_video_on_end(on_end, g);
+		if (view_video_frames()) {
+			ui_toast(tr(desc->hint));
+			return g;
+		}
 		g->loading = lv_label_create(g->scr);	/* over the black video layer */
 		lv_obj_set_style_text_color(g->loading, lv_color_white(), 0);
 		lv_obj_set_style_text_font(g->loading, UI_FONT_MID, 0);
@@ -142,7 +150,8 @@ static void game_deinit(void *self)
 		lv_timer_delete(g->wait);
 	view_input_release(g);
 	view_video_on_end(NULL, NULL);
-	view_video_set(VIDEO_NONE);
+	if (view_video_minimized() == VIDEO_NONE)
+		view_video_set(VIDEO_NONE);
 	free(g);
 }
 

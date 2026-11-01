@@ -35,6 +35,10 @@ int game_proc_fd(struct game_proc *g);
 const struct hal_fb *game_proc_frame(struct game_proc *g, bool *ended);
 /* Buttons (auto-repeats are not sent) and axes */
 void game_proc_input(struct game_proc *g, const struct gp_event *ev);
+/* The game stops in the background (SIGSTOP) after letting go of the
+ * buttons and axes it was sent as held; resume continues it */
+void game_proc_pause(struct game_proc *g);
+void game_proc_resume(struct game_proc *g);
 /* Ends the game if it still runs (SIGTERM, then SIGKILL); returns its
  * waitpid() status */
 int game_proc_stop(struct game_proc *g);

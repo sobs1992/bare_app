@@ -48,6 +48,7 @@ static struct {
 	void *grab_ud;
 	bool quit_sent;
 	struct ml_timer *quit_hold;	/* the quit combo is held: quits when it fires */
+	bool quit_game;			/* ...ends the game in front instead */
 	struct ml_timer *power_hold;	/* the power key is down: warns, then turns off */
 	bool power_down;		/* a press of it that counts is going on */
 	bool power_warned;		/* ...and has gone past POWER_SHORT_MS */
@@ -59,6 +60,7 @@ static struct {
 	struct mailbox *video_mb;
 	struct testpattern *video_tp;
 	struct game_proc *video_game;	/* VIDEO_DOOM, VIDEO_HOMM3 */
+	bool video_minimized;		/* video_game is stopped in the background */
 	unsigned video_frames;
 	view_video_end_cb video_end;
 	void *video_end_ud;
@@ -158,27 +160,38 @@ static void notify_backend(enum notify_kind kind, int value)
 		v.be->on_notify(&n);
 }
 
+static bool game_in_front(void);
+static void game_quit(void);
+static void game_unminimize(void);
+
 static void on_quit_hold(void *ud)
 {
 	(void)ud;
 	v.quit_hold = NULL;
+	if (v.quit_game) {
+		notify_backend(NOTIFY_GAME_QUIT_HOLD, 0);
+		game_quit();
+		return;
+	}
 	v.quit_sent = true;
 	gui_action_post(ACT_QUIT, 0);
 }
 
-/* Quitting takes holding the combo: the backend warns meanwhile */
+/* Quitting takes holding the combo: the backend warns meanwhile. Over a
+ * running game the combo ends the game, not the application. */
 static void quit_combo_changed(void)
 {
 	uint32_t combo = v.pf->quit_combo;
 	bool held = (input_buttons() & combo) == combo;
 
 	if (held && !v.quit_hold && !v.quit_sent) {
+		v.quit_game = game_in_front();
 		v.quit_hold = mainloop_add_timer(v.ml, HOLD_MS, 0, on_quit_hold, NULL);
-		notify_backend(NOTIFY_QUIT_HOLD, HOLD_MS);
+		notify_backend(v.quit_game ? NOTIFY_GAME_QUIT_HOLD : NOTIFY_QUIT_HOLD, HOLD_MS);
 	} else if (!held && v.quit_hold) {
 		mainloop_timer_cancel(v.ml, v.quit_hold);
 		v.quit_hold = NULL;
-		notify_backend(NOTIFY_QUIT_HOLD, 0);
+		notify_backend(v.quit_game ? NOTIFY_GAME_QUIT_HOLD : NOTIFY_QUIT_HOLD, 0);
 	}
 }
 
@@ -294,6 +307,11 @@ static void on_gamepad(const struct gp_event *ev, void *ud)
 	}
 	if (ev->type != GP_EV_BUTTON)
 		return;
+	if (ev->code == GP_F5) {
+		if (ev->pressed && !ev->repeat)
+			game_unminimize();
+		return;
+	}
 	/* the triggers mean nothing to the UI: volume, as in games that leave them */
 	if (ev->code == GP_L2 || ev->code == GP_R2) {
 		if (ev->pressed)
@@ -390,27 +408,68 @@ static void on_game(int fd, short revents, void *ud)
 {
 	struct hal_layer *l = video_layer();
 	const struct hal_fb *fb;
-	bool ended;
+	bool ended, minimized = v.video_minimized;
 	int status;
 
 	(void)revents;
 	(void)ud;
 	fb = game_proc_frame(v.video_game, &ended);
-	if (fb && l)
+	if (fb && l && !minimized)
 		video_show(l, fb);
 	if (!ended)
 		return;
 	mainloop_remove_fd(v.ml, fd);
 	status = game_proc_stop(v.video_game);
 	v.video_game = NULL;
+	v.video_minimized = false;
 	LOGI(TAG, "video: %u frames shown", v.video_frames);
 	if (l)
 		video_clear(l);
 	v.video_src = VIDEO_NONE;
-	if (v.video_end)
+	/* a minimised game has no screen that would listen */
+	if (v.video_end && !minimized)
 		v.video_end(status, v.video_end_ud);
 }
 #endif
+
+/* A game that takes the gamepad now: the quit combo ends it */
+static bool game_in_front(void)
+{
+#ifdef HAVE_GAMES
+	return v.video_game && !v.video_minimized;
+#else
+	return false;
+#endif
+}
+
+/* The quit combo held over a game: as if it was quit in its menu */
+static void game_quit(void)
+{
+	view_video_end_cb cb = v.video_end;
+	void *ud = v.video_end_ud;
+
+	if (!game_in_front())
+		return;
+	LOGI(TAG, "quit combo: ending the game");
+	view_video_set(VIDEO_NONE);
+	if (cb)
+		cb(0, ud);	/* exit status 0 */
+}
+
+/* F5 outside a game: back to the minimised one */
+static void game_unminimize(void)
+{
+	switch (view_video_minimized()) {
+	case VIDEO_DOOM:
+		gui_action_post(ACT_OPEN_SCREEN, SCREEN_DOOM);
+		break;
+	case VIDEO_HOMM3:
+		gui_action_post(ACT_OPEN_SCREEN, SCREEN_HOMM3);
+		break;
+	default:
+		break;
+	}
+}
 
 #ifdef HAVE_VIDEO_SOURCES
 static void video_stop(struct hal_layer *l)
@@ -433,6 +492,7 @@ static void video_stop(struct hal_layer *l)
 		mainloop_remove_fd(v.ml, game_proc_fd(v.video_game));
 		game_proc_stop(v.video_game);
 		v.video_game = NULL;
+		v.video_minimized = false;
 		LOGI(TAG, "video: %u frames shown", v.video_frames);
 	}
 #endif
@@ -447,6 +507,26 @@ void view_video_input(const struct gp_event *ev)
 		game_proc_input(v.video_game, ev);
 #else
 	(void)ev;
+#endif
+}
+
+void view_video_minimize(void)
+{
+#ifdef HAVE_GAMES
+	if (!game_in_front())
+		return;
+	game_proc_pause(v.video_game);
+	v.video_minimized = true;
+	LOGI(TAG, "video source %d minimised", v.video_src);
+#endif
+}
+
+enum video_source view_video_minimized(void)
+{
+#ifdef HAVE_GAMES
+	return v.video_minimized ? v.video_src : VIDEO_NONE;
+#else
+	return VIDEO_NONE;
 #endif
 }
 
@@ -470,8 +550,17 @@ int view_video_set(enum video_source src)
 		errno = ENODEV;
 		return src == VIDEO_NONE ? 0 : -1;
 	}
-	if (src == v.video_src)
+	if (src == v.video_src) {
+#ifdef HAVE_GAMES
+		if (v.video_minimized) {
+			/* its last frame is still in the layer, the count goes on */
+			game_proc_resume(v.video_game);
+			v.video_minimized = false;
+			LOGI(TAG, "video source %d back", src);
+		}
+#endif
 		return 0;
+	}
 #ifdef HAVE_VIDEO_SOURCES
 	video_stop(l);
 #endif

@@ -35,7 +35,9 @@ enum str_id {
 	S_WIFI_KEY_HINT_FMT,	/* "%s": the OK key's symbol */
 	S_WIFI_KEY_SHORT,
 	S_WIFI_JOINED, S_WIFI_WRONG_KEY, S_WIFI_FAILED,
-	S_QUIT_HOLD, S_POWER_HOLD,
+	S_QUIT_HOLD, S_POWER_HOLD, S_GAME_QUIT_HOLD,
+	S_GAME_MINIMIZED_FMT,	/* "%s %s": the minimised game, the one picked */
+	S_CANCEL, S_CLOSE_AND_START,
 	S_COUNT
 };
 

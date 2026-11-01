@@ -19,6 +19,7 @@ enum notify_kind {
 	NOTIFY_QUIT_HOLD,	/* view core to backend: quit combo held, value = ms
 				   until it quits; 0 released before */
 	NOTIFY_POWER_HOLD,	/* the same for the power key and turning the device off */
+	NOTIFY_GAME_QUIT_HOLD,	/* the same for the quit combo over a game: ends the game */
 };
 
 struct gui_notify {

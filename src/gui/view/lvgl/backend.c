@@ -242,6 +242,9 @@ static void backend_notify(const struct gui_notify *n)
 	case NOTIFY_POWER_HOLD:
 		hold(S_POWER_HOLD, n->value);
 		return;
+	case NOTIFY_GAME_QUIT_HOLD:
+		hold(S_GAME_QUIT_HOLD, n->value);
+		return;
 	case NOTIFY_WIFI_CONNECTED:
 		lv_snprintf(text, sizeof(text), LV_SYMBOL_WIFI "  %s", tr(S_WIFI_JOINED));
 		break;
