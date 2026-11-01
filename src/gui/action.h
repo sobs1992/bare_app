@@ -20,7 +20,10 @@ enum gui_action_type {
 	ACT_WIFI_CONNECT,	/* str = network, secret = key ("" none: open or saved) */
 	ACT_WIFI_FORGET,	/* str = network */
 	ACT_QUIT,
-	ACT_POWER_OFF,		/* Quit in the menu: quits and turns the device off if the platform can */
+	ACT_POWER_OFF,		/* Quit in the menu, holding the power key: quits and turns
+				   the device off if the platform can */
+	ACT_SCREEN_OFF,		/* arg = 1 backlight off (sleep, first stage), 0 back on */
+	ACT_SUSPEND,		/* sleep until woken (control answers NOTIFY_RESUMED) */
 };
 
 struct gui_action {

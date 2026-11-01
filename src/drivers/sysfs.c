@@ -120,6 +120,16 @@ static int backlight_set(void *h, int percent)
 	return write_int_file(path, (percent * b->max + 50) / 100);
 }
 
+/* bl_power: FB_BLANK_UNBLANK (0) or FB_BLANK_POWERDOWN (4) */
+static int backlight_power(void *h, bool on)
+{
+	struct backlight *b = h;
+	char path[160];
+
+	snprintf(path, sizeof(path), "%s/bl_power", b->p->path);
+	return write_int_file(path, on ? 0 : 4);
+}
+
 static void backlight_close(void *h)
 {
 	free(h);
@@ -130,5 +140,6 @@ const struct hal_backlight_ops backlight_sysfs = {
 	.open = backlight_open,
 	.get = backlight_get,
 	.set = backlight_set,
+	.power = backlight_power,
 	.close = backlight_close,
 };

@@ -142,6 +142,7 @@ struct hal_backlight_ops {
 	void *(*open)(const void *params);
 	int (*get)(void *h);			/* percent, -1 on error */
 	int (*set)(void *h, int percent);
+	int (*power)(void *h, bool on);		/* screen off and back, level kept; may be NULL */
 	void (*close)(void *h);
 };
 

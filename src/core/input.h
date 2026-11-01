@@ -19,6 +19,7 @@ enum gp_button {
 	GP_SELECT, GP_START, GP_MENU,
 	GP_F1, GP_F2, GP_F3, GP_F4, GP_F5, GP_F6,
 	GP_VOL_UP, GP_VOL_DOWN,
+	GP_POWER,		/* the view core keeps it: sleep */
 	GP_COUNT,
 	GP_NONE = -1
 };

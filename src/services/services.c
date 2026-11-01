@@ -159,6 +159,11 @@ int backlight_set(int percent)
 	return sv.bl ? sv.bl_ops->set(sv.bl, percent) : -1;
 }
 
+int backlight_power(bool on)
+{
+	return sv.bl && sv.bl_ops->power ? sv.bl_ops->power(sv.bl, on) : -1;
+}
+
 bool audio_available(void)
 {
 	return sv.mixer != NULL;

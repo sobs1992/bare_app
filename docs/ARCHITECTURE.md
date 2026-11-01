@@ -88,8 +88,8 @@ control делится по областям данных, а не по видж
 | `ctl_app` | `ACT_QUIT`, `ACT_POWER_OFF` | останавливает цикл control; после `ACT_POWER_OFF` main() запускает `poweroff` платформы, если он есть |
 | `ctl_nav` | `ACT_OPEN_SCREEN`, `ACT_BACK` | `CTX_NAV` (стек экранов) |
 | `ctl_system` | — | `CTX_SYSTEM` (платформа, модель из DT) |
-| `ctl_power` | `EV_POWER_CHANGED` | `CTX_POWER`, уведомления |
-| `ctl_display` | `ACT_SET_BRIGHTNESS` | `CTX_DISPLAY` (то, что подсветка реально приняла) |
+| `ctl_power` | `EV_POWER_CHANGED`, `ACT_SUSPEND` | `CTX_POWER`, уведомления; для `ACT_SUSPEND` запускает `suspend` платформы и ждёт пробуждения, затем `NOTIFY_RESUMED` |
+| `ctl_display` | `ACT_SET_BRIGHTNESS`, `ACT_SCREEN_OFF` | `CTX_DISPLAY` (то, что подсветка реально приняла); экран гасится питанием подсветки (`bl_power`), уровень сохраняется |
 | `ctl_audio` | `EV_MIXER_CHANGED`, `ACT_SET_VOLUME`, `ACT_VOLUME_STEP`, `ACT_SET_AUDIO_OUT` | `CTX_AUDIO`, `NOTIFY_VOLUME`; в режиме «авто» переключает выход по штекеру |
 | `ctl_wifi` | `EV_WIFI_*`, `ACT_WIFI_*` | `CTX_WIFI` (связь, адрес, сети рядом), уведомления о подключении и неверном ключе |
 
@@ -232,8 +232,12 @@ games/game_proc.c (поток view): game_proc_frame → копия в слой 
   («лупа»); L1 переключает.
 - Кнопки и стик VCMI получает как события SDL-геймпада (`SDL_PushEvent`), поэтому
   курсор, клики и горячие клавиши ведёт его собственная поддержка контроллера и её
-  раскладка (`config/keyBindingsConfig.json`). Крестовина изображает правый стик,
-  которым VCMI прокручивает карту.
+  раскладка (`config/keyBindingsConfig.json`). Карту приключений крестовина
+  прокручивает напрямую (связь отдаёт её направление `AdventureMapInterface`), в
+  остальных окнах изображает правый стик (жест прокрутки списков), в лупе двигает
+  лупу до следующего движения стика. Прокрутка у края экрана требует наклона стика
+  к этому краю. L2/R2 игре не передаются: экран игры bare_app меняет ими громкость
+  (`game_desc.trigger_volume`; Doom триггеры оставляет себе).
 
 Нюанс LVGL: при ARGB-дисплее тема делает нижний слой (`lv_layer_bottom`)
 непрозрачным, поэтому бэкенд после установки темы явно делает его прозрачным.

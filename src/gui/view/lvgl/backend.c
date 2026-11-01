@@ -18,6 +18,7 @@ static struct {
 	lv_obj_t *box, *icon, *bar, *value;
 	lv_timer_t *timer;
 } osd;
+static lv_obj_t *hold_box;
 
 static uint32_t tick(void)
 {
@@ -92,6 +93,39 @@ void ui_volume_osd(int percent)
 	lv_label_set_text(osd.icon, ui_volume_symbol(percent));
 	lv_bar_set_value(osd.bar, percent, LV_ANIM_OFF);
 	lv_label_set_text_fmt(osd.value, "%d%%", percent);
+}
+
+/* The quit combo or the power key is held: the bar fills up until it acts;
+ * ms 0: let go, or done */
+static void hold(enum str_id text, int ms)
+{
+	lv_obj_t *label, *bar;
+
+	if (hold_box)
+		lv_obj_delete(hold_box);
+	hold_box = NULL;
+	if (ms <= 0)
+		return;
+	hold_box = lv_obj_create(lv_layer_top());
+	lv_obj_remove_style_all(hold_box);
+	lv_obj_set_size(hold_box, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+	lv_obj_set_style_bg_opa(hold_box, LV_OPA_90, 0);
+	lv_obj_set_style_bg_color(hold_box, lv_color_hex(0x30343c), 0);
+	lv_obj_set_style_text_color(hold_box, lv_color_white(), 0);
+	lv_obj_set_style_radius(hold_box, 8, 0);
+	lv_obj_set_style_pad_all(hold_box, 14, 0);
+	lv_obj_set_style_pad_row(hold_box, 12, 0);
+	lv_obj_set_flex_flow(hold_box, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_flex_align(hold_box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+			      LV_FLEX_ALIGN_CENTER);
+	label = lv_label_create(hold_box);
+	lv_obj_set_style_text_font(label, UI_FONT_MID, 0);
+	lv_label_set_text_fmt(label, LV_SYMBOL_POWER "  %s", tr(text));
+	bar = lv_bar_create(hold_box);
+	lv_obj_set_size(bar, 240, 10);
+	lv_obj_set_style_anim_duration(bar, ms, 0);
+	lv_bar_set_value(bar, 100, LV_ANIM_ON);
+	lv_obj_center(hold_box);
 }
 
 /*
@@ -201,6 +235,12 @@ static void backend_notify(const struct gui_notify *n)
 		break;
 	case NOTIFY_VOLUME:
 		ui_volume_osd(n->value);
+		return;
+	case NOTIFY_QUIT_HOLD:
+		hold(S_QUIT_HOLD, n->value);
+		return;
+	case NOTIFY_POWER_HOLD:
+		hold(S_POWER_HOLD, n->value);
 		return;
 	case NOTIFY_WIFI_CONNECTED:
 		lv_snprintf(text, sizeof(text), LV_SYMBOL_WIFI "  %s", tr(S_WIFI_JOINED));

@@ -43,7 +43,8 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_DOOM_NO_WAD_FMT] = { "No Doom IWAD file:\n%s\nB  back"
 				RU("Нет IWAD-файла Doom:\n%s\nB  назад") },
 	[S_HOMM3]           = { "Heroes III" RU("Герои III") },
-	[S_HOMM3_HINT]      = { "L1  zoom    F5  leave" RU("L1  масштаб    F5  выйти") },
+	[S_HOMM3_HINT]      = { "L1  zoom    F5  leave\nL2 R2  volume"
+				RU("L1  масштаб    F5  выйти\nL2 R2  громкость") },
 	[S_GAME_LOADING]    = { "Loading..." RU("Загрузка...") },
 	[S_GAME_MISSING_FMT] = { "Not found:\n%s\nB  back" RU("Не найдено:\n%s\nB  назад") },
 	[S_GAME_FAILED]     = { "The game did not start, see the log\nB  back"
@@ -83,6 +84,8 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_WIFI_JOINED]     = { "Connected" RU("Подключено") },
 	[S_WIFI_WRONG_KEY]  = { "Wrong key" RU("Неверный ключ") },
 	[S_WIFI_FAILED]     = { "Could not connect" RU("Не удалось подключиться") },
+	[S_QUIT_HOLD]       = { "Keep holding to quit" RU("Удерживайте, чтобы выйти") },
+	[S_POWER_HOLD]      = { "Keep holding to turn off" RU("Удерживайте, чтобы выключить") },
 };
 
 static int lang = LANG_EN;

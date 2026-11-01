@@ -1,9 +1,10 @@
 /*
  * Games (GAME_DOOM, GAME_HOMM3): the game draws into the video layer under
  * a transparent screen and gets the gamepad. "Loading..." stays until its
- * first frame, then a hint shows the controls. F5 or Quit in the game comes
- * back here (the quit combo still ends the application). When the game
- * cannot start or ends with an error the screen says why.
+ * first frame, then a hint shows the controls. Games that do not need the
+ * triggers leave them for the volume (L2 down, R2 up). F5 or Quit in the
+ * game comes back here (the quit combo still ends the application). When
+ * the game cannot start or ends with an error the screen says why.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +21,7 @@
 struct game_desc {
 	enum video_source src;
 	enum str_id title, hint;
+	bool trigger_volume;	/* L2, R2: volume instead of the game */
 	/* Why the game cannot start (missing data) into buf; false if nothing is missing */
 	bool (*missing)(char *buf, size_t size);
 };
@@ -67,10 +69,18 @@ static void on_wait(lv_timer_t *t)
 
 static void on_input(const struct gp_event *ev, void *ud)
 {
-	(void)ud;
+	struct game_screen *g = ud;
+
 	if (ev->type == GP_EV_BUTTON && ev->code == GP_F5) {
 		if (ev->pressed && !ev->repeat)
 			gui_action_post(ACT_BACK, 0);	/* deinit stops the game */
+		return;
+	}
+	if (ev->type == GP_EV_BUTTON && g->desc->trigger_volume &&
+	    (ev->code == GP_L2 || ev->code == GP_R2)) {
+		if (ev->pressed)
+			gui_action_post(ACT_VOLUME_STEP, ev->code == GP_R2 ? VIEW_VOLUME_STEP
+									   : -VIEW_VOLUME_STEP);
 		return;
 	}
 	view_video_input(ev);
@@ -145,7 +155,8 @@ static bool doom_missing(char *buf, size_t size)
 	return true;
 }
 
-static const struct game_desc doom_desc = { VIDEO_DOOM, S_DOOM, S_DOOM_HINT, doom_missing };
+static const struct game_desc doom_desc = { VIDEO_DOOM, S_DOOM, S_DOOM_HINT, false,
+					    doom_missing };
 
 static void *doom_init(lv_obj_t *parent, lv_obj_t **root)
 {
@@ -171,7 +182,7 @@ static bool homm3_missing_text(char *buf, size_t size)
 	return true;
 }
 
-static const struct game_desc homm3_desc = { VIDEO_HOMM3, S_HOMM3, S_HOMM3_HINT,
+static const struct game_desc homm3_desc = { VIDEO_HOMM3, S_HOMM3, S_HOMM3_HINT, true,
 					     homm3_missing_text };
 
 static void *homm3_init(lv_obj_t *parent, lv_obj_t **root)

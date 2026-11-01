@@ -73,7 +73,7 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 	return s;
 }
 
-/* Level and icon like the battery; muted: the icon alone, dim; no mixer: none */
+/* The icon alone (the volume OSD shows the level); muted: dim; no mixer: none */
 static void update_volume(struct statusbar *s, const struct gui_ctx *c)
 {
 	int vol = c->audio.available ? c->audio.volume : -1;
@@ -84,10 +84,7 @@ static void update_volume(struct statusbar *s, const struct gui_ctx *c)
 	lv_obj_set_hidden(s->volume, vol < 0);
 	if (vol < 0)
 		return;
-	if (vol == 0)
-		lv_label_set_text(s->volume, ui_volume_symbol(0));
-	else
-		lv_label_set_text_fmt(s->volume, "%d%% %s", vol, ui_volume_symbol(vol));
+	lv_label_set_text(s->volume, ui_volume_symbol(vol));
 	lv_obj_set_style_text_color(s->volume, vol == 0 ? UI_COLOR_DIM : lv_color_white(), 0);
 }
 

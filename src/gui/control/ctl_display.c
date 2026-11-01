@@ -1,4 +1,4 @@
-/* Display: backlight level into CTX_DISPLAY, ACT_SET_BRIGHTNESS. */
+/* Display: backlight level into CTX_DISPLAY, ACT_SET_BRIGHTNESS, ACT_SCREEN_OFF. */
 #include "control.h"
 #include "core/log.h"
 #include "gui/ctx.h"
@@ -27,6 +27,11 @@ static int display_init(const struct control_env *env)
 
 static void display_action(const struct gui_action *a)
 {
+	if (a->type == ACT_SCREEN_OFF) {
+		if (backlight_power(!a->arg) < 0)
+			LOGW("display", "cannot switch the screen %s", a->arg ? "off" : "on");
+		return;
+	}
 	if (a->type != ACT_SET_BRIGHTNESS || !backlight_available())
 		return;
 	if (backlight_set(a->arg) < 0)

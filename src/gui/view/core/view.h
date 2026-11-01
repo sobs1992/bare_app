@@ -61,6 +61,9 @@ void view_input_release(void *ud);
 
 const char *ui_key_name(enum ui_key key);
 
+/* Volume keys (and what a game uses instead) change the volume this much */
+#define VIEW_VOLUME_STEP 5	/* percent */
+
 /*
  * Video layer under the UI (hardware plane). Screens that show video make
  * their background transparent and pick a source; only one source runs.

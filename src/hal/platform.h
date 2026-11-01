@@ -37,6 +37,9 @@ struct platform {
 	/* Run after Quit in the menu has closed the application: turns the
 	 * device off. NULL: Quit only quits (the quit combo always does). */
 	const char *poweroff;
+	/* Run for a short press of the power key: puts the device to sleep and
+	 * returns once it has woken up. NULL: the key does nothing. */
+	const char *suspend;
 	/* settings file ("~/" = $HOME), NULL: nothing is kept between runs */
 	const char *config_path;
 };

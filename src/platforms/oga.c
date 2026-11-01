@@ -28,6 +28,12 @@ static const struct evdev_key_map oga_keys[] = {
 	{ 0 }
 };
 
+/* The power key is the PMIC's (rk817), a device of its own */
+static const struct evdev_key_map oga_power_keys[] = {
+	{ KEY_POWER, GP_POWER },
+	{ 0 }
+};
+
 static const struct evdev_axis_map oga_axes[] = {
 	/* the ADC reads the X direction of the stick mirrored */
 	{ ABS_X, GP_AXIS_LX, true }, { ABS_Y, GP_AXIS_LY, false },
@@ -60,6 +66,7 @@ const struct platform platform_oga = {
 		{ &input_evdev, &(const struct evdev_params){ .name = "gpio-keys", .keys = oga_keys } },
 		{ &input_evdev, &(const struct evdev_params){
 			.name = "adc-joystick", .axes = oga_axes, .deadzone = 0.15f } },
+		{ &input_evdev, &(const struct evdev_params){ .name = "rk805 pwrkey", .keys = oga_power_keys } },
 	},
 #ifdef CONFIG_POWER
 	.power = { &power_sysfs, &(const struct power_sysfs_params){
@@ -88,5 +95,6 @@ const struct platform platform_oga = {
 #endif
 	.quit_combo = GP_BIT(GP_F6),
 	.poweroff = "/sbin/poweroff",	/* busybox: init runs rcK, then powers off */
+	.suspend = "/usr/sbin/pm-suspend",	/* the SDK's: suspend to RAM, the power key wakes */
 	.config_path = "/etc/bare_app.conf",
 };

@@ -139,7 +139,8 @@ static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 	for (b = 0; b < GP_COUNT; b++) {
 		lv_obj_t *cell, *label;
 
-		if (!(present & GP_BIT(b)))
+		/* the power key never reaches a screen: it puts the device to sleep */
+		if (!(present & GP_BIT(b)) || b == GP_POWER)
 			continue;
 		cell = lv_obj_create(grid);
 		lv_obj_set_size(cell, 46, 30);

@@ -20,7 +20,10 @@
 
 #define TAG "view"
 #define MAX_SUBS 128
-#define VOLUME_KEY_STEP 5	/* percent */
+#define HOLD_MS 2000		/* the quit combo and the power key act once held this long */
+#define POWER_SHORT_MS 500	/* a longer press of the power key starts turning off */
+#define SCREEN_OFF_MS 10000	/* asleep with the screen off this long: real sleep */
+#define POWER_QUIET_MS 1000	/* after waking up the key's events are the wake press */
 
 struct vsub {
 	int id;			/* 0: free */
@@ -44,6 +47,14 @@ static struct {
 	view_grab_cb grab;
 	void *grab_ud;
 	bool quit_sent;
+	struct ml_timer *quit_hold;	/* the quit combo is held: quits when it fires */
+	struct ml_timer *power_hold;	/* the power key is down: warns, then turns off */
+	bool power_down;		/* a press of it that counts is going on */
+	bool power_warned;		/* ...and has gone past POWER_SHORT_MS */
+	struct ml_timer *deep_sleep;	/* the screen is off: real sleep when it fires */
+	bool screen_off;		/* first stage of sleep: no input but the power key */
+	bool asleep;			/* ACT_SUSPEND posted, NOTIFY_RESUMED not yet */
+	uint64_t power_quiet_until;	/* now_ms() */
 	enum video_source video_src;
 	struct mailbox *video_mb;
 	struct testpattern *video_tp;
@@ -139,6 +150,114 @@ static int button_to_key(enum gp_button b)
 	}
 }
 
+static void notify_backend(enum notify_kind kind, int value)
+{
+	struct gui_notify n = { kind, value };
+
+	if (v.be->on_notify)
+		v.be->on_notify(&n);
+}
+
+static void on_quit_hold(void *ud)
+{
+	(void)ud;
+	v.quit_hold = NULL;
+	v.quit_sent = true;
+	gui_action_post(ACT_QUIT, 0);
+}
+
+/* Quitting takes holding the combo: the backend warns meanwhile */
+static void quit_combo_changed(void)
+{
+	uint32_t combo = v.pf->quit_combo;
+	bool held = (input_buttons() & combo) == combo;
+
+	if (held && !v.quit_hold && !v.quit_sent) {
+		v.quit_hold = mainloop_add_timer(v.ml, HOLD_MS, 0, on_quit_hold, NULL);
+		notify_backend(NOTIFY_QUIT_HOLD, HOLD_MS);
+	} else if (!held && v.quit_hold) {
+		mainloop_timer_cancel(v.ml, v.quit_hold);
+		v.quit_hold = NULL;
+		notify_backend(NOTIFY_QUIT_HOLD, 0);
+	}
+}
+
+/*
+ * The power key. A short press turns the screen off and takes all other
+ * input away; a press brings the screen back. Ten seconds later the device
+ * really sleeps (the platform's suspend command) until the power key wakes
+ * it. That wake press arrives once it is awake again: everything until
+ * shortly after NOTIFY_RESUMED is ignored. Holding the key turns the
+ * device off: past POWER_SHORT_MS the backend warns, letting go then
+ * cancels.
+ */
+static void screen_on(void)
+{
+	if (v.deep_sleep)
+		mainloop_timer_cancel(v.ml, v.deep_sleep);
+	v.deep_sleep = NULL;
+	v.screen_off = false;
+	gui_action_post(ACT_SCREEN_OFF, 0);
+}
+
+static void on_deep_sleep(void *ud)
+{
+	(void)ud;
+	v.deep_sleep = NULL;
+	v.asleep = true;
+	gui_action_post(ACT_SUSPEND, 0);
+}
+
+static void screen_off(void)
+{
+	v.screen_off = true;
+	gui_action_post(ACT_SCREEN_OFF, 1);
+	if (v.pf->suspend)
+		v.deep_sleep = mainloop_add_timer(v.ml, SCREEN_OFF_MS, 0, on_deep_sleep, NULL);
+}
+
+static void on_power_hold(void *ud)
+{
+	(void)ud;
+	if (!v.power_warned) {
+		v.power_warned = true;
+		v.power_hold = mainloop_add_timer(v.ml, HOLD_MS - POWER_SHORT_MS, 0, on_power_hold, NULL);
+		notify_backend(NOTIFY_POWER_HOLD, HOLD_MS - POWER_SHORT_MS);
+		return;
+	}
+	v.power_hold = NULL;
+	v.power_down = false;
+	v.quit_sent = true;
+	gui_action_post(ACT_POWER_OFF, 0);	/* the warning stays until the end */
+}
+
+static void power_key(const struct gp_event *ev)
+{
+	if (ev->repeat)
+		return;
+	if (v.asleep || now_ms() < v.power_quiet_until || v.quit_sent)
+		return;
+	if (ev->pressed) {
+		if (v.screen_off) {
+			screen_on();	/* this press is done: its release does nothing */
+		} else if (!v.power_down) {
+			v.power_down = true;
+			v.power_warned = false;
+			v.power_hold = mainloop_add_timer(v.ml, POWER_SHORT_MS, 0, on_power_hold, NULL);
+		}
+		return;
+	}
+	if (!v.power_down)
+		return;
+	v.power_down = false;
+	mainloop_timer_cancel(v.ml, v.power_hold);
+	v.power_hold = NULL;
+	if (v.power_warned)
+		notify_backend(NOTIFY_POWER_HOLD, 0);	/* let go: not turning off */
+	else
+		screen_off();
+}
+
 static void on_gamepad(const struct gp_event *ev, void *ud)
 {
 	uint32_t combo = v.pf->quit_combo;
@@ -148,15 +267,26 @@ static void on_gamepad(const struct gp_event *ev, void *ud)
 	if (ev->type == GP_EV_BUTTON) {
 		LOGD(TAG, "%s %s%s", gp_button_name(ev->code), ev->pressed ? "down" : "up",
 		     ev->repeat ? " (repeat)" : "");
-		if (combo && (input_buttons() & combo) == combo && !v.quit_sent) {
-			v.quit_sent = true;
-			gui_action_post(ACT_QUIT, 0);
+		/* both belong to the view core, also over a game that grabbed the gamepad */
+		if (ev->code == GP_POWER) {
+			power_key(ev);
+			return;
+		}
+	}
+	/* Nobody sees what presses would do. Releases still go: a button held
+	 * when the screen went off must not stay pressed in a game. */
+	if ((v.screen_off || v.asleep) && (ev->type == GP_EV_BUTTON ? ev->pressed : ev->value != 0))
+		return;
+	if (ev->type == GP_EV_BUTTON) {
+		if (combo && (GP_BIT(ev->code) & combo)) {
+			if (!ev->repeat)
+				quit_combo_changed();
 			return;
 		}
 		/* volume keys work everywhere, also in a game that grabbed the gamepad */
 		if (ev->pressed && (ev->code == GP_VOL_UP || ev->code == GP_VOL_DOWN))
-			gui_action_post(ACT_VOLUME_STEP, ev->code == GP_VOL_UP ? VOLUME_KEY_STEP
-									 : -VOLUME_KEY_STEP);
+			gui_action_post(ACT_VOLUME_STEP, ev->code == GP_VOL_UP ? VIEW_VOLUME_STEP
+									 : -VIEW_VOLUME_STEP);
 	}
 	if (v.grab) {
 		v.grab(ev, v.grab_ud);
@@ -164,6 +294,13 @@ static void on_gamepad(const struct gp_event *ev, void *ud)
 	}
 	if (ev->type != GP_EV_BUTTON)
 		return;
+	/* the triggers mean nothing to the UI: volume, as in games that leave them */
+	if (ev->code == GP_L2 || ev->code == GP_R2) {
+		if (ev->pressed)
+			gui_action_post(ACT_VOLUME_STEP, ev->code == GP_R2 ? VIEW_VOLUME_STEP
+									   : -VIEW_VOLUME_STEP);
+		return;
+	}
 	key = button_to_key(ev->code);
 	if (key < 0)
 		return;
@@ -424,10 +561,15 @@ static void on_notify(int fd, short revents, void *ud)
 	(void)ud;
 	notify_ack();
 	while (notify_pop(&n)) {
-		if (n.kind == NOTIFY_SNAPSHOT)
+		if (n.kind == NOTIFY_SNAPSHOT) {
 			snapshot(true);
-		else if (v.be->on_notify)
+		} else if (n.kind == NOTIFY_RESUMED) {
+			v.asleep = false;
+			v.power_quiet_until = now_ms() + POWER_QUIET_MS;
+			screen_on();	/* also if the device could not sleep */
+		} else if (v.be->on_notify) {
 			v.be->on_notify(&n);
+		}
 	}
 }
 

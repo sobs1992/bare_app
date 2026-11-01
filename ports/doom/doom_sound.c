@@ -171,9 +171,9 @@ static void *mixer_thread(void *arg)
 		x.result = 0;
 		/* blocks until the device has room: that is the clock */
 		if (ioctl(snd.fd, SNDRV_PCM_IOCTL_WRITEI_FRAMES, &x) < 0) {
-			if (errno != EPIPE && errno != EINTR)
+			if (errno != EPIPE && errno != ESTRPIPE && errno != EINTR)
 				break;
-			ioctl(snd.fd, SNDRV_PCM_IOCTL_PREPARE);	/* underrun */
+			ioctl(snd.fd, SNDRV_PCM_IOCTL_PREPARE);	/* underrun, or the device slept */
 		}
 	}
 	return NULL;

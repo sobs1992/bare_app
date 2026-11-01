@@ -8,7 +8,9 @@
 #include "util.h"
 
 #define DIR_MASK (GP_BIT(GP_UP) | GP_BIT(GP_DOWN) | GP_BIT(GP_LEFT) | GP_BIT(GP_RIGHT))
-#define REPEAT_MASK (DIR_MASK | GP_BIT(GP_VOL_UP) | GP_BIT(GP_VOL_DOWN))
+/* L2/R2 are volume keys in the UI and in Heroes III (games never get repeats) */
+#define REPEAT_MASK (DIR_MASK | GP_BIT(GP_VOL_UP) | GP_BIT(GP_VOL_DOWN) | GP_BIT(GP_L2) | \
+		     GP_BIT(GP_R2))
 
 static const char *const names[GP_COUNT] = {
 	[GP_UP] = "up", [GP_DOWN] = "down", [GP_LEFT] = "left", [GP_RIGHT] = "right",
@@ -17,7 +19,7 @@ static const char *const names[GP_COUNT] = {
 	[GP_SELECT] = "select", [GP_START] = "start", [GP_MENU] = "menu",
 	[GP_F1] = "f1", [GP_F2] = "f2", [GP_F3] = "f3",
 	[GP_F4] = "f4", [GP_F5] = "f5", [GP_F6] = "f6",
-	[GP_VOL_UP] = "vol+", [GP_VOL_DOWN] = "vol-",
+	[GP_VOL_UP] = "vol+", [GP_VOL_DOWN] = "vol-", [GP_POWER] = "power",
 };
 
 static struct {

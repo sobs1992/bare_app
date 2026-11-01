@@ -15,6 +15,10 @@ enum notify_kind {
 	NOTIFY_WIFI_CONNECTED,	/* to the network the user picked */
 	NOTIFY_WIFI_WRONG_KEY,
 	NOTIFY_WIFI_FAILED,	/* the connection could not be started */
+	NOTIFY_RESUMED,		/* after ACT_SUSPEND: value 0 woken up, -1 did not sleep */
+	NOTIFY_QUIT_HOLD,	/* view core to backend: quit combo held, value = ms
+				   until it quits; 0 released before */
+	NOTIFY_POWER_HOLD,	/* the same for the power key and turning the device off */
 };
 
 struct gui_notify {

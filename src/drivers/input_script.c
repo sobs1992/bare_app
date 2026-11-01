@@ -35,7 +35,8 @@ static void schedule(struct script *s, int delay)
 static void step(void *ud)
 {
 	struct script *s = ud;
-	const char *w;
+	char w[sizeof(s->words[0])], *colon;
+	int hold = 30;	/* a press is released shortly after */
 
 	s->timer = NULL;
 	if (s->held != GP_NONE) {
@@ -47,12 +48,17 @@ static void step(void *ud)
 	}
 	if (!s->count)
 		return;
-	w = s->words[s->head];
+	strcpy(w, s->words[s->head]);
 	s->head = (s->head + 1) % MAX_WORDS;
 	s->count--;
 	if (!strncmp(w, "wait:", 5)) {
 		schedule(s, atoi(w + 5));
 		return;
+	}
+	colon = strchr(w, ':');
+	if (colon) {
+		*colon = '\0';
+		hold = atoi(colon + 1);
 	}
 	s->held = gp_button_from_name(w);
 	if (s->held == GP_NONE) {
@@ -60,9 +66,9 @@ static void step(void *ud)
 		schedule(s, 0);
 		return;
 	}
-	LOGD(TAG, "press %s", w);
+	LOGD(TAG, "press %s for %d ms", w, hold);
 	input_report_button(s->held, true);
-	schedule(s, 30);	/* release shortly after */
+	schedule(s, hold);
 }
 
 static void push_word(struct script *s)

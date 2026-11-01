@@ -8,6 +8,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <sound/asound.h>
 #include <stdlib.h>
 #include <string.h>
@@ -64,7 +65,8 @@ static void *pcm_open(const void *params, int *rate)
 {
 	const struct pcm_alsa_params *p = params;
 	const int rates[] = { *rate, 48000, 44100 };
-	int fd = open(p->device, O_RDWR | O_CLOEXEC), *h;
+	/* without O_NONBLOCK a busy device makes open() wait until it is free */
+	int fd = open(p->device, O_RDWR | O_CLOEXEC | O_NONBLOCK), *h;
 	size_t i;
 
 	if (fd < 0) {
@@ -72,6 +74,8 @@ static void *pcm_open(const void *params, int *rate)
 		LOGD(TAG, "%s: %s", p->device, strerror(errno));
 		return NULL;
 	}
+	/* drain waits again; writes keep the open's O_NONBLOCK and poll */
+	fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK);
 	for (i = 0; i < sizeof(rates) / sizeof(rates[0]); i++)
 		if (setup(fd, rates[i]) == 0) {
 			*rate = rates[i];
@@ -94,9 +98,15 @@ static int pcm_write(void *h, const int16_t *frames, int count)
 		struct snd_xferi x = { 0, (void *)frames, (snd_pcm_uframes_t)count };
 
 		if (ioctl(fd, SNDRV_PCM_IOCTL_WRITEI_FRAMES, &x) < 0) {
-			if (errno != EPIPE && errno != EINTR)
+			if (errno == EAGAIN) {
+				struct pollfd pfd = { fd, POLLOUT, 0 };
+
+				poll(&pfd, 1, -1);
+				continue;
+			}
+			if (errno != EPIPE && errno != ESTRPIPE && errno != EINTR)
 				return -1;
-			ioctl(fd, SNDRV_PCM_IOCTL_PREPARE);	/* underrun */
+			ioctl(fd, SNDRV_PCM_IOCTL_PREPARE);	/* underrun, or the device slept */
 			continue;
 		}
 		frames += 2 * x.result;

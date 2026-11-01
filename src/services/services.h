@@ -21,6 +21,7 @@ bool power_available(void);
 bool backlight_available(void);
 int backlight_get(void);
 int backlight_set(int percent);
+int backlight_power(bool on);	/* -1 if the backlight cannot be switched off */
 
 /* Audio mixer: posts EV_MIXER_CHANGED on every change */
 bool audio_available(void);
