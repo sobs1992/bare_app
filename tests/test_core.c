@@ -12,6 +12,7 @@
 #include "core/msgq.h"
 #include "core/uevent.h"
 #include "core/volume.h"
+#include "drivers/blit.h"
 #include "media/mailbox.h"
 #include "gui/action.h"
 #include "gui/control/control.h"
@@ -345,6 +346,70 @@ static void test_wpa(void)
 }
 #endif
 
+/* blit_rotated() against a pixel by pixel turn, as fbcon=rotate:N */
+static void test_blit(void)
+{
+	enum { LW = 37, LH = 21, PAD = 3 };	/* odd sizes: tiles end mid-way */
+	static const struct hal_rect rects[] = {
+		{ 0, 0, LW - 1, LH - 1 }, { 5, 3, 30, 19 }, { 0, 0, 0, 0 },
+		{ LW - 1, LH - 1, LW - 1, LH - 1 }, { 2, 0, 2, LH - 1 }, { 0, 7, LW - 1, 7 },
+	};
+	static uint32_t src_px[LH][LW + PAD];
+	static uint8_t out[LW * (LH + PAD) * 4], want[sizeof(out)];
+	struct hal_fb src = { &src_px[0][0], LW, LH, (LW + PAD) * 4, 0 };
+	int x, y, rot, mode, i;
+
+	for (y = 0; y < LH; y++)
+		for (x = 0; x < LW + PAD; x++)
+			src_px[y][x] = (uint32_t)(x * 2654435761u ^ y * 40503u) | (x % 3 ? 0xff000000 : 0);
+	for (rot = 0; rot < 4; rot++) {
+		for (mode = BLIT_COPY; mode <= BLIT_RGB565; mode++) {
+			int bpp = mode == BLIT_RGB565 ? 2 : 4;
+			int nw = rot & 1 ? LH : LW, nh = rot & 1 ? LW : LH;
+			struct blit_dst dst = { out, nw, nh, (nw + PAD) * bpp };
+
+			for (i = 0; i < (int)(sizeof(rects) / sizeof(rects[0])); i++) {
+				const struct hal_rect *r = &rects[i];
+				struct blit_dst ref = { want, nw, nh, dst.stride };
+
+				memset(out, 0x5a, sizeof(out));
+				memset(want, 0x5a, sizeof(want));
+				for (y = r->y1; y <= r->y2; y++) {
+					for (x = r->x1; x <= r->x2; x++) {
+						struct hal_fb one = { &src_px[y][x], 1, 1, 4, 0 };
+						int nx = rot == 0 ? x : rot == 1 ? nw - 1 - y : rot == 2 ? nw - 1 - x : y;
+						int ny = rot == 0 ? y : rot == 1 ? x : rot == 2 ? nh - 1 - y : nh - 1 - x;
+
+						/* the conversion of one pixel, placed by hand */
+						blit_rotated(&(struct blit_dst){ want + ny * ref.stride + nx * bpp, 1, 1, bpp },
+							     &one, &(struct hal_rect){ 0, 0, 0, 0 }, 0, mode);
+					}
+				}
+				blit_rotated(&dst, &src, r, rot, mode);
+				CHECK(memcmp(out, want, sizeof(out)) == 0);
+			}
+		}
+	}
+}
+
+static void test_damage(void)
+{
+	struct damage d = { 0 };
+	struct hal_rect all = { 0, 0, 99, 49 }, part = { 10, 10, 20, 20 }, other = { 30, 5, 40, 8 };
+
+	damage_add(&d, &part, 100, 50);
+	damage_add(&d, &other, 100, 50);
+	CHECK(d.n == 2);
+	damage_add(&d, &part, 100, 50);		/* covered: nothing new */
+	CHECK(d.n == 2);
+	damage_add(&d, &all, 100, 50);		/* covers both */
+	CHECK(d.n == 1 && memcmp(&d.r[0], &all, sizeof(all)) == 0);
+	damage_add(&d, &all, 100, 50);		/* the next frame, the same area */
+	CHECK(d.n == 1);
+	damage_add(&d, &(struct hal_rect){ -5, -5, 200, 200 }, 100, 50);	/* clipped to the same */
+	CHECK(d.n == 1);
+}
+
 int main(void)
 {
 	test_joystick();
@@ -356,6 +421,8 @@ int main(void)
 	test_mailbox();
 	test_input();
 	test_volume();
+	test_blit();
+	test_damage();
 #if defined(CONFIG_WIFI) && defined(CONFIG_PLATFORM_OGA)
 	test_wpa();
 #endif
