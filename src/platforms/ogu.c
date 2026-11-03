@@ -70,10 +70,12 @@ const struct platform platform_ogu = {
 		{ &input_evdev, &(const struct evdev_params){ .name = "rk805 pwrkey", .keys = ogu_power_keys } },
 	},
 #ifdef CONFIG_POWER
-	/* RK818 charger: no mainline driver yet, the battery then reads as absent */
+	/*
+	 * RK818 (rk818_battery, SDK kernel patches). Its USB supply has no
+	 * "online": charging comes from the battery status.
+	 */
 	.power = { &power_sysfs, &(const struct power_sysfs_params){
-		.battery = "/sys/class/power_supply/rk818-battery",
-		.charger = "/sys/class/power_supply/rk818-charger" } },
+		.battery = "/sys/class/power_supply/rk818-battery" } },
 #endif
 #ifdef CONFIG_BACKLIGHT
 	.backlight = { &backlight_sysfs, &(const struct backlight_sysfs_params){
