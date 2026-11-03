@@ -1,0 +1,13 @@
+# ODROID-GO Ultra image (Buildroot package bare-app): everything the board can use
+# CONFIG_PLATFORM_OGA is not set
+CONFIG_PLATFORM_OGU=y
+# CONFIG_PLATFORM_PC is not set
+CONFIG_DISPLAY_DRM=y
+CONFIG_DISPLAY_FBDEV=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_VIEW_LVGL=y
+CONFIG_VIEW_HEADLESS=y
+CONFIG_GAME_DOOM=y
+# Doom's settings and saved games on the SDK's data partition
+CONFIG_GAME_DOOM_DIR="/data/doom"
+CONFIG_GAME_HOMM3=y

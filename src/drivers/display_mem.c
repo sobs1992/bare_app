@@ -1,5 +1,6 @@
 #include "display_mem.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "core/log.h"
@@ -46,10 +47,18 @@ static void mem_free(struct memdisp *m)
 
 static struct hal_display *mem_open(const void *params, struct mainloop *ml)
 {
-	const struct mem_display_params *p = params;
+	struct mem_display_params size = *(const struct mem_display_params *)params;
+	const struct mem_display_params *p = &size;
+	const char *env = getenv("BARE_APP_SIZE");
 	struct memdisp *m;
 
 	(void)ml;
+	/* another board's screen, e.g. BARE_APP_SIZE=854x480 for the GO Ultra */
+	if (env && (sscanf(env, "%dx%d", &size.width, &size.height) != 2 ||
+		    size.width <= 0 || size.height <= 0)) {
+		LOGE(TAG, "BARE_APP_SIZE=%s: want WIDTHxHEIGHT", env);
+		return NULL;
+	}
 	m = calloc(1, sizeof(*m));
 	if (!m)
 		return NULL;

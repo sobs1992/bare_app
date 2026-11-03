@@ -25,6 +25,24 @@ static inline uint32_t premultiply(uint32_t c)
 	return (a << 24) | rb | g;
 }
 
+/* c (straight alpha) over the opaque pixel d */
+static inline uint32_t over(uint32_t c, uint32_t d)
+{
+	uint32_t a = c >> 24, na = 0xff - a;
+
+	if (a == 0xff)
+		return c;
+	if (a == 0)
+		return d | 0xff000000;
+	/* premultiplied c + d * (255 - a) / 255, R/B and G lanes at once */
+	uint32_t rb = (d & 0x00ff00ff) * na + 0x007f007f;
+	uint32_t g = (d & 0x0000ff00) * na + 0x00007f00;
+
+	rb = ((rb + ((rb >> 8) & 0x00ff00ff)) >> 8) & 0x00ff00ff;
+	g = ((g + ((g >> 8) & 0x0000ff00)) >> 8) & 0x0000ff00;
+	return 0xff000000 | ((premultiply(c) & 0x00ffffff) + (rb | g));
+}
+
 static inline uint16_t to_rgb565(uint32_t c)
 {
 	return ((c >> 8) & 0xf800) | ((c >> 5) & 0x07e0) | ((c >> 3) & 0x001f);
@@ -168,6 +186,22 @@ void blit_rotated(const struct blit_dst *dst, const struct hal_fb *src,
 				convert(dst->pixels + (ptrdiff_t)y * dst->stride + (ptrdiff_t)tx * bpp,
 					origin + (y - ny1) * down + (tx - nx1) * step, step, n, mode);
 		}
+	}
+}
+
+void blit_compose(struct hal_fb *dst, const struct hal_fb *top, const struct hal_fb *bottom,
+		  const struct hal_rect *r)
+{
+	int x, y;
+
+	for (y = r->y1; y <= r->y2; y++) {
+		uint32_t *d = (uint32_t *)((uint8_t *)dst->pixels + (size_t)y * dst->stride);
+		const uint32_t *t = (const uint32_t *)((const uint8_t *)top->pixels + (size_t)y * top->stride);
+		const uint32_t *b = (const uint32_t *)((const uint8_t *)bottom->pixels +
+						       (size_t)y * bottom->stride);
+
+		for (x = r->x1; x <= r->x2; x++)
+			d[x] = over(t[x], b[x]);
 	}
 }
 

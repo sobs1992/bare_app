@@ -12,6 +12,15 @@ config PLATFORM_OGA
 	  Needs DRM or fbdev for the screen (fbdev is selected if DRM is
 	  off), evdev for the buttons and the stick.
 
+config PLATFORM_OGU
+	bool "ODROID-GO Ultra"
+	select INPUT_EVDEV
+	select DISPLAY_FBDEV if !DISPLAY_DRM
+	help
+	  Picked at run time by the device tree "compatible" of the board,
+	  so one build can carry it together with the OGA. Needs DRM or
+	  fbdev for the screen, evdev for the buttons and the two sticks.
+
 config PLATFORM_PC
 	bool "PC simulator (platforms pc and pc-mem)"
 	select DISPLAY_MEM
@@ -26,14 +35,14 @@ menu "Display drivers"
 
 config DISPLAY_DRM
 	bool "DRM/KMS with hardware planes"
-	default y if PLATFORM_OGA
+	default y if PLATFORM_OGA || PLATFORM_OGU
 	help
 	  UI on an overlay plane with alpha, video layer on the primary
 	  plane, vsync. Raw kernel UAPI, no libdrm needed.
 
 config DISPLAY_FBDEV
 	bool "Linux framebuffer (fbdev)"
-	default y if PLATFORM_OGA
+	default y if PLATFORM_OGA || PLATFORM_OGU
 	help
 	  One layer, no video. Used when DRM is missing or busy.
 

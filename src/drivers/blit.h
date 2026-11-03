@@ -24,6 +24,14 @@ struct blit_dst {
 void blit_rotated(const struct blit_dst *dst, const struct hal_fb *src,
 		  const struct hal_rect *r, int rotation, enum blit_mode mode);
 
+/*
+ * dst = top (straight alpha) over the opaque bottom, a rectangle of three
+ * logical buffers of the same size. Done in normal memory: scanout buffers
+ * are often uncached, too slow to read back.
+ */
+void blit_compose(struct hal_fb *dst, const struct hal_fb *top, const struct hal_fb *bottom,
+		  const struct hal_rect *r);
+
 /* Damage list: up to BLIT_MAX_RECTS rectangles, merged into one box beyond that */
 #define BLIT_MAX_RECTS 16
 

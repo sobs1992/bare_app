@@ -58,7 +58,13 @@ struct dumb {
 
 struct drm_layer {
 	struct hal_layer base;
-	struct plane *plane;	/* NULL: no such layer */
+	struct plane *plane;	/* NULL: no plane of its own */
+	/*
+	 * The video layer without a plane (the overlays take no RGB, e.g. the
+	 * Amlogic video plane): only the shadow, put under the UI in the UI
+	 * plane's buffers
+	 */
+	bool composed;
 	struct hal_fb shadow;
 	struct dumb buf[2];
 	int front;		/* buffer on screen */
@@ -77,6 +83,7 @@ struct drmdisp {
 	struct plane planes[MAX_PLANES];
 	int nplanes;
 	struct drm_layer layers[LAYER_COUNT];
+	struct hal_fb compose;	/* UI over the composed video, before turning */
 	bool flip_pending;
 	bool commit_wanted;
 	bool commit_failed;	/* log the first failure only */
@@ -304,6 +311,11 @@ static void dumb_destroy(struct drmdisp *d, struct dumb *b)
 	memset(b, 0, sizeof(*b));
 }
 
+/*
+ * alpha: a shadow with alpha, premultiplied into the plane (over another
+ * plane) or, without a plane under it, put over the composed video.
+ * p NULL: the composed video layer, a shadow only.
+ */
 static int layer_setup(struct drmdisp *d, enum layer_role role, struct plane *p, bool alpha)
 {
 	struct drm_layer *l = &d->layers[role];
@@ -313,17 +325,22 @@ static int layer_setup(struct drmdisp *d, enum layer_role role, struct plane *p,
 	l->base.display = &d->base;
 	l->base.role = role;
 	l->plane = p;
+	l->composed = !p;
 	l->shadow.width = d->rotation & 1 ? d->h : d->w;
 	l->shadow.height = d->rotation & 1 ? d->w : d->h;
 	l->shadow.stride = l->shadow.width * 4;
 	l->shadow.format = alpha ? HAL_FMT_ARGB8888 : HAL_FMT_XRGB8888;
 	l->shadow.pixels = calloc((size_t)l->shadow.width * l->shadow.height, 4);
-	l->mode = alpha ? BLIT_PREMULTIPLY : BLIT_COPY;
+	/* over a plane: premultiplied; over the composed video: blit_compose() */
+	l->mode = alpha && d->layers[LAYER_VIDEO].plane ? BLIT_PREMULTIPLY : BLIT_COPY;
 	if (!l->shadow.pixels)
 		return -1;
+	if (!p)
+		return 0;
 	all = (struct hal_rect){ 0, 0, l->shadow.width - 1, l->shadow.height - 1 };
 	for (i = 0; i < 2; i++) {
-		if (dumb_create(d, &l->buf[i], alpha ? DRM_FORMAT_ARGB8888 : DRM_FORMAT_XRGB8888) < 0) {
+		if (dumb_create(d, &l->buf[i], l->mode == BLIT_PREMULTIPLY ?
+				DRM_FORMAT_ARGB8888 : DRM_FORMAT_XRGB8888) < 0) {
 			LOGE(TAG, "buffer for plane %u: %s", p->id, strerror(errno));
 			return -1;
 		}
@@ -397,8 +414,16 @@ static void flush(struct drmdisp *d)
 		back[i] = !l->front;
 		b = &l->buf[back[i]];
 		dst = (struct blit_dst){ b->map, d->w, d->h, (int)b->pitch };
-		for (r = 0; r < b->damage.n; r++)
-			blit_rotated(&dst, &l->shadow, &b->damage.r[r], d->rotation, l->mode);
+		for (r = 0; r < b->damage.n; r++) {
+			const struct hal_fb *src = &l->shadow;
+
+			if (i == LAYER_UI && d->layers[LAYER_VIDEO].composed) {
+				blit_compose(&d->compose, &l->shadow, &d->layers[LAYER_VIDEO].shadow,
+					     &b->damage.r[r]);
+				src = &d->compose;
+			}
+			blit_rotated(&dst, src, &b->damage.r[r], d->rotation, l->mode);
+		}
 		b->damage.n = 0;
 		add_plane(d, &c, l->plane, b->fb_id);
 	}
@@ -456,6 +481,7 @@ static void drm_free(struct drmdisp *d)
 			dumb_destroy(d, &d->layers[i].buf[j]);
 		free(d->layers[i].shadow.pixels);
 	}
+	free(d->compose.pixels);
 	if (d->fd >= 0)
 		close(d->fd);
 	free(d);
@@ -493,7 +519,10 @@ static struct hal_display *drm_open(const void *params, struct mainloop *ml)
 		goto fail;
 	d->rotation = p->rotation == HAL_ROT_AUTO ? console_rotation() : (p->rotation & 3);
 
-	/* UI on an overlay with alpha over the primary (video); else UI on the primary */
+	/*
+	 * UI on an overlay with alpha over the primary (video); else UI on the
+	 * primary, the video put under it by the CPU
+	 */
 	ui = take_plane(d, PLANE_OVERLAY, true);
 	if (ui) {
 		video = take_plane(d, PLANE_PRIMARY, false);
@@ -504,9 +533,16 @@ static struct hal_display *drm_open(const void *params, struct mainloop *ml)
 			goto fail;
 		}
 	}
-	if (layer_setup(d, LAYER_UI, ui, video != NULL) < 0 ||
-	    (video && layer_setup(d, LAYER_VIDEO, video, false) < 0))
+	if (layer_setup(d, LAYER_VIDEO, video, false) < 0 ||
+	    layer_setup(d, LAYER_UI, ui, true) < 0)
 		goto fail;
+	if (!video) {
+		d->compose = d->layers[LAYER_UI].shadow;
+		d->compose.format = HAL_FMT_XRGB8888;
+		d->compose.pixels = calloc((size_t)d->compose.width * d->compose.height, 4);
+		if (!d->compose.pixels)
+			goto fail;
+	}
 
 	/* First commit, blocking: our buffers on, all other planes off */
 	for (i = 0; i < d->nplanes; i++)
@@ -524,9 +560,9 @@ static struct hal_display *drm_open(const void *params, struct mainloop *ml)
 		goto fail;
 	}
 	mainloop_add_fd(ml, d->fd, POLLIN, on_drm_event, d);
-	LOGI(TAG, "logical %dx%d, rotation %d; UI on plane %u%s, video %s", d->layers[LAYER_UI].shadow.width,
-	     d->layers[LAYER_UI].shadow.height, d->rotation, ui->id, video ? " (alpha)" : "",
-	     video ? "on the primary plane" : "not available");
+	LOGI(TAG, "logical %dx%d, rotation %d; UI on plane %u (alpha), video %s",
+	     d->layers[LAYER_UI].shadow.width, d->layers[LAYER_UI].shadow.height, d->rotation, ui->id,
+	     video ? "on the primary plane" : "composed under the UI");
 	console_graphics(p->tty);
 	return &d->base;
 fail:
@@ -550,8 +586,7 @@ static int drm_snapshot(struct hal_display *disp, const char *path)
 {
 	struct drmdisp *d = (struct drmdisp *)disp;
 
-	return shot_write_ppm(path, &d->layers[LAYER_UI].shadow,
-			      d->layers[LAYER_VIDEO].plane ? &d->layers[LAYER_VIDEO].shadow : NULL);
+	return shot_write_ppm(path, &d->layers[LAYER_UI].shadow, &d->layers[LAYER_VIDEO].shadow);
 }
 #endif
 
@@ -568,7 +603,7 @@ static struct hal_layer *drm_layer(struct hal_display *disp, enum layer_role rol
 {
 	struct drmdisp *d = (struct drmdisp *)disp;
 
-	return d->layers[role].plane ? &d->layers[role].base : NULL;
+	return d->layers[role].plane || d->layers[role].composed ? &d->layers[role].base : NULL;
 }
 
 static struct hal_fb *drm_acquire(struct hal_layer *l)
@@ -576,9 +611,17 @@ static struct hal_fb *drm_acquire(struct hal_layer *l)
 	return &((struct drm_layer *)l)->shadow;
 }
 
-static void drm_damage(struct hal_layer *hl, const struct hal_rect *r)
+/* The composed video layer lands in the UI plane's buffers */
+static struct drm_layer *target(struct hal_layer *hl)
 {
 	struct drm_layer *l = (struct drm_layer *)hl;
+
+	return l->composed ? &((struct drmdisp *)hl->display)->layers[LAYER_UI] : l;
+}
+
+static void drm_damage(struct hal_layer *hl, const struct hal_rect *r)
+{
+	struct drm_layer *l = target(hl);
 
 	damage_add(&l->buf[0].damage, r, l->shadow.width, l->shadow.height);
 	damage_add(&l->buf[1].damage, r, l->shadow.width, l->shadow.height);
@@ -586,9 +629,7 @@ static void drm_damage(struct hal_layer *hl, const struct hal_rect *r)
 
 static void drm_submit(struct hal_layer *hl)
 {
-	struct drm_layer *l = (struct drm_layer *)hl;
-
-	l->dirty = true;
+	target(hl)->dirty = true;
 	flush((struct drmdisp *)hl->display);
 }
 

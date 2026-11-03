@@ -390,6 +390,18 @@ static void test_blit(void)
 			}
 		}
 	}
+
+	/* blit_compose: opaque wins, transparent shows the bottom, half red over blue */
+	{
+		uint32_t t[3] = { 0xff123456, 0x00ffffff, 0x80ff0000 };
+		uint32_t b[3] = { 0xff0000ff, 0x000000ff, 0xff0000ff };
+		uint32_t d[3] = { 0 };
+		struct hal_fb top = { t, 3, 1, sizeof(t), 0 }, bottom = { b, 3, 1, sizeof(b), 0 };
+		struct hal_fb out = { d, 3, 1, sizeof(d), 0 };
+
+		blit_compose(&out, &top, &bottom, &(struct hal_rect){ 0, 0, 2, 0 });
+		CHECK(d[0] == 0xff123456 && d[1] == 0xff0000ff && d[2] == 0xff80007f);
+	}
 }
 
 static void test_damage(void)

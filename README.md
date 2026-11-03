@@ -130,6 +130,7 @@ SDK, туда копируют с ПК или `scripts/homm3-install.sh` SDK), �
 |---|---|
 | `pc_defconfig` | сборка на ПК (по умолчанию): симулятор SDL, `pc-mem`, платформа OGA, тесты |
 | `oga_defconfig` | образ OGA (по умолчанию при кросс-сборке и в пакете Buildroot) |
+| `ogu_defconfig` | образ ODROID-GO Ultra (платформа `ogu`; можно включить вместе с OGA — выбор по device tree) |
 | `oga_minimal_defconfig` | пример урезанной сборки: fbdev, только английский, без слоёв и настроек |
 
 ```sh
@@ -153,6 +154,7 @@ cmake -S . -B build-host && cmake --build build-host -j
 cd build-host && ctest                 # юнит-тесты и smoke-тест без тулкита
 ./bare_app                             # симулятор в окне
 echo "down a wait:500 f6" | BARE_APP_SHOT=shot.ppm ./bare_app -p pc-mem   # сценарий кнопок, снимок экрана
+BARE_APP_SIZE=854x480 ./bare_app -p pc-mem   # экран другого размера (GO Ultra)
 ```
 
 На ODROID-GO Advance через консоль (`scripts/oga-serial.py` SDK, плата на `/dev/ttyUSB0`).
@@ -170,7 +172,8 @@ tools/oga.sh wad doom1.wad  # положить IWAD в /usr/share/games/doom/ (�
 Опции программы: `-p PLATFORM` (без него — по device tree), `-b lvgl|headless`,
 `-L en|ru` — язык (или `BARE_APP_LANG`), `-v` — отладочный лог.
 На OGA экран выводится через DRM с аппаратными плоскостями (видео под UI, экран «Layers»),
-если DRM недоступен — через fbdev. Снимок: `kill -USR1 $(pidof bare_app)` → `/tmp/bare_app.ppm`
+если DRM недоступен — через fbdev. На GO Ultra вторая плоскость принимает только YUV:
+видео кладётся под UI процессором, в одну плоскость. Снимок: `kill -USR1 $(pidof bare_app)` → `/tmp/bare_app.ppm`
 (или `BARE_APP_SHOT`).
 Выход: удержание F6 (`quit_combo` платформы) 2 секунды — пока кнопка нажата, на экране
 предупреждение, отпустить раньше — отмена; SIGTERM/SIGINT. Поверх запущенной игры то же

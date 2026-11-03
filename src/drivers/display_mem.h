@@ -6,7 +6,8 @@
 
 /*
  * Display in memory, for tests without a screen (snapshots: see
- * BARE_APP_SHOT in the view core).
+ * BARE_APP_SHOT in the view core). BARE_APP_SIZE=WIDTHxHEIGHT in the
+ * environment replaces the size from the params (another board's screen).
  *
  * With video_layer it behaves like the DRM display with planes: a video
  * layer under a UI layer with alpha.
