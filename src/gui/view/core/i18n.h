@@ -15,7 +15,7 @@ enum str_id {
 	S_LANG_NAME,		/* name of the current language in itself */
 	S_DOOM, S_DOOM_HINT,
 	S_DOOM_NO_WAD_FMT,	/* "%s": IWAD path */
-	S_HOMM3, S_HOMM3_HINT,
+	S_HOMM3, S_HOMM3_HINT, S_HOMM3_HINT_OGU,
 	S_GAME_LOADING,
 	S_GAME_MISSING_FMT,	/* "%s": path */
 	S_GAME_FAILED,

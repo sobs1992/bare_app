@@ -61,7 +61,8 @@ static int game_link(void)
 	return symlink(homm3_game(), LINK_DIR "/vcmi");
 }
 
-struct game_proc *homm3_start(int width, int height, const char *pcm, const char *lang, bool native)
+struct game_proc *homm3_start(int width, int height, const char *pcm, const char *lang, bool native,
+			      enum homm3_keys keys)
 {
 	char xdg_data[PATH_MAX + 16], xdg_config[PATH_MAX + 32], xdg_cache[PATH_MAX + 32];
 	char audiodev[64] = "", name[32], language[32];
@@ -100,6 +101,8 @@ struct game_proc *homm3_start(int width, int height, const char *pcm, const char
 		env[n++] = audiodev;
 	if (native)
 		env[n++] = "BARE_APP_VCMI_NATIVE=1";
+	if (keys == HOMM3_KEYS_OGU)
+		env[n++] = "BARE_APP_VCMI_KEYS=ogu";
 	env[n] = NULL;
 	struct game_spawn s = { .path = CONFIG_GAME_HOMM3_PROGRAM, .argv = argv, .env = env,
 				.dir = homm3_data(), .width = width, .height = height };

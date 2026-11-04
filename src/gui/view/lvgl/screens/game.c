@@ -2,9 +2,9 @@
  * Games (GAME_DOOM, GAME_HOMM3): the game draws into the video layer under
  * a transparent screen and gets the gamepad. "Loading..." stays until its
  * first frame, then a hint shows the controls. Games that do not need the
- * triggers leave them for the volume (L2 down, R2 up). F5 minimises the
- * game: it stops in the background, and F5 or its menu entry brings it
- * back. Holding the quit combo (F6) or Quit in the game ends it and comes
+ * triggers leave them for the volume (L2 down, R2 up). F5 (Heroes III
+ * with the GO Ultra's keys: F1) minimises the game: it stops in the
+ * background, and the same button or its menu entry brings it back. Holding the quit combo (F6) or Quit in the game ends it and comes
  * back here. When the game cannot start or ends with an error the screen
  * says why.
  */
@@ -73,7 +73,7 @@ static void on_input(const struct gp_event *ev, void *ud)
 {
 	struct game_screen *g = ud;
 
-	if (ev->type == GP_EV_BUTTON && ev->code == GP_F5) {
+	if (ev->type == GP_EV_BUTTON && ev->code == view_video_minimize_button(g->desc->src)) {
 		if (ev->pressed && !ev->repeat) {
 			view_video_minimize();
 			gui_action_post(ACT_BACK, 0);	/* deinit leaves it running */
@@ -193,11 +193,13 @@ static bool homm3_missing_text(char *buf, size_t size)
 
 static const struct game_desc homm3_desc = { VIDEO_HOMM3, S_HOMM3, S_HOMM3_HINT, true,
 					     homm3_missing_text };
+static const struct game_desc homm3_ogu_desc = { VIDEO_HOMM3, S_HOMM3, S_HOMM3_HINT_OGU, true,
+						 homm3_missing_text };
 
 static void *homm3_init(lv_obj_t *parent, lv_obj_t **root)
 {
 	(void)parent;
-	return game_init(&homm3_desc, root);
+	return game_init(view_homm3_keys() == HOMM3_KEYS_OGU ? &homm3_ogu_desc : &homm3_desc, root);
 }
 
 const struct widget_ops homm3_screen = {

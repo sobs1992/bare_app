@@ -14,6 +14,7 @@
 #include "core/input.h"
 #include "gui/ctx.h"
 #include "gui/notify.h"
+#include "hal/platform.h"
 
 struct hal_display;
 struct mainloop;
@@ -85,11 +86,17 @@ void view_video_input(const struct gp_event *ev);
 
 /*
  * A game can be minimised: its process stops in the background and keeps
- * its last frame in the layer, under the UI. F5 on any screen without a
- * grab opens its screen again, and view_video_set() of the same source
- * continues it; any other source ends it.
+ * its last frame in the layer, under the UI. F5 (or the game's minimise
+ * button) on any screen without a grab opens its screen again, and
+ * view_video_set() of the same source continues it; any other source ends
+ * it.
  */
 void view_video_minimize(void);
+/* The button that minimises a source's game: F5, Heroes III with the GO
+ * Ultra's keys F1 */
+enum gp_button view_video_minimize_button(enum video_source src);
+/* Heroes III's F keys on this platform */
+enum homm3_keys view_homm3_keys(void);
 /* The minimised game, VIDEO_NONE if there is none */
 enum video_source view_video_minimized(void);
 

@@ -307,7 +307,7 @@ static void on_gamepad(const struct gp_event *ev, void *ud)
 	}
 	if (ev->type != GP_EV_BUTTON)
 		return;
-	if (ev->code == GP_F5) {
+	if (ev->code == GP_F5 || ev->code == view_video_minimize_button(view_video_minimized())) {
 		if (ev->pressed && !ev->repeat)
 			game_unminimize();
 		return;
@@ -521,6 +521,16 @@ void view_video_minimize(void)
 #endif
 }
 
+enum gp_button view_video_minimize_button(enum video_source src)
+{
+	return src == VIDEO_HOMM3 && v.pf->homm3_keys == HOMM3_KEYS_OGU ? GP_F1 : GP_F5;
+}
+
+enum homm3_keys view_homm3_keys(void)
+{
+	return v.pf->homm3_keys;
+}
+
 enum video_source view_video_minimized(void)
 {
 #ifdef HAVE_GAMES
@@ -592,7 +602,7 @@ int view_video_set(enum video_source src)
 	case VIDEO_HOMM3:
 		fb = hal_layer_acquire(l);
 		v.video_game = homm3_start(fb->width, fb->height, v.pf->game_pcm, i18n_lang(),
-					     v.pf->homm3_native);
+					     v.pf->homm3_native, v.pf->homm3_keys);
 		if (!v.video_game)
 			return -1;
 		mainloop_add_fd(v.ml, game_proc_fd(v.video_game), POLLIN, on_game, NULL);

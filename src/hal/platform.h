@@ -13,6 +13,15 @@
 #define PLATFORM_MAX_INPUTS 4
 #define PLATFORM_MAX_DISPLAYS 2
 
+/* Heroes III's F keys */
+enum homm3_keys {
+	/* F1, F2 held: Ctrl, Shift; F3 cancel, F4 options, F5 minimise */
+	HOMM3_KEYS_OGA,
+	/* F1 minimise, F2, F3 held: Ctrl, Shift; F4 accept, F5 cancel or end
+	 * the turn; the right stick as the D-pad (BARE_APP_VCMI_KEYS=ogu) */
+	HOMM3_KEYS_OGU,
+};
+
 struct hal_dev {
 	const void *ops;	/* struct hal_*_ops matching the field */
 	const void *params;	/* driver specific */
@@ -38,6 +47,7 @@ struct platform {
 	 * 2:1 or as a 1:1 magnifier (L1).
 	 */
 	bool homm3_native;
+	enum homm3_keys homm3_keys;
 	struct hal_dev wifi;			/* hal_wifi_ops, optional */
 	/* GP_BIT() mask: pressing all of them quits the application */
 	uint32_t quit_combo;

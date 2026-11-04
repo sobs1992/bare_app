@@ -50,6 +50,10 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 				RU("L1  масштаб    F3  отмена    F4  меню\n"
 				   "F1  Ctrl    F2  Shift    L2 R2  громкость\n"
 				   "F5  свернуть    F6 (держать)  выйти") },
+	[S_HOMM3_HINT_OGU]  = { "F1  minimise    F2  Ctrl (one off)    F3  Shift (split)\n"
+				"F4  accept    F5  cancel / end turn    F6 (hold)  quit"
+				RU("F1  свернуть    F2  Ctrl (одного)    F3  Shift (поровну)\n"
+				   "F4  да    F5  отмена / конец хода    F6 (держать)  выйти") },
 	[S_GAME_LOADING]    = { "Loading..." RU("Загрузка...") },
 	[S_GAME_MISSING_FMT] = { "Not found:\n%s\nB  back" RU("Не найдено:\n%s\nB  назад") },
 	[S_GAME_FAILED]     = { "The game did not start, see the log\nB  back"

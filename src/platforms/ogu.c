@@ -93,6 +93,8 @@ const struct platform platform_ogu = {
 	.game_pcm = "/dev/snd/pcmC0D0p",
 	/* 854x480 at 1:1: VCMI's screen is 854x600, 120 rows follow the cursor */
 	.homm3_native = true,
+	/* a row of F1..F6 under the screen, two sticks */
+	.homm3_keys = HOMM3_KEYS_OGU,
 	.quit_combo = GP_BIT(GP_F6),
 	.poweroff = "/sbin/poweroff",	/* busybox: init runs rcK, then powers off */
 	.config_path = "/etc/bare_app.conf",
