@@ -61,7 +61,7 @@ static int game_link(void)
 	return symlink(homm3_game(), LINK_DIR "/vcmi");
 }
 
-struct game_proc *homm3_start(int width, int height, const char *pcm, const char *lang)
+struct game_proc *homm3_start(int width, int height, const char *pcm, const char *lang, bool native)
 {
 	char xdg_data[PATH_MAX + 16], xdg_config[PATH_MAX + 32], xdg_cache[PATH_MAX + 32];
 	char audiodev[64] = "", name[32], language[32];
@@ -85,15 +85,22 @@ struct game_proc *homm3_start(int width, int height, const char *pcm, const char
 	/* VCMI's link turns it into its own language setting */
 	snprintf(language, sizeof(language), "BARE_APP_LANG=%s", lang);
 
-	const char *env[] = {
+	const char *env[16] = {
 		"SDL_VIDEODRIVER=dummy",
 		/* SIGTERM ends the game; SDL would turn it into "quit?" */
 		"SDL_NO_SIGNAL_HANDLERS=1",
 		"XDG_DATA_DIRS=" LINK_DIR, xdg_data, xdg_config, xdg_cache, language,
 		audiodev[0] ? "SDL_AUDIODRIVER=alsa" : "SDL_AUDIODRIVER=dummy",
-		audiodev[0] ? audiodev : NULL,
-		NULL,
 	};
+	size_t n = 0;
+
+	while (env[n])
+		n++;
+	if (audiodev[0])
+		env[n++] = audiodev;
+	if (native)
+		env[n++] = "BARE_APP_VCMI_NATIVE=1";
+	env[n] = NULL;
 	struct game_spawn s = { .path = CONFIG_GAME_HOMM3_PROGRAM, .argv = argv, .env = env,
 				.dir = homm3_data(), .width = width, .height = height };
 

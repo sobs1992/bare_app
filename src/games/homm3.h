@@ -10,6 +10,8 @@
  */
 #pragma once
 
+#include <stdbool.h>
+
 #include "game_proc.h"
 
 /* Game directory (Data, Maps, Mp3, Mods): $BARE_APP_HOMM3_GAME or
@@ -27,6 +29,7 @@ const char *homm3_missing(void);
 /* Start the game for a width x height video layer, with sound on the ALSA
  * PCM device node pcm (/dev/snd/pcmC0D0p; NULL: silent), in the language
  * lang ("en", "ru": VCMI's and its mods' texts; the original game's texts
- * are in the language of its data); NULL with errno set (ENOENT: see
+ * are in the language of its data), at 1:1 with the view following the
+ * cursor if native (see struct platform); NULL with errno set (ENOENT: see
  * homm3_missing()) */
-struct game_proc *homm3_start(int width, int height, const char *pcm, const char *lang);
+struct game_proc *homm3_start(int width, int height, const char *pcm, const char *lang, bool native);

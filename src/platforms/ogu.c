@@ -91,6 +91,8 @@ const struct platform platform_ogu = {
 	.pcm = { &pcm_alsa, &(const struct pcm_alsa_params){ .device = "/dev/snd/pcmC0D0p" } },
 #endif
 	.game_pcm = "/dev/snd/pcmC0D0p",
+	/* 854x480 at 1:1: VCMI's screen is 854x600, 120 rows follow the cursor */
+	.homm3_native = true,
 	.quit_combo = GP_BIT(GP_F6),
 	.poweroff = "/sbin/poweroff",	/* busybox: init runs rcK, then powers off */
 	.config_path = "/etc/bare_app.conf",

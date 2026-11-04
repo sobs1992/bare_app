@@ -31,6 +31,13 @@ struct platform {
 	struct hal_dev pcm;			/* hal_pcm_ops, optional: interface sounds */
 	/* ALSA PCM device games play to (bare_app_doom -pcm), NULL: games are silent */
 	const char *game_pcm;
+	/*
+	 * Heroes III (VCMI) at 1:1: its screen the frame's size, at least the
+	 * 800x600 its windows need, the frame the part the cursor points at
+	 * (BARE_APP_VCMI_NATIVE). false: drawn at twice the frame and taken
+	 * 2:1 or as a 1:1 magnifier (L1).
+	 */
+	bool homm3_native;
 	struct hal_dev wifi;			/* hal_wifi_ops, optional */
 	/* GP_BIT() mask: pressing all of them quits the application */
 	uint32_t quit_combo;
