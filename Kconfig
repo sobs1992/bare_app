@@ -129,6 +129,18 @@ config WIFI
 	  update_config=1. Getting an address is left to the system's
 	  DHCP client. Simulated on the PC.
 
+config SYSMON
+	bool "System monitor (F5 held)"
+	default y
+	help
+	  Holding F5 for a moment shows the system monitor over any screen,
+	  also over a running game, and holding it again hides it: CPU
+	  load and clocks per cluster, GPU clock, memory, temperatures, the
+	  battery's power, disks (I/O and free space), bare_app and the
+	  game. A short press of F5 still does what it did (minimise a
+	  game...), on release. Reads procfs and sysfs once a second while
+	  shown.
+
 config SETTINGS_FILE
 	bool "Keep settings between runs"
 	default y

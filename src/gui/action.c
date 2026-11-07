@@ -80,6 +80,7 @@ const char *action_name(enum gui_action_type type)
 	case ACT_SCREEN_OFF:     return "screen-off";
 	case ACT_SUSPEND:        return "suspend";
 	case ACT_USB_DISK:       return "usb-disk";
+	case ACT_SYSMON:         return "sysmon";
 	}
 	return "?";
 }

@@ -39,21 +39,26 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_LANGUAGE]        = { "Language" RU("Язык") },
 	[S_LANG_NAME]       = { "English" RU("Русский") },
 	[S_DOOM]            = { "Doom" },
-	[S_DOOM_HINT]       = { "F1  menu    F5  minimise\nF6 (hold)  quit"
-				RU("F1  меню    F5  свернуть\nF6 (держать)  выйти") },
+	[S_DOOM_HINT]       = { "F1  menu    F5  minimise\nF5 (hold)  system monitor\nF6 (hold)  quit"
+				RU("F1  меню    F5  свернуть\nF5 (держать)  монитор системы\n"
+				   "F6 (держать)  выйти") },
 	[S_DOOM_NO_WAD_FMT] = { "No Doom IWAD file:\n%s\nB  back"
 				RU("Нет IWAD-файла Doom:\n%s\nB  назад") },
 	[S_HOMM3]           = { "Heroes III" RU("Герои III") },
 	[S_HOMM3_HINT]      = { "L1  zoom    F3  cancel    F4  options\n"
 				"F1  Ctrl    F2  Shift    L2 R2  volume\n"
-				"F5  minimise    F6 (hold)  quit"
+				"F5  minimise    F6 (hold)  quit\n"
+				"F5 (hold)  system monitor"
 				RU("L1  масштаб    F3  отмена    F4  меню\n"
 				   "F1  Ctrl    F2  Shift    L2 R2  громкость\n"
-				   "F5  свернуть    F6 (держать)  выйти") },
+				   "F5  свернуть    F6 (держать)  выйти\n"
+				   "F5 (держать)  монитор системы") },
 	[S_HOMM3_HINT_OGU]  = { "F1  minimise    F2  Ctrl (one off)    F3  Shift (split)\n"
-				"F4  accept    F5  cancel / end turn    F6 (hold)  quit"
+				"F4  accept    F5  cancel / end turn    F6 (hold)  quit\n"
+				"F5 (hold)  system monitor"
 				RU("F1  свернуть    F2  Ctrl (одного)    F3  Shift (поровну)\n"
-				   "F4  да    F5  отмена / конец хода    F6 (держать)  выйти") },
+				   "F4  да    F5  отмена / конец хода    F6 (держать)  выйти\n"
+				   "F5 (держать)  монитор системы") },
 	[S_GAME_LOADING]    = { "Loading..." RU("Загрузка...") },
 	[S_GAME_MISSING_FMT] = { "Not found:\n%s\nB  back" RU("Не найдено:\n%s\nB  назад") },
 	[S_GAME_FAILED]     = { "The game did not start, see the log\nB  back"
@@ -131,6 +136,24 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_USB_DISK_HINT_RETRY]  = { "A  connect again    B  back"
 				     RU("A  подключить снова    B  назад") },
 	[S_USB_DISK_HINT_BACK]   = { "B  back" RU("B  назад") },
+	[S_SYSMON]          = { "System monitor" RU("Монитор системы") },
+	[S_SYSMON_HIDE]     = { "F5 (hold)  hide" RU("F5 (держать)  скрыть") },
+	[S_SYSMON_UP_FMT]   = { "up %s" RU("работает %s") },
+	[S_SYSMON_RAM]      = { "RAM" RU("ОЗУ") },
+	[S_SYSMON_SWAP]     = { "swap" RU("подкачка") },
+	[S_SYSMON_TEMP]     = { "Temp." RU("Темп.") },
+	[S_SYSMON_BATTERY]  = { "Battery" RU("Батарея") },
+	[S_SYSMON_DISK]     = { "Disk" RU("Диск") },
+	[S_SYSMON_FREE]     = { "free" RU("свободно") },
+	[S_SYSMON_IO_FMT]   = { "R %s  W %s MB/s" RU("чт %s  зп %s МБ/с") },
+	[S_SYSMON_FPS_FMT]  = { "%d fps" RU("%d к/с") },
+	[S_UNIT_MHZ]        = { "MHz" RU("МГц") },
+	[S_UNIT_MB]         = { "MB" RU("МБ") },
+	[S_UNIT_GB]         = { "GB" RU("ГБ") },
+	[S_UNIT_V]          = { "V" RU("В") },
+	[S_UNIT_MA]         = { "mA" RU("мА") },
+	[S_UNIT_W]          = { "W" RU("Вт") },
+	[S_DECIMAL_POINT]   = { "." RU(",") },
 };
 
 static int lang = LANG_EN;

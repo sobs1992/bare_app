@@ -15,6 +15,9 @@ static const struct control_ops *const modules[] = {
 #ifdef CONFIG_SCREEN_USB_DISK
 	&ctl_usb_disk,	/* after ctl_nav: sees the screen ACT_BACK left */
 #endif
+#ifdef CONFIG_SYSMON
+	&ctl_sysmon,
+#endif
 };
 
 static struct mainloop *loop;

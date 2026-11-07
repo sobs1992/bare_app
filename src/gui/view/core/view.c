@@ -24,6 +24,7 @@
 #define POWER_SHORT_MS 500	/* a longer press of the power key starts turning off */
 #define SCREEN_OFF_MS 10000	/* asleep with the screen off this long: real sleep */
 #define POWER_QUIET_MS 1000	/* after waking up the key's events are the wake press */
+#define SYSMON_HOLD_MS 600	/* F5 held this long shows or hides the system monitor */
 
 struct vsub {
 	int id;			/* 0: free */
@@ -56,6 +57,9 @@ static struct {
 	bool screen_off;		/* first stage of sleep: no input but the power key */
 	bool asleep;			/* ACT_SUSPEND posted, NOTIFY_RESUMED not yet */
 	uint64_t power_quiet_until;	/* now_ms() */
+	struct ml_timer *f5_hold;	/* F5 is down: the monitor when it fires */
+	bool f5_down;			/* a press of F5 kept back from the rest */
+	bool f5_held;			/* ...that went on long enough: not a press */
 	enum video_source video_src;
 	struct mailbox *video_mb;
 	struct testpattern *video_tp;
@@ -271,10 +275,57 @@ static void power_key(const struct gp_event *ev)
 		screen_off();
 }
 
+static void deliver(const struct gp_event *ev);
+
+#ifdef CONFIG_SYSMON
+static void on_f5_hold(void *ud)
+{
+	(void)ud;
+	v.f5_hold = NULL;
+	v.f5_held = true;
+	gui_action_post(ACT_SYSMON, !v.snap.sysmon.shown);
+}
+
+/*
+ * F5 held shows or hides the system monitor, over everything, also over
+ * a game that grabbed the gamepad. Its press is kept back until it is
+ * clear which one it is: a short one goes on as press and release when
+ * F5 is let go (minimise a game, its own meaning in a game).
+ */
+static void f5_key(const struct gp_event *ev)
+{
+	struct gp_event press;
+
+	if (ev->repeat)
+		return;
+	if (ev->pressed) {
+		if (!v.f5_down) {
+			v.f5_down = true;
+			v.f5_held = false;
+			v.f5_hold = mainloop_add_timer(v.ml, SYSMON_HOLD_MS, 0, on_f5_hold, NULL);
+		}
+		return;
+	}
+	if (!v.f5_down) {
+		deliver(ev);	/* a release whose press was not seen here */
+		return;
+	}
+	v.f5_down = false;
+	if (v.f5_hold)
+		mainloop_timer_cancel(v.ml, v.f5_hold);
+	v.f5_hold = NULL;
+	if (v.f5_held)
+		return;
+	press = *ev;
+	press.pressed = true;
+	deliver(&press);
+	deliver(ev);
+}
+#endif
+
 static void on_gamepad(const struct gp_event *ev, void *ud)
 {
 	uint32_t combo = v.pf->quit_combo;
-	int key;
 
 	(void)ud;
 	if (ev->type == GP_EV_BUTTON) {
@@ -300,7 +351,21 @@ static void on_gamepad(const struct gp_event *ev, void *ud)
 		if (ev->pressed && (ev->code == GP_VOL_UP || ev->code == GP_VOL_DOWN))
 			gui_action_post(ACT_VOLUME_STEP, ev->code == GP_VOL_UP ? VIEW_VOLUME_STEP
 									 : -VIEW_VOLUME_STEP);
+#ifdef CONFIG_SYSMON
+		if (ev->code == GP_F5 && v.snap.sysmon.available) {
+			f5_key(ev);
+			return;
+		}
+#endif
 	}
+	deliver(ev);
+}
+
+/* To the screen that grabbed the gamepad, or as UI keys */
+static void deliver(const struct gp_event *ev)
+{
+	int key;
+
 	if (v.grab) {
 		v.grab(ev, v.grab_ud);
 		return;
@@ -529,6 +594,11 @@ enum gp_button view_video_minimize_button(enum video_source src)
 enum homm3_keys view_homm3_keys(void)
 {
 	return v.pf->homm3_keys;
+}
+
+enum video_source view_video_shown(void)
+{
+	return view_video_minimized() == VIDEO_NONE ? v.video_src : VIDEO_NONE;
 }
 
 enum video_source view_video_minimized(void)

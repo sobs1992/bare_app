@@ -18,6 +18,10 @@
 #include "gui/control/control.h"
 #include "gui/ctx.h"
 #include "services/config.h"
+#ifdef CONFIG_SYSMON
+#include <sys/stat.h>
+#include "services/sysmon.h"
+#endif
 #if defined(CONFIG_WIFI) && defined(CONFIG_PLATFORM_OGA)
 #include "drivers/wifi_wpa.h"
 #endif
@@ -422,6 +426,151 @@ static void test_damage(void)
 	CHECK(d.n == 1);
 }
 
+#ifdef CONFIG_SYSMON
+/* Write root/rel, making the directories on the way */
+static void put(const char *root, const char *rel, const char *text)
+{
+	char path[512], *p;
+	FILE *f;
+
+	snprintf(path, sizeof(path), "%s/%s", root, rel);
+	for (p = path + strlen(root) + 1; (p = strchr(p, '/')); p++) {
+		*p = '\0';
+		mkdir(path, 0755);
+		*p = '/';
+	}
+	f = fopen(path, "w");
+	if (!f) {
+		CHECK(!"cannot write the fake tree");
+		return;
+	}
+	fputs(text, f);
+	fclose(f);
+}
+
+static void put_procs(const char *root, int self, int game, unsigned long game_ticks)
+{
+	char rel[64], text[256];
+
+	snprintf(rel, sizeof(rel), "proc/%d/stat", self);
+	snprintf(text, sizeof(text), "%d (bare_app) S 1 1 1 0 -1 4194560 100 0 0 0 10 5 0 0 20 0 3 0 "
+		 "100 1000000 2560 18446744073709551615\n", self);
+	put(root, rel, text);
+	snprintf(rel, sizeof(rel), "proc/%d/stat", game);
+	/* a name with a space and a bracket, as /proc gives it */
+	snprintf(text, sizeof(text), "%d (vcmi (main) x) R %d %d %d 0 -1 0 0 0 0 0 %lu 0 0 0 20 0 9 0 "
+		 "200 900000000 25600\n", game, self, game, game, game_ticks);
+	put(root, rel, text);
+	put(root, "proc/1/stat", "1 (init) S 0 1 1 0 -1 0 0 0 0 0 1 1 0 0 20 0 1 0 1 100 50\n");
+}
+
+/* A GO Ultra-like system in a directory: two clusters, a battery zone to
+ * leave out, an eMMC with boot areas, a game started by bare_app */
+static void test_sysmon(void)
+{
+	char root[] = "/tmp/bare_app_sysmon_XXXXXX";
+	struct sysmon_info in;
+	struct sysmon *s;
+	int self = (int)getpid(), game = self + 1, i;
+	char cmd[64];
+
+	if (!mkdtemp(root)) {
+		CHECK(!"mkdtemp");
+		return;
+	}
+	put(root, "proc/cpuinfo", "processor\t: 0\nCPU part\t: 0xd03\n\nprocessor\t: 1\n"
+				  "CPU part\t: 0xd09\n\nprocessor\t: 2\nCPU part\t: 0xd09\n");
+	put(root, "sys/devices/system/cpu/cpufreq/policy0/related_cpus", "0\n");
+	put(root, "sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq", "1000000\n");
+	put(root, "sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq", "1704000\n");
+	put(root, "sys/devices/system/cpu/cpufreq/policy1/related_cpus", "1 2\n");
+	put(root, "sys/devices/system/cpu/cpufreq/policy1/scaling_cur_freq", "1398000\n");
+	put(root, "sys/devices/system/cpu/cpufreq/policy1/cpuinfo_max_freq", "1908000\n");
+	put(root, "proc/stat", "cpu  150 0 150 1050 150 0 0 0\n"
+			       "cpu0 50 0 50 350 50 0 0 0\ncpu1 50 0 50 350 50 0 0 0\n"
+			       "cpu2 50 0 50 350 50 0 0 0\nintr 1 2 3\n");
+	put(root, "proc/meminfo", "MemTotal:        2048000 kB\nMemFree:          100000 kB\n"
+				  "MemAvailable:    1024000 kB\nSwapTotal:             0 kB\n"
+				  "SwapFree:              0 kB\n");
+	put(root, "sys/class/thermal/thermal_zone0/type", "cpu-thermal\n");
+	put(root, "sys/class/thermal/thermal_zone0/temp", "45500\n");
+	put(root, "sys/class/thermal/thermal_zone1/type", "rk818-battery\n");
+	put(root, "sys/class/thermal/thermal_zone1/temp", "20000\n");
+	put(root, "sys/class/thermal/thermal_zone10/type", "ddr-thermal\n");
+	put(root, "sys/class/thermal/thermal_zone10/temp", "40000\n");
+	put(root, "sys/class/devfreq/ffe40000.gpu/cur_freq", "400000000\n");
+	put(root, "sys/class/devfreq/ffe40000.gpu/max_freq", "800000000\n");
+	put(root, "sys/class/power_supply/rk818-usb/type", "USB\n");
+	put(root, "sys/class/power_supply/rk818-battery/type", "Battery\n");
+	put(root, "sys/class/power_supply/rk818-battery/capacity", "87\n");
+	put(root, "sys/class/power_supply/rk818-battery/voltage_now", "3900000\n");
+	put(root, "sys/class/power_supply/rk818-battery/current_now", "500000\n");	/* wrong sign */
+	put(root, "sys/class/power_supply/rk818-battery/status", "Discharging\n");
+	put(root, "sys/block/mmcblk1/device/type", "MMC\n");
+	put(root, "sys/block/mmcblk1boot0/device/type", "MMC\n");
+	put(root, "sys/block/loop0/size", "0\n");
+	put(root, "proc/diskstats", " 179 0 mmcblk1 10 0 2000 0 5 0 1000 0 0 100 0\n"
+				    " 179 3 mmcblk1p3 1 0 8 0 0 0 0 0 0 0 0\n");
+	put(root, "proc/mounts", "/dev/mmcblk1p3 /data ext4 rw 0 0\n"
+				 "/dev/mmcblk1p1 /boot vfat rw 0 0\ntmpfs /tmp tmpfs rw 0 0\n");
+	put(root, "data/.keep", "");
+	put(root, "proc/uptime", "3725.50 100.00\n");
+	put_procs(root, self, game, 100);
+
+	s = sysmon_open(root);
+	CHECK(s != NULL);
+	if (!s)
+		return;
+	sysmon_sample(s, 1000, &in);
+	CHECK(in.ncpus == 3 && in.cpu_total == -1 && in.cpu[0] == -1);	/* no loads yet */
+	CHECK(in.nclusters == 2);
+	CHECK(!strcmp(in.clusters[0].core, "A53") && in.clusters[0].first == 0 &&
+	      in.clusters[0].count == 1 && in.clusters[0].mhz == 1000 && in.clusters[0].max_mhz == 1704);
+	CHECK(!strcmp(in.clusters[1].core, "A73") && in.clusters[1].first == 1 &&
+	      in.clusters[1].count == 2 && in.clusters[1].mhz == 1398);
+	CHECK(in.mem_total_mb == 2000 && in.mem_used_mb == 1000);
+	CHECK(in.ntemps == 2);				/* the battery's zone left out */
+	CHECK(in.temps[0].kind == SYSMON_TEMP_CPU && !strcmp(in.temps[0].name, "cpu") &&
+	      in.temps[0].mdeg == 45500);
+	CHECK(in.temps[1].kind == SYSMON_TEMP_DDR && in.temps[1].mdeg == 40000);
+	CHECK(in.gpu_mhz == 400 && in.gpu_max_mhz == 800);
+	CHECK(in.battery && in.bat_capacity == 87 && in.bat_mv == 3900);
+	CHECK(in.bat_ma == -500 && in.bat_mw == -1950);	/* out of the battery */
+	CHECK(in.ndisks == 1);				/* no boot areas, no loop */
+	CHECK(!strcmp(in.disks[0].name, "mmcblk1") && in.disks[0].kind == SYSMON_DISK_EMMC);
+	CHECK(in.disks[0].busy == -1);
+	CHECK(in.disks[0].nmounts == 1 && !strcmp(in.disks[0].mounts[0].path, "/data"));
+	CHECK(in.disks[0].mounts[0].total_mb > 0 &&
+	      in.disks[0].mounts[0].used_mb <= in.disks[0].mounts[0].total_mb &&
+	      in.disks[0].used_mb == in.disks[0].mounts[0].used_mb &&
+	      in.disks[0].free_mb == in.disks[0].mounts[0].free_mb);
+	CHECK(in.nprocs == 2 && in.procs[0].self && in.procs[0].pid == self);
+	CHECK(!strcmp(in.procs[0].name, "bare_app") && in.procs[0].cpu == -1);
+	CHECK(in.procs[0].rss_mb == (uint32_t)(2560 * (sysconf(_SC_PAGESIZE) / 1024) / 1024));
+	CHECK(!in.procs[1].self && in.procs[1].pid == game && !strcmp(in.procs[1].name, "vcmi (main) x"));
+	CHECK(in.uptime_s == 3725);
+
+	/* a second later: cpu0 half busy, cpu1 and cpu2 all busy; the disk read
+	 * 1 MB, wrote 2 MB, busy a quarter of the time; the game used a CPU */
+	put(root, "proc/stat", "cpu  400 0 150 1100 150 0 0 0\n"
+			       "cpu0 100 0 50 400 50 0 0 0\ncpu1 150 0 50 350 50 0 0 0\n"
+			       "cpu2 150 0 50 350 50 0 0 0\n");
+	put(root, "proc/diskstats", " 179 0 mmcblk1 20 0 4000 0 9 0 5000 0 0 350 0\n");
+	put_procs(root, self, game, 100 + sysconf(_SC_CLK_TCK));
+	sysmon_sample(s, 2000, &in);
+	CHECK(in.cpu[0] == 50 && in.cpu[1] == 100 && in.cpu[2] == 100);
+	CHECK(in.cpu_total == 83);			/* 250 of 300 */
+	CHECK(in.disks[0].read_kbs == 1024 && in.disks[0].write_kbs == 2048);
+	CHECK(in.disks[0].busy == 25);
+	CHECK(in.procs[0].cpu == 0 && in.procs[1].cpu == 100);
+	sysmon_close(s);
+
+	snprintf(cmd, sizeof(cmd), "rm -rf %s", root);
+	i = system(cmd);
+	(void)i;
+}
+#endif
+
 int main(void)
 {
 	test_joystick();
@@ -435,6 +584,9 @@ int main(void)
 	test_volume();
 	test_blit();
 	test_damage();
+#ifdef CONFIG_SYSMON
+	test_sysmon();
+#endif
 #if defined(CONFIG_WIFI) && defined(CONFIG_PLATFORM_OGA)
 	test_wpa();
 #endif

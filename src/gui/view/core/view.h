@@ -87,7 +87,8 @@ void view_video_input(const struct gp_event *ev);
 /*
  * A game can be minimised: its process stops in the background and keeps
  * its last frame in the layer, under the UI. F5 (or the game's minimise
- * button) on any screen without a grab opens its screen again, and
+ * button) on any screen without a grab opens its screen again (with the
+ * system monitor in the build: a short press, on release), and
  * view_video_set() of the same source continues it; any other source ends
  * it.
  */
@@ -99,6 +100,8 @@ enum gp_button view_video_minimize_button(enum video_source src);
 enum homm3_keys view_homm3_keys(void);
 /* The minimised game, VIDEO_NONE if there is none */
 enum video_source view_video_minimized(void);
+/* The source in the layer now, VIDEO_NONE also while it is minimised */
+enum video_source view_video_shown(void);
 
 /* Frames shown since the source was set (a game that is still loading: 0) */
 unsigned view_video_frames(void);

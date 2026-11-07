@@ -14,6 +14,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "services/sysmon.h"
+
 enum screen_id {
 	SCREEN_HOME,
 	SCREEN_INPUT_TEST,
@@ -36,6 +38,7 @@ enum ctx_section {
 	CTX_AUDIO	= 1u << 5,
 	CTX_WIFI	= 1u << 6,
 	CTX_USB_DISK	= 1u << 7,
+	CTX_SYSMON	= 1u << 8,
 	CTX_ALL		= 0xffffffffu,
 };
 
@@ -110,6 +113,13 @@ struct gui_ctx {
 		bool available;		/* the platform can share the games partition */
 		enum usb_disk_state state;
 	} usb_disk;
+	struct {
+		bool available;		/* in this build */
+		bool shown;		/* the monitor is over the screen (F5 held) */
+		unsigned seq;		/* samples since it was shown; 0: none yet */
+		uint64_t taken_ms;	/* now_ms() of the sample */
+		struct sysmon_info info;
+	} sysmon;
 };
 
 int ctx_init(void);

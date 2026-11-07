@@ -28,6 +28,8 @@ void *widget_self(lv_obj_t *root);
 
 /* widgets/ */
 extern const struct widget_ops statusbar_widget;
+/* System monitor on the top layer, shown while CTX_SYSMON says so */
+extern const struct widget_ops sysmon_widget;
 /* symbol: LV_SYMBOL_* or NULL */
 void statusbar_set_title(lv_obj_t *bar, const char *symbol, const char *title);
 lv_obj_t *statusbar_create(lv_obj_t *parent, const char *symbol, const char *title);

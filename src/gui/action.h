@@ -25,6 +25,7 @@ enum gui_action_type {
 	ACT_SCREEN_OFF,		/* arg = 1 backlight off (sleep, first stage), 0 back on */
 	ACT_SUSPEND,		/* sleep until woken (control answers NOTIFY_RESUMED) */
 	ACT_USB_DISK,		/* arg = 1 share the games partition again, 0 take it back */
+	ACT_SYSMON,		/* arg = 1 show the system monitor, 0 hide it */
 };
 
 struct gui_action {

@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "lvgl_view.h"
+#include "widget.h"
 
 #include "core/log.h"
 #include "core/util.h"
@@ -209,6 +210,11 @@ static int backend_init(struct hal_display *display, struct mainloop *ml)
 	lv_style_set_outline_pad(&focus_style, FOCUS_PAD);
 	if (port_input_init() || screens_init())
 		return -1;
+#ifdef CONFIG_SYSMON
+	/* after the screens: their language is set when it updates */
+	if (!widget_create(&sysmon_widget, lv_layer_top()))
+		return -1;
+#endif
 	return 0;
 }
 
