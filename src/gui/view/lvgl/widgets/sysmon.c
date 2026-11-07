@@ -2,20 +2,23 @@
  * System monitor (CTX_SYSMON) over everything on the top layer, also over
  * a game: a dark panel with a row per CPU cluster (a bar per core), the
  * GPU, memory, temperatures, the battery, each disk (a bar for the space
- * used on its partitions, reads and writes, free space under it) and
- * bare_app with its game. F5 held shows
- * and hides it (view core), the game keeps running under it. The rows
- * are built when it is shown and again when what there is changes (a
- * game starts, a disk comes) or the language does.
+ * used on its partitions, reads and writes, free space under it),
+ * bare_app with its game and, while a game is on the screen, its frames
+ * a second. F5 held shows and hides it (view core), the game keeps running
+ * under it. The rows are built when it is shown and again when what there
+ * is changes (a game starts, a disk comes). Always in English, whatever
+ * the UI language.
  *
  * Frames a second are the view's own: frames of the game shown in the
  * video layer between two samples.
  */
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "../widget.h"
+#include "core/util.h"
 
 #define PANEL_MAX_W 560
 #define MARGIN 8
@@ -27,7 +30,7 @@
 #define HOT_LOAD 90		/* percent: a core this busy is drawn in the warning colour */
 #define HOT_MDEG 80000		/* the same for temperatures */
 #define HOT_DISK 90		/* percent of a disk's space used */
-#define MAX_ROWS (SYSMON_MAX_CLUSTERS + 4 + SYSMON_MAX_DISKS + SYSMON_MAX_PROCS)
+#define MAX_ROWS (SYSMON_MAX_CLUSTERS + 5 + SYSMON_MAX_DISKS + SYSMON_MAX_PROCS)
 
 #ifdef CONFIG_UI_FONT_CYRILLIC
 #define TIMES "\xc3\x97"	/* × */
@@ -45,30 +48,29 @@ struct row {
 
 /* What the rows were built for */
 struct layout {
-	char lang[16];
 	int nclusters, ncpus[SYSMON_MAX_CLUSTERS];
-	bool gpu, temps, battery;
+	bool fps, gpu, temps, battery;
 	int ndisks, nprocs;
 	bool mounts[SYSMON_MAX_DISKS];
 };
 
 struct sysmon_view {
-	lv_obj_t *panel, *head_title, *head_up, *body, *hint;
+	lv_obj_t *panel, *head_title, *head_up, *body;
 	bool built;
 	struct layout layout;
-	struct row clusters[SYSMON_MAX_CLUSTERS], gpu, ram, temps, battery;
+	struct row fps, clusters[SYSMON_MAX_CLUSTERS], gpu, ram, temps, battery;
 	struct row disks[SYSMON_MAX_DISKS], procs[SYSMON_MAX_PROCS];
 	lv_obj_t *mounts[SYSMON_MAX_DISKS];
 	unsigned seq;		/* the sample shown */
-	unsigned frames;	/* view_video_frames() at the last sample */
-	uint64_t frames_ms;	/* ...and its time, 0 none */
-	enum video_source frames_src;
-	int fps;		/* -1 unknown */
+	uint64_t frames_ms;	/* now_ms() at the last sample, 0 none */
+	unsigned game_frames;	/* view_video_frames() then */
+	enum video_source frames_src;	/* the game shown then */
+	int game_fps;	/* -1 unknown */
 };
 
 /* ---- formatting ------------------------------------------------------- */
 
-/* value / 10^digits with the language's decimal point */
+/* value / 10^digits */
 static void fmt_fixed(char *buf, size_t size, long long value, int digits)
 {
 	long long scale = digits == 2 ? 100 : digits == 1 ? 10 : 1;
@@ -78,7 +80,7 @@ static void fmt_fixed(char *buf, size_t size, long long value, int digits)
 		snprintf(buf, size, "%lld", value);
 		return;
 	}
-	snprintf(buf, size, "%s%lld%s%0*lld", value < 0 ? "-" : "", a / scale, tr(S_DECIMAL_POINT),
+	snprintf(buf, size, "%s%lld%s%0*lld", value < 0 ? "-" : "", a / scale, ".",
 		 digits, a % scale);
 }
 
@@ -89,14 +91,14 @@ static void fmt_mb(char *buf, size_t size, uint32_t mb)	/* size: 32 is enough */
 
 	if (mb < 10 * 1024) {
 		if (mb < 1024) {
-			snprintf(buf, size, "%u %s", mb, tr(S_UNIT_MB));
+			snprintf(buf, size, "%u %s", mb, "MB");
 			return;
 		}
 		fmt_fixed(num, sizeof(num), (long long)mb * 10 / 1024, 1);
 	} else {
 		snprintf(num, sizeof(num), "%u", (mb + 512) / 1024);
 	}
-	snprintf(buf, size, "%s %s", num, tr(S_UNIT_GB));
+	snprintf(buf, size, "%s %s", num, "GB");
 }
 
 /* kilobytes a second as megabytes: "0,4", "12" */
@@ -212,7 +214,7 @@ static void layout_of(struct layout *l, const struct sysmon_info *in)
 	int i;
 
 	memset(l, 0, sizeof(*l));
-	snprintf(l->lang, sizeof(l->lang), "%s", i18n_lang());
+	l->fps = view_video_shown() != VIDEO_NONE;
 	l->nclusters = in->nclusters;
 	for (i = 0; i < in->nclusters; i++)
 		l->ncpus[i] = in->clusters[i].count;
@@ -233,8 +235,9 @@ static void build(struct sysmon_view *m, const struct sysmon_info *in)
 	lv_obj_clean(m->body);
 	memset(m->mounts, 0, sizeof(m->mounts));
 	layout_of(&m->layout, in);
-	lv_label_set_text(m->head_title, tr(S_SYSMON));
-	lv_label_set_text(m->hint, tr(S_SYSMON_HIDE));
+	lv_label_set_text(m->head_title, "System monitor");
+	if (m->layout.fps)
+		row_new(m, &m->fps, "FPS", 0, false);
 	for (i = 0; i < in->nclusters; i++) {
 		const struct sysmon_cluster *c = &in->clusters[i];
 
@@ -244,16 +247,16 @@ static void build(struct sysmon_view *m, const struct sysmon_info *in)
 	}
 	if (m->layout.gpu)
 		row_new(m, &m->gpu, "GPU", 1, false);
-	row_new(m, &m->ram, tr(S_SYSMON_RAM), 1, false);
+	row_new(m, &m->ram, "RAM", 1, false);
 	if (m->layout.temps)
-		row_new(m, &m->temps, tr(S_SYSMON_TEMP), 0, true);
+		row_new(m, &m->temps, "Temp.", 0, true);
 	if (m->layout.battery)
-		row_new(m, &m->battery, tr(S_SYSMON_BATTERY), 1, false);
+		row_new(m, &m->battery, "Battery", 1, false);
 	for (i = 0; i < in->ndisks; i++) {
 		const char *t = disk_title(&in->disks[i]);
 
 		row_new(m, &m->disks[i], in->disks[i].kind == SYSMON_DISK_OTHER && !t[0]
-					 ? tr(S_SYSMON_DISK) : t, 1, false);
+					 ? "Disk" : t, 1, false);
 		if (m->layout.mounts[i]) {
 			m->mounts[i] = label_new(m->body, 0);
 			lv_obj_set_width(m->mounts[i], LV_PCT(100));
@@ -295,7 +298,7 @@ static void show_clusters(struct sysmon_view *m, const struct sysmon_info *in)
 		len = n ? snprintf(buf, sizeof(buf), "%d%%", (sum + n / 2) / n)
 			: snprintf(buf, sizeof(buf), "...");
 		if (c->mhz > 0)
-			snprintf(buf + len, sizeof(buf) - len, "  %d %s", c->mhz, tr(S_UNIT_MHZ));
+			snprintf(buf + len, sizeof(buf) - len, "  %d %s", c->mhz, "MHz");
 		set_text(r->value, buf);
 		set_color(r->value, max >= HOT_LOAD);
 	}
@@ -307,14 +310,14 @@ static void show_memory(struct sysmon_view *m, const struct sysmon_info *in)
 	int len;
 
 	if (m->layout.gpu) {
-		snprintf(buf, sizeof(buf), "%d / %d %s", in->gpu_mhz, in->gpu_max_mhz, tr(S_UNIT_MHZ));
+		snprintf(buf, sizeof(buf), "%d / %d %s", in->gpu_mhz, in->gpu_max_mhz, "MHz");
 		set_text(m->gpu.value, buf);
 		set_bar(m->gpu.bar[0], in->gpu_mhz * 100 / in->gpu_max_mhz, false);
 	}
 	len = snprintf(buf, sizeof(buf), "%u / %u %s", in->mem_used_mb, in->mem_total_mb,
-		       tr(S_UNIT_MB));
+		       "MB");
 	if (in->swap_total_mb)
-		snprintf(buf + len, sizeof(buf) - len, "  %s %u / %u", tr(S_SYSMON_SWAP),
+		snprintf(buf + len, sizeof(buf) - len, "  %s %u / %u", "swap",
 			 in->swap_used_mb, in->swap_total_mb);
 	set_text(m->ram.value, buf);
 	set_bar(m->ram.bar[0], in->mem_total_mb ? (int)(in->mem_used_mb * 100ULL / in->mem_total_mb) : 0,
@@ -361,10 +364,10 @@ static void show_battery(struct sysmon_view *m, const struct sysmon_info *in)
 	fmt_fixed(watts, sizeof(watts), (mw + 5) / 10, 2);
 	if (in->bat_capacity >= 0)
 		snprintf(buf, sizeof(buf), "%d%%  %s %s  %+d %s  %s %s", in->bat_capacity, volts,
-			 tr(S_UNIT_V), in->bat_ma, tr(S_UNIT_MA), watts, tr(S_UNIT_W));
+			 "V", in->bat_ma, "mA", watts, "W");
 	else
-		snprintf(buf, sizeof(buf), "%s %s  %+d %s  %s %s", volts, tr(S_UNIT_V), in->bat_ma,
-			 tr(S_UNIT_MA), watts, tr(S_UNIT_W));
+		snprintf(buf, sizeof(buf), "%s %s  %+d %s  %s %s", volts, "V", in->bat_ma,
+			 "mA", watts, "W");
 	set_text(m->battery.value, buf);
 	set_bar(m->battery.bar[0], in->bat_capacity, in->bat_capacity >= 0 && in->bat_capacity < 15);
 }
@@ -386,14 +389,14 @@ static void show_disks(struct sysmon_view *m, const struct sysmon_info *in)
 		} else {
 			fmt_rate(rd, sizeof(rd), d->read_kbs);
 			fmt_rate(wr, sizeof(wr), d->write_kbs);
-			snprintf(io, sizeof(io), tr(S_SYSMON_IO_FMT), rd, wr);
+			snprintf(io, sizeof(io), "R %s  W %s MB/s", rd, wr);
 			snprintf(buf + len, sizeof(buf) - len, "%s", io);
 		}
 		set_text(m->disks[i].value, buf);
 		set_bar(m->disks[i].bar[0], used, used >= HOT_DISK);
 		if (!m->mounts[i])
 			continue;
-		len = snprintf(buf, sizeof(buf), "%s:", tr(S_SYSMON_FREE));
+		len = snprintf(buf, sizeof(buf), "%s:", "free");
 		for (k = 0; k < d->nmounts && len < (int)sizeof(buf); k++) {
 			fmt_mb(size, sizeof(size), d->mounts[k].free_mb);
 			len += snprintf(buf + len, sizeof(buf) - len, "%s %s %s", k ? "," : "",
@@ -403,41 +406,53 @@ static void show_disks(struct sysmon_view *m, const struct sysmon_info *in)
 	}
 }
 
-/* Frames of the game in the layer since the last sample */
-static void count_frames(struct sysmon_view *m, const struct gui_ctx *c)
+/* Frames a second from a counter: -1 without an earlier reading */
+static int rate(unsigned now, unsigned then, uint64_t ms)
+{
+	if (!ms || now < then)
+		return -1;
+	return (int)(((now - then) * 1000ULL + ms / 2) / ms);
+}
+
+/* Frames of the game in the video layer since the last sample */
+static void count_frames(struct sysmon_view *m)
 {
 	enum video_source src = view_video_shown();
-	unsigned frames = view_video_frames();
+	unsigned game = view_video_frames();
+	uint64_t now = now_ms(), ms = m->frames_ms && now > m->frames_ms ? now - m->frames_ms : 0;
 
-	m->fps = -1;
-	if (src != VIDEO_NONE && src == m->frames_src && m->frames_ms &&
-	    c->sysmon.taken_ms > m->frames_ms && frames >= m->frames)
-		m->fps = (int)(((frames - m->frames) * 1000ULL + (c->sysmon.taken_ms - m->frames_ms) / 2) /
-			       (c->sysmon.taken_ms - m->frames_ms));
-	m->frames = frames;
-	m->frames_ms = c->sysmon.taken_ms;
+	m->game_fps = src != VIDEO_NONE && src == m->frames_src ? rate(game, m->game_frames, ms) : -1;
+	m->frames_ms = now;
+	m->game_frames = game;
 	m->frames_src = src;
+}
+
+static void show_fps(struct sysmon_view *m)
+{
+	char buf[16];
+
+	if (!m->layout.fps)
+		return;
+	if (m->game_fps >= 0)
+		snprintf(buf, sizeof(buf), "%d", m->game_fps);
+	else
+		snprintf(buf, sizeof(buf), "...");
+	set_text(m->fps.value, buf);
 }
 
 static void show_procs(struct sysmon_view *m, const struct sysmon_info *in)
 {
 	char buf[80], rss[32];
-	bool fps_shown = false;
-	int i, len;
+	int i;
 
 	for (i = 0; i < in->nprocs; i++) {
 		const struct sysmon_proc *p = &in->procs[i];
 
 		fmt_mb(rss, sizeof(rss), p->rss_mb);
-		len = p->cpu >= 0 ? snprintf(buf, sizeof(buf), "%d%%  %s", p->cpu, rss)
-				  : snprintf(buf, sizeof(buf), "...  %s", rss);
-		/* the game is the first process bare_app started */
-		if (!p->self && !fps_shown && m->fps >= 0) {
-			snprintf(buf + len, sizeof(buf) - len, "  ");
-			len += 2;
-			snprintf(buf + len, sizeof(buf) - len, tr(S_SYSMON_FPS_FMT), m->fps);
-			fps_shown = true;
-		}
+		if (p->cpu >= 0)
+			snprintf(buf, sizeof(buf), "%d%%  %s", p->cpu, rss);
+		else
+			snprintf(buf, sizeof(buf), "...  %s", rss);
 		set_text(m->procs[i].value, buf);
 		set_bar(m->procs[i].bar[0], p->cpu, p->cpu >= HOT_LOAD);
 	}
@@ -449,7 +464,7 @@ static void show_uptime(struct sysmon_view *m, const struct sysmon_info *in)
 	uint32_t s = in->uptime_s;
 
 	snprintf(t, sizeof(t), "%u:%02u:%02u", s / 3600, s / 60 % 60, s % 60);
-	snprintf(buf, sizeof(buf), tr(S_SYSMON_UP_FMT), t);
+	snprintf(buf, sizeof(buf), "up %s", t);
 	set_text(m->head_up, buf);
 }
 
@@ -464,7 +479,7 @@ static void *sysmon_init(lv_obj_t *parent, lv_obj_t **root)
 
 	if (!m)
 		return NULL;
-	m->fps = -1;
+	m->game_fps = -1;
 	m->panel = lv_obj_create(parent);
 	lv_obj_remove_style_all(m->panel);
 	lv_obj_set_size(m->panel, LV_MIN(w, PANEL_MAX_W), LV_SIZE_CONTENT);
@@ -496,9 +511,6 @@ static void *sysmon_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_size(m->body, LV_PCT(100), LV_SIZE_CONTENT);
 	lv_obj_set_flex_flow(m->body, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_style_pad_row(m->body, 3, 0);
-
-	m->hint = label_new(m->panel, 0);
-	lv_obj_set_style_text_color(m->hint, UI_COLOR_DIM, 0);
 	*root = m->panel;
 	return m;
 }
@@ -517,14 +529,14 @@ static void sysmon_update(void *self, const struct gui_ctx *c, uint32_t changed)
 		m->frames_ms = 0;
 		return;
 	}
-	if (c->sysmon.seq == m->seq && m->layout.lang[0] && !strcmp(m->layout.lang, i18n_lang()))
+	if (c->sysmon.seq == m->seq)
 		return;		/* the same sample */
 	layout_of(&now, in);
 	if (!m->built || memcmp(&now, &m->layout, sizeof(now)))
 		build(m, in);
-	if (c->sysmon.seq != m->seq)
-		count_frames(m, c);
+	count_frames(m);
 	m->seq = c->sysmon.seq;
+	show_fps(m);
 	show_clusters(m, in);
 	show_memory(m, in);
 	show_temps(m, in);
@@ -545,7 +557,7 @@ static void sysmon_deinit(void *self)
 
 const struct widget_ops sysmon_widget = {
 	.name = "sysmon",
-	.deps = CTX_SYSMON | CTX_SETTINGS,
+	.deps = CTX_SYSMON,
 	.init = sysmon_init,
 	.update = sysmon_update,
 	.deinit = sysmon_deinit,

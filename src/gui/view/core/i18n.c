@@ -136,24 +136,6 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_USB_DISK_HINT_RETRY]  = { "A  connect again    B  back"
 				     RU("A  подключить снова    B  назад") },
 	[S_USB_DISK_HINT_BACK]   = { "B  back" RU("B  назад") },
-	[S_SYSMON]          = { "System monitor" RU("Монитор системы") },
-	[S_SYSMON_HIDE]     = { "F5 (hold)  hide" RU("F5 (держать)  скрыть") },
-	[S_SYSMON_UP_FMT]   = { "up %s" RU("работает %s") },
-	[S_SYSMON_RAM]      = { "RAM" RU("ОЗУ") },
-	[S_SYSMON_SWAP]     = { "swap" RU("подкачка") },
-	[S_SYSMON_TEMP]     = { "Temp." RU("Темп.") },
-	[S_SYSMON_BATTERY]  = { "Battery" RU("Батарея") },
-	[S_SYSMON_DISK]     = { "Disk" RU("Диск") },
-	[S_SYSMON_FREE]     = { "free" RU("свободно") },
-	[S_SYSMON_IO_FMT]   = { "R %s  W %s MB/s" RU("чт %s  зп %s МБ/с") },
-	[S_SYSMON_FPS_FMT]  = { "%d fps" RU("%d к/с") },
-	[S_UNIT_MHZ]        = { "MHz" RU("МГц") },
-	[S_UNIT_MB]         = { "MB" RU("МБ") },
-	[S_UNIT_GB]         = { "GB" RU("ГБ") },
-	[S_UNIT_V]          = { "V" RU("В") },
-	[S_UNIT_MA]         = { "mA" RU("мА") },
-	[S_UNIT_W]          = { "W" RU("Вт") },
-	[S_DECIMAL_POINT]   = { "." RU(",") },
 };
 
 static int lang = LANG_EN;
