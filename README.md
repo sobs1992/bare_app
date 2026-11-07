@@ -19,6 +19,8 @@ Doom под GPLv2: из него собирается отдельная про�
 в `bare_app` не линкуется. bare_app запускает её и обменивается с ней только кадрами
 и событиями геймпада. Так же устроены Герои III: клиент VCMI (GPLv2) собирает пакет
 `vcmi` SDK со своим патчем, а здесь только протокол `src/games/game_ipc.h`.
+И Half-Life: движок Xash3D FWGS (GPLv3) с платформой bare_app собирает пакет
+`xash3d-fwgs` SDK, код игры (лицензия Valve SDK) — пакет `hlsdk-portable`.
 
 В любой игре F5 сворачивает её (Героев III на GO Ultra — F1): процесс игры
 останавливается (SIGSTOP), на экране меню bare_app, у пункта игры значок паузы. Та же
@@ -171,6 +173,39 @@ SDK, туда копируют с ПК или `scripts/homm3-install.sh` SDK), �
 | F6 (удерживать 2 с) | выйти из игры в меню bare_app |
 
 Остальные кнопки как в таблице выше; настройки — кнопкой на панели карты.
+
+## Half-Life (Xash3D FWGS)
+
+Пункт «Half-Life» в главном меню (`GAME_HALFLIFE`, включён в `ogu_defconfig`). Игра —
+движок [Xash3D FWGS](https://github.com/FWGS/xash3d-fwgs) с платформой bare_app (кадры и
+геймпад через `src/games/game_ipc.h`, звук сам в ALSA) и код игры hlsdk-portable, из
+пакетов SDK `xash3d-fwgs` и `hlsdk-portable` (`APPS_CONFIG += bare-app.HALFLIFE=y`).
+Файлы игры в образ не входят: каталог `valve` купленной копии (Steam:
+`steamapps/common/Half-Life`) лежит в `GAME_HALFLIFE_GAME` (`/games/halflife`, только
+чтение; копирует `scripts/halflife-install.sh` SDK), настройки и сохранения движок
+пишет в `GAME_HALFLIFE_DATA` (`/data/halflife`).
+
+- Рисует GPU (OpenGL ES, `ref_gles3compat`, если пакет `mesa-panfrost` установлен),
+  иначе программный рендер. `BARE_APP_HALFLIFE_REF` задаёт рендер явно.
+- Язык — язык bare_app: движок получает `-language russian` или `english`. Меню по-русски
+  берёт строки из `valve_russian` Steam (скрипт копирует и её) и из перевода SDK для
+  строк самого Xash; надписи в игре (названия глав, подсказки учебного курса) — из
+  перевода SDK `titles_valve_russian.txt`.
+
+| Кнопка | Действие |
+|---|---|
+| левый стик / правый стик | движение / обзор |
+| F1 | меню игры |
+| F2 | пауза |
+| F3 / F4 | быстрое сохранение / быстрая загрузка |
+| F5 | свернуть игру |
+| F6 (удерживать 2 с) | выйти из игры в меню bare_app |
+
+Остальные кнопки геймпада и чувствительность — в меню игры: «Настройки» → «Джойстик» /
+«Управление».
+
+На ПК: движок собрать с `--64bits --enable-bare-app=<bare_app>/src`, установить в каталог
+и задать `BARE_APP_HALFLIFE_PREFIX`, `BARE_APP_HALFLIFE_GAME`, `BARE_APP_HALFLIFE_DATA`.
 
 ## Состав сборки (Kconfig)
 

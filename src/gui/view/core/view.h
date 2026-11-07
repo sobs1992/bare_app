@@ -75,6 +75,7 @@ enum video_source {
 	VIDEO_TEST_PATTERN,
 	VIDEO_DOOM,		/* games run in their own process and take the gamepad */
 	VIDEO_HOMM3,
+	VIDEO_HALFLIFE,
 };
 
 bool view_video_available(void);

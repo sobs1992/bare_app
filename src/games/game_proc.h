@@ -46,5 +46,8 @@ int game_proc_stop(struct game_proc *g);
 /* A program next to our own binary (build dir, /usr/bin); -1 if the path
  * does not fit */
 int game_proc_sibling(const char *name, char *buf, size_t size);
+/* /dev/snd/pcmC<card>D<dev>p -> plughw:<card>,<dev>, the name alsa-lib
+ * opens; -1 if node is not a PCM device node */
+int game_proc_alsa_name(const char *node, char *buf, size_t size);
 /* dir with "~/" expanded to $HOME, created with its parents if missing */
 int game_proc_mkdir(const char *dir, char *buf, size_t size);

@@ -59,6 +59,13 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 				RU("F1  свернуть    F2  Ctrl (одного)    F3  Shift (поровну)\n"
 				   "F4  да    F5  отмена / конец хода    F6 (держать)  выйти\n"
 				   "F5 (держать)  монитор системы") },
+	[S_HALFLIFE]        = { "Half-Life" },
+	[S_HALFLIFE_HINT]   = { "F1  menu    F2  pause    F3  quick save    F4  quick load\n"
+				"F5  minimise    F6 (hold)  quit\n"
+				"F5 (hold)  system monitor"
+				RU("F1  меню    F2  пауза    F3  быстрое сохранение    F4  загрузка\n"
+				   "F5  свернуть    F6 (держать)  выйти\n"
+				   "F5 (держать)  монитор системы") },
 	[S_GAME_LOADING]    = { "Loading..." RU("Загрузка...") },
 	[S_GAME_MISSING_FMT] = { "Not found:\n%s\nB  back" RU("Не найдено:\n%s\nB  назад") },
 	[S_GAME_FAILED]     = { "The game did not start, see the log\nB  back"
@@ -114,11 +121,11 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 				 RU("Подключите приставку к компьютеру кабелем USB-C: "
 				    "раздел с играми появится там как диск GAMES.") },
 	[S_USB_DISK_SHARED] = { "The games partition is the disk GAMES on the computer.\n\n"
-				"Copy the games onto it (the folders heroes3, doom), "
+				"Copy the games onto it (the folders heroes3, halflife, doom), "
 				"then eject the disk on the computer: "
 				"the console takes it back by itself."
 				RU("Раздел с играми открыт на компьютере как диск GAMES.\n\n"
-				   "Скопируйте на него игры (папки heroes3, doom), "
+				   "Скопируйте на него игры (папки heroes3, halflife, doom), "
 				   "затем извлеките диск на компьютере: "
 				   "приставка заберёт его сама.") },
 	[S_USB_DISK_AGAIN]  = { "Eject the disk on the computer first.\nB again: disconnect anyway"

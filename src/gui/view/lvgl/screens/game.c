@@ -1,5 +1,5 @@
 /*
- * Games (GAME_DOOM, GAME_HOMM3): the game draws into the video layer under
+ * Games (GAME_DOOM, GAME_HOMM3, GAME_HALFLIFE): the game draws into the video layer under
  * a transparent screen and gets the gamepad. "Loading..." stays until its
  * first frame, then a hint shows the controls. Games that do not need the
  * triggers leave them for the volume (L2 down, R2 up). F5 (Heroes III
@@ -15,6 +15,7 @@
 
 #include "../widget.h"
 #include "games/doom.h"
+#include "games/halflife.h"
 #include "games/homm3.h"
 #include "gui/action.h"
 
@@ -205,6 +206,34 @@ static void *homm3_init(lv_obj_t *parent, lv_obj_t **root)
 const struct widget_ops homm3_screen = {
 	.name = "homm3",
 	.init = homm3_init,
+	.deinit = game_deinit,
+};
+#endif
+
+#ifdef CONFIG_GAME_HALFLIFE
+static bool halflife_missing_text(char *buf, size_t size)
+{
+	const char *missing = halflife_missing();
+
+	if (!missing)
+		return false;
+	snprintf(buf, size, tr(S_GAME_MISSING_FMT), missing);
+	return true;
+}
+
+/* L2 and R2 are the game's */
+static const struct game_desc halflife_desc = { VIDEO_HALFLIFE, S_HALFLIFE, S_HALFLIFE_HINT, false,
+						halflife_missing_text };
+
+static void *halflife_init(lv_obj_t *parent, lv_obj_t **root)
+{
+	(void)parent;
+	return game_init(&halflife_desc, root);
+}
+
+const struct widget_ops halflife_screen = {
+	.name = "halflife",
+	.init = halflife_init,
 	.deinit = game_deinit,
 };
 #endif

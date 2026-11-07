@@ -296,6 +296,53 @@ config GAME_HOMM3_DATA
 
 endif
 
+config GAME_HALFLIFE
+	bool "Half-Life (Xash3D FWGS, separate program)"
+	depends on VIEW_LVGL
+	help
+	  "Half-Life" in the main menu: the Xash3D FWGS engine (GPLv3)
+	  built with its bare_app platform and the game code of
+	  hlsdk-portable, from the SDK packages xash3d-fwgs and
+	  hlsdk-portable (APPS_CONFIG bare-app.HALFLIFE=y), started for
+	  each game like Doom. It draws into the video layer with the
+	  GPU (OpenGL ES, when the engine has it) or its software
+	  renderer; the gamepad is the engine's gamepad; the language is
+	  bare_app's (-language). The game files are not included: see
+	  GAME_HALFLIFE_GAME.
+
+if GAME_HALFLIFE
+
+config GAME_HALFLIFE_PREFIX
+	string "Engine prefix"
+	default "/usr"
+	help
+	  Where the engine is installed: <prefix>/bin/xash3d, its
+	  libraries and the game code in <prefix>/lib/xash3d, its own
+	  resources in <prefix>/share/xash3d. BARE_APP_HALFLIFE_PREFIX
+	  overrides it at run time.
+
+config GAME_HALFLIFE_GAME
+	string "Game directory"
+	default "/games/halflife"
+	help
+	  The directory that holds the valve directory of a bought copy
+	  (Steam: steamapps/common/Half-Life); the Windows and macOS
+	  libraries in it are not used. Read only. BARE_APP_HALFLIFE_GAME
+	  overrides it at run time. /games is the SDK's FAT32 games
+	  partition, written from a PC or by the SDK's
+	  scripts/halflife-install.sh.
+
+config GAME_HALFLIFE_DATA
+	string "Data directory"
+	default "/data/halflife"
+	help
+	  The engine's writable base directory: settings
+	  (valve/config.cfg) and saved games (valve/SAVE). "~/" means
+	  $HOME. Created when the game starts. BARE_APP_HALFLIFE_DATA
+	  overrides it at run time. /data is the SDK's data partition.
+
+endif
+
 endmenu
 
 menu "Debugging"

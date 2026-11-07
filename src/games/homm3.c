@@ -42,17 +42,6 @@ const char *homm3_missing(void)
 	return NULL;
 }
 
-/* /dev/snd/pcmC<card>D<dev>p -> plughw:<card>,<dev> for alsa-lib (SDL) */
-static int alsa_name(const char *node, char *buf, size_t size)
-{
-	unsigned card, dev;
-
-	if (sscanf(node, "/dev/snd/pcmC%uD%up", &card, &dev) != 2)
-		return -1;
-	snprintf(buf, size, "plughw:%u,%u", card, dev);
-	return 0;
-}
-
 static int game_link(void)
 {
 	if (mkdir(LINK_DIR, 0755) < 0 && errno != EEXIST)
@@ -81,7 +70,7 @@ struct game_proc *homm3_start(int width, int height, const char *pcm, const char
 	snprintf(xdg_data, sizeof(xdg_data), "XDG_DATA_HOME=%s", homm3_data());
 	snprintf(xdg_config, sizeof(xdg_config), "XDG_CONFIG_HOME=%s/config", homm3_data());
 	snprintf(xdg_cache, sizeof(xdg_cache), "XDG_CACHE_HOME=%s/cache", homm3_data());
-	if (pcm && alsa_name(pcm, name, sizeof(name)) == 0)
+	if (pcm && game_proc_alsa_name(pcm, name, sizeof(name)) == 0)
 		snprintf(audiodev, sizeof(audiodev), "AUDIODEV=%s", name);
 	/* VCMI's link turns it into its own language setting */
 	snprintf(language, sizeof(language), "BARE_APP_LANG=%s", lang);

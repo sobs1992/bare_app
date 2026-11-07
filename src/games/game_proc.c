@@ -58,6 +58,16 @@ int game_proc_mkdir(const char *dir, char *buf, size_t size)
 	return mkdir(buf, 0755) < 0 && errno != EEXIST ? -1 : 0;
 }
 
+int game_proc_alsa_name(const char *node, char *buf, size_t size)
+{
+	unsigned card, dev;
+
+	if (sscanf(node, "/dev/snd/pcmC%uD%up", &card, &dev) != 2)
+		return -1;
+	snprintf(buf, size, "plughw:%u,%u", card, dev);
+	return 0;
+}
+
 int game_proc_sibling(const char *name, char *buf, size_t size)
 {
 	char self[PATH_MAX], *slash;
