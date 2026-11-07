@@ -57,6 +57,9 @@ struct platform {
 	/* Run for a short press of the power key: puts the device to sleep and
 	 * returns once it has woken up. NULL: the key does nothing. */
 	const char *suspend;
+	/* Shares the games partition as a USB disk: "<cmd> start|status|stop"
+	 * (the SDK's /usr/sbin/usb-disk). NULL: no USB disk screen. */
+	const char *usb_disk;
 	/* settings file ("~/" = $HOME), NULL: nothing is kept between runs */
 	const char *config_path;
 };

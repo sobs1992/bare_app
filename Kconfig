@@ -167,6 +167,14 @@ config SCREEN_WIFI
 	help
 	  Opened from the settings screen.
 
+config SCREEN_USB_DISK
+	bool "USB disk screen (the games partition for the computer)"
+	help
+	  A menu entry that shares the games partition (/games) as a USB
+	  disk over the USB-C cable, to copy games from a computer. Needs
+	  the platform's usb_disk command (the SDK's /usr/sbin/usb-disk);
+	  without it the screen says it is not available.
+
 config SCREEN_LAYERS
 	bool "Layers screen (UI over the video layer)"
 	default y

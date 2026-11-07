@@ -1,7 +1,7 @@
 /*
  * Home: menu of screens. A minimised game shows a pause symbol; picking
- * another screen that needs the video layer (another game) first asks
- * whether to close it.
+ * another screen that needs the video layer (another game) or the games
+ * partition (the USB disk) first asks whether to close it.
  */
 #include <stdlib.h>
 
@@ -18,25 +18,29 @@ struct entry {
 	enum gui_action_type action;
 	int arg;
 	enum video_source video;	/* what the screen shows in the video layer */
+	bool needs_games;		/* takes /games away: a minimised game must close */
 };
 
 static const struct entry entries[] = {
 #ifdef CONFIG_GAME_HOMM3
-	{ LV_SYMBOL_PLAY, S_HOMM3, ACT_OPEN_SCREEN, SCREEN_HOMM3, VIDEO_HOMM3 },
+	{ LV_SYMBOL_PLAY, S_HOMM3, ACT_OPEN_SCREEN, SCREEN_HOMM3, VIDEO_HOMM3, false },
 #endif
 #ifdef CONFIG_GAME_DOOM
-	{ LV_SYMBOL_PLAY, S_DOOM, ACT_OPEN_SCREEN, SCREEN_DOOM, VIDEO_DOOM },
+	{ LV_SYMBOL_PLAY, S_DOOM, ACT_OPEN_SCREEN, SCREEN_DOOM, VIDEO_DOOM, false },
 #endif
 #ifdef CONFIG_SCREEN_INPUT_TEST
-	{ LV_SYMBOL_KEYBOARD, S_INPUT_TEST, ACT_OPEN_SCREEN, SCREEN_INPUT_TEST, VIDEO_NONE },
+	{ LV_SYMBOL_KEYBOARD, S_INPUT_TEST, ACT_OPEN_SCREEN, SCREEN_INPUT_TEST, VIDEO_NONE, false },
+#endif
+#ifdef CONFIG_SCREEN_USB_DISK
+	{ LV_SYMBOL_USB, S_USB_DISK, ACT_OPEN_SCREEN, SCREEN_USB_DISK, VIDEO_NONE, true },
 #endif
 #ifdef CONFIG_SCREEN_SETTINGS
-	{ LV_SYMBOL_SETTINGS, S_SETTINGS, ACT_OPEN_SCREEN, SCREEN_SETTINGS, VIDEO_NONE },
+	{ LV_SYMBOL_SETTINGS, S_SETTINGS, ACT_OPEN_SCREEN, SCREEN_SETTINGS, VIDEO_NONE, false },
 #endif
 #ifdef CONFIG_SCREEN_LAYERS
-	{ LV_SYMBOL_IMAGE, S_LAYERS, ACT_OPEN_SCREEN, SCREEN_LAYERS, VIDEO_TEST_PATTERN },
+	{ LV_SYMBOL_IMAGE, S_LAYERS, ACT_OPEN_SCREEN, SCREEN_LAYERS, VIDEO_TEST_PATTERN, false },
 #endif
-	{ LV_SYMBOL_POWER, S_QUIT, ACT_POWER_OFF, 0, VIDEO_NONE },
+	{ LV_SYMBOL_POWER, S_QUIT, ACT_POWER_OFF, 0, VIDEO_NONE, false },
 };
 
 #define N_ENTRIES (sizeof(entries) / sizeof(entries[0]))
@@ -151,7 +155,7 @@ static void on_click(lv_event_t *e)
 	enum video_source minimized = view_video_minimized();
 	const struct entry *running = minimized != VIDEO_NONE ? entry_of(minimized) : NULL;
 
-	if (running && en->video != VIDEO_NONE && en != running) {
+	if (running && (en->video != VIDEO_NONE || en->needs_games) && en != running) {
 		ask_close(lv_obj_get_screen(lv_event_get_target_obj(e)), en, running);
 		return;
 	}

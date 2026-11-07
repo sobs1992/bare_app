@@ -97,5 +97,6 @@ const struct platform platform_ogu = {
 	.homm3_keys = HOMM3_KEYS_OGU,
 	.quit_combo = GP_BIT(GP_F6),
 	.poweroff = "/sbin/poweroff",	/* busybox: init runs rcK, then powers off */
+	.usb_disk = "/usr/sbin/usb-disk",
 	.config_path = "/etc/bare_app.conf",
 };

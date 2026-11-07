@@ -55,6 +55,7 @@ set(CORE_SOURCES
 	src/gui/control/ctl_power.c
 	src/gui/control/ctl_audio.c
 	src/gui/control/ctl_wifi.c
+	src/gui/control/ctl_usb_disk.c
 	src/gui/view/core/i18n.c
 	src/gui/view/core/view.c
 )
@@ -153,6 +154,9 @@ if(CONFIG_VIEW_LVGL)
 	endif()
 	if(CONFIG_GAME_DOOM OR CONFIG_GAME_HOMM3)
 		list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/game.c)
+	endif()
+	if(CONFIG_SCREEN_USB_DISK)
+		list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/usb_disk.c)
 	endif()
 	if(CONFIG_SCREEN_WIFI)
 		list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/wifi.c

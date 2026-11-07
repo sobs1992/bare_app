@@ -30,4 +30,4 @@ void control_stop(void);
 const char *control_poweroff_cmd(void);
 
 extern const struct control_ops ctl_app, ctl_nav, ctl_power, ctl_display, ctl_system, ctl_settings,
-	ctl_audio, ctl_wifi;
+	ctl_audio, ctl_wifi, ctl_usb_disk;

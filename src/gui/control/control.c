@@ -12,6 +12,9 @@
 static const struct control_ops *const modules[] = {
 	&ctl_app, &ctl_nav, &ctl_system, &ctl_settings, &ctl_power, &ctl_display, &ctl_audio,
 	&ctl_wifi,
+#ifdef CONFIG_SCREEN_USB_DISK
+	&ctl_usb_disk,	/* after ctl_nav: sees the screen ACT_BACK left */
+#endif
 };
 
 static struct mainloop *loop;

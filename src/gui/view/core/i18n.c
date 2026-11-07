@@ -101,6 +101,36 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 				   RU("Игра «%s» свёрнута.\nЗакрыть её и запустить «%s»?") },
 	[S_CANCEL]          = { "Cancel" RU("Отмена") },
 	[S_CLOSE_AND_START] = { "Close and start" RU("Закрыть и запустить") },
+	[S_USB_DISK]        = { "USB disk" RU("USB-диск") },
+	[S_USB_DISK_STARTING] = { "Opening the games partition to the computer..."
+				  RU("Открываю раздел с играми компьютеру...") },
+	[S_USB_DISK_NO_HOST] = { "Connect the console to a computer with a USB-C cable: "
+				 "the games partition shows up there as the disk GAMES."
+				 RU("Подключите приставку к компьютеру кабелем USB-C: "
+				    "раздел с играми появится там как диск GAMES.") },
+	[S_USB_DISK_SHARED] = { "The games partition is the disk GAMES on the computer.\n\n"
+				"Copy the games onto it (the folders heroes3, doom), "
+				"then eject the disk on the computer: "
+				"the console takes it back by itself."
+				RU("Раздел с играми открыт на компьютере как диск GAMES.\n\n"
+				   "Скопируйте на него игры (папки heroes3, doom), "
+				   "затем извлеките диск на компьютере: "
+				   "приставка заберёт его сама.") },
+	[S_USB_DISK_AGAIN]  = { "Eject the disk on the computer first.\nB again: disconnect anyway"
+				RU("Сначала извлеките диск на компьютере.\n"
+				   "B ещё раз: отключить всё равно") },
+	[S_USB_DISK_EJECTED] = { "The disk is back on the console: the games are ready."
+				 RU("Диск вернулся на приставку: игры доступны.") },
+	[S_USB_DISK_BUSY]   = { "The games partition is in use: close the game and try again."
+				RU("Раздел с играми занят: закройте игру и попробуйте снова.") },
+	[S_USB_DISK_FAILED] = { "Could not open the games partition to the computer."
+				RU("Не удалось открыть раздел с играми компьютеру.") },
+	[S_USB_DISK_UNAVAILABLE] = { "Not available on this device."
+				     RU("На этом устройстве недоступно.") },
+	[S_USB_DISK_HINT_SHARED] = { "B  disconnect" RU("B  отключить") },
+	[S_USB_DISK_HINT_RETRY]  = { "A  connect again    B  back"
+				     RU("A  подключить снова    B  назад") },
+	[S_USB_DISK_HINT_BACK]   = { "B  back" RU("B  назад") },
 };
 
 static int lang = LANG_EN;

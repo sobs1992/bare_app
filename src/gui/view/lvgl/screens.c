@@ -27,6 +27,9 @@ static const struct widget_ops *const screen_ops[SCREEN_COUNT] = {
 #ifdef CONFIG_GAME_HOMM3
 	[SCREEN_HOMM3] = &homm3_screen,
 #endif
+#ifdef CONFIG_SCREEN_USB_DISK
+	[SCREEN_USB_DISK] = &usb_disk_screen,
+#endif
 #ifdef CONFIG_SCREEN_WIFI
 	[SCREEN_WIFI] = &wifi_screen,
 	[SCREEN_WIFI_KEY] = &wifi_key_screen,

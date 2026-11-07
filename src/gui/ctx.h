@@ -23,6 +23,7 @@ enum screen_id {
 	SCREEN_HOMM3,
 	SCREEN_WIFI,
 	SCREEN_WIFI_KEY,	/* key for the network in wifi.asked */
+	SCREEN_USB_DISK,	/* the games partition as a USB disk for the computer */
 	SCREEN_COUNT
 };
 
@@ -34,6 +35,7 @@ enum ctx_section {
 	CTX_SETTINGS	= 1u << 4,
 	CTX_AUDIO	= 1u << 5,
 	CTX_WIFI	= 1u << 6,
+	CTX_USB_DISK	= 1u << 7,
 	CTX_ALL		= 0xffffffffu,
 };
 
@@ -45,6 +47,16 @@ enum ctx_section {
 enum audio_output { AUDIO_OUT_AUTO, AUDIO_OUT_SPEAKER, AUDIO_OUT_HEADPHONES, AUDIO_OUT_COUNT };
 
 enum wifi_link { WIFI_OFF, WIFI_DISCONNECTED, WIFI_CONNECTING, WIFI_CONNECTED };
+
+enum usb_disk_state {
+	USB_DISK_OFF,		/* the games partition is on the device */
+	USB_DISK_STARTING,
+	USB_DISK_NO_HOST,	/* shared, but no computer on the cable */
+	USB_DISK_SHARED,	/* the computer has it */
+	USB_DISK_EJECTED,	/* the computer ejected it: back on the device */
+	USB_DISK_BUSY,		/* not shared: a game has its files open */
+	USB_DISK_FAILED,
+};
 
 struct wifi_net {
 	char ssid[WIFI_SSID_MAX + 1];
@@ -94,6 +106,10 @@ struct gui_ctx {
 		struct wifi_net nets[WIFI_MAX_NETS];
 		char asked[WIFI_SSID_MAX + 1];	/* the key screen asks for this one */
 	} wifi;
+	struct {
+		bool available;		/* the platform can share the games partition */
+		enum usb_disk_state state;
+	} usb_disk;
 };
 
 int ctx_init(void);
