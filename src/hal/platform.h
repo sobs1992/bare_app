@@ -5,6 +5,7 @@
  */
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "core/input.h"
@@ -54,6 +55,9 @@ struct platform {
 	const char *game_pcm;
 	enum homm3_view homm3_view;
 	enum homm3_keys homm3_keys;
+	/* Half-Life draws in software until another renderer is chosen in the
+	 * game's menu (where its software renderer is faster than the GPU one) */
+	bool halflife_soft;
 	struct hal_dev wifi;			/* hal_wifi_ops, optional */
 	/* GP_BIT() mask: pressing all of them quits the application */
 	uint32_t quit_combo;

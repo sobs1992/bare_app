@@ -11,6 +11,8 @@
  */
 #pragma once
 
+#include <stdbool.h>
+
 #include "game_proc.h"
 
 /* Directory with the game's valve directory, read only:
@@ -27,6 +29,9 @@ const char *halflife_missing(void);
 /*
  * NULL with errno set (ENOENT: see halflife_missing()). lang: bare_app's
  * language code; the game takes its texts from <game>/valve_<language>
- * (a bought copy has valve_russian) when there are some for it.
+ * (a bought copy has valve_russian) when there are some for it. The
+ * renderer is the one chosen in the game's menu (Video modes); until one
+ * is, OpenGL ES if installed and !soft, else software
+ * ($BARE_APP_HALFLIFE_REF overrides all of them).
  */
-struct game_proc *halflife_start(int width, int height, const char *pcm, const char *lang);
+struct game_proc *halflife_start(int width, int height, const char *pcm, const char *lang, bool soft);

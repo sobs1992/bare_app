@@ -176,17 +176,21 @@ SDK, туда копируют с ПК или `scripts/homm3-install.sh` SDK), �
 
 ## Half-Life (Xash3D FWGS)
 
-Пункт «Half-Life» в главном меню (`GAME_HALFLIFE`, включён в `ogu_defconfig`). Игра —
-движок [Xash3D FWGS](https://github.com/FWGS/xash3d-fwgs) с платформой bare_app (кадры и
-геймпад через `src/games/game_ipc.h`, звук сам в ALSA) и код игры hlsdk-portable, из
-пакетов SDK `xash3d-fwgs` и `hlsdk-portable` (`APPS_CONFIG += bare-app.HALFLIFE=y`).
+Пункт «Half-Life» в главном меню (`GAME_HALFLIFE`, включён в `ogu_defconfig` и
+`oga_defconfig`). Игра — движок [Xash3D FWGS](https://github.com/FWGS/xash3d-fwgs) с
+платформой bare_app (кадры и геймпад через `src/games/game_ipc.h`, звук сам в ALSA) и код
+игры hlsdk-portable, из пакетов SDK `xash3d-fwgs` и `hlsdk-portable`
+(`APPS_CONFIG += bare-app.HALFLIFE=y`).
 Файлы игры в образ не входят: каталог `valve` купленной копии (Steam:
 `steamapps/common/Half-Life`) лежит в `GAME_HALFLIFE_GAME` (`/games/halflife`, только
 чтение; копирует `scripts/halflife-install.sh` SDK), настройки и сохранения движок
 пишет в `GAME_HALFLIFE_DATA` (`/data/halflife`).
 
-- Рисует GPU (OpenGL ES, `ref_gles3compat`, если пакет `mesa-panfrost` установлен),
-  иначе программный рендер. `BARE_APP_HALFLIFE_REF` задаёт рендер явно.
+- Рендер выбирается в меню игры: «Настройки» → «Видео» (движок хранит выбор в
+  `video.cfg`, действует после перезапуска игры). Пока там ничего не выбрано, bare_app
+  задаёт рендер платформы: GPU (OpenGL ES, `ref_gles3compat`, если пакет `mesa-panfrost`
+  установлен), на OGA программный (Cortex-A35 читает кадры GPU медленнее, чем рисует
+  сам), без Mesa программный. `BARE_APP_HALFLIFE_REF` задаёт рендер явно, поверх меню.
 - Язык — язык bare_app: движок получает `-language russian` или `english`. Меню по-русски
   берёт строки из `valve_russian` Steam (скрипт копирует и её) и из перевода SDK для
   строк самого Xash; надписи в игре (названия глав, подсказки учебного курса) — из

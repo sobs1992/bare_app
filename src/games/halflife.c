@@ -105,19 +105,46 @@ const char *halflife_missing(void)
 	return NULL;
 }
 
-/*
- * The renderer: $BARE_APP_HALFLIFE_REF, else OpenGL ES when the engine has
- * it, else its software renderer
- */
-static const char *renderer(void)
+static bool has_gpu(void)
 {
 	char path[PATH_MAX];
+
+	snprintf(path, sizeof(path), "%s" ENGINE_LIBS "/libref_" GLES_REF ".so", prefix());
+	return access(path, R_OK) == 0;
+}
+
+/* The renderer chosen in the engine's menu (Video modes): r_refdll, which
+ * the engine keeps in <data>/valve/video.cfg ("" until one is chosen) */
+static bool menu_renderer(const char *data)
+{
+	char path[PATH_MAX + 32], line[256];
+	bool chosen = false;
+	FILE *f;
+
+	snprintf(path, sizeof(path), "%s/valve/video.cfg", data);
+	f = fopen(path, "r");
+	if (!f)
+		return false;
+	while (!chosen && fgets(line, sizeof(line), f))
+		chosen = !strncmp(line, "r_refdll \"", 10) && line[10] && line[10] != '"';
+	fclose(f);
+	return chosen;
+}
+
+/*
+ * The renderer for -ref, which outranks the engine's menu:
+ * $BARE_APP_HALFLIFE_REF; else none once the menu has one chosen; else the
+ * platform's: software if it asks for it or OpenGL ES is not installed.
+ */
+static const char *renderer(const char *data, bool soft)
+{
 	const char *env = getenv("BARE_APP_HALFLIFE_REF");
 
 	if (env && *env)
 		return env;
-	snprintf(path, sizeof(path), "%s" ENGINE_LIBS "/libref_" GLES_REF ".so", prefix());
-	return access(path, R_OK) == 0 ? GLES_REF : "soft";
+	if (menu_renderer(data))
+		return NULL;
+	return !soft && has_gpu() ? GLES_REF : "soft";
 }
 
 /* bare_app's language code -> the engine's language name (Steam's) */
@@ -126,7 +153,7 @@ static const char *language(const char *lang)
 	return lang && !strncmp(lang, "ru", 2) ? "russian" : "english";
 }
 
-struct game_proc *halflife_start(int width, int height, const char *pcm, const char *lang)
+struct game_proc *halflife_start(int width, int height, const char *pcm, const char *lang, bool soft)
 {
 	char program[PATH_MAX], server[PATH_MAX], client[PATH_MAX], data[PATH_MAX];
 	char basedir[PATH_MAX + 32], rodir[PATH_MAX + 32], extras[PATH_MAX + 32], libs[PATH_MAX + 32];
@@ -158,21 +185,35 @@ struct game_proc *halflife_start(int width, int height, const char *pcm, const c
 	/* the launcher loads the engine (libxash.so) by its name only */
 	snprintf(libs, sizeof(libs), "LD_LIBRARY_PATH=%s" ENGINE_LIBS, prefix());
 
-	const char *ref = renderer();
-	char *const argv[] = {
-		(char *)"xash3d", (char *)"-ref", (char *)ref,
-		(char *)"-dll", server, (char *)"-clientlib", client,
-		/* every start: the engine keeps the last one in vfs.cfg */
-		(char *)"-language", (char *)language(lang),
-		(char *)(alsa[0] ? "-alsadev" : "-nosound"), alsa[0] ? alsa : NULL,
-		NULL
-	};
-	const char *const env[] = { basedir, rodir, extras, libs,
-				    strcmp(ref, GLES_REF) ? NULL : GLES_ENV, NULL };
+	const char *ref = renderer(data, soft);
+	char *argv[16];
+	int n = 0;
+
+	argv[n++] = (char *)"xash3d";
+	if (ref) {
+		argv[n++] = (char *)"-ref";
+		argv[n++] = (char *)ref;
+	}
+	argv[n++] = (char *)"-dll";
+	argv[n++] = server;
+	argv[n++] = (char *)"-clientlib";
+	argv[n++] = client;
+	/* every start: the engine keeps the last one in vfs.cfg */
+	argv[n++] = (char *)"-language";
+	argv[n++] = (char *)language(lang);
+	if (alsa[0]) {
+		argv[n++] = (char *)"-alsadev";
+		argv[n++] = alsa;
+	} else {
+		argv[n++] = (char *)"-nosound";
+	}
+	argv[n] = NULL;
+	/* for the GPU renderer, whoever chose it; ignored by the software one */
+	const char *const env[] = { basedir, rodir, extras, libs, GLES_ENV, NULL };
 	struct game_spawn s = { .path = program, .argv = argv, .env = env, .dir = data,
 				.width = width, .height = height };
 
-	LOGI(TAG, "game %s, data %s, renderer %s, language %s, sound %s", halflife_game(), data, ref,
-	     language(lang), alsa[0] ? alsa : "off");
+	LOGI(TAG, "game %s, data %s, renderer %s, language %s, sound %s", halflife_game(), data,
+	     ref ? ref : "of the game's menu", language(lang), alsa[0] ? alsa : "off");
 	return game_proc_start(&s);
 }

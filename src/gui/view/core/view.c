@@ -685,7 +685,8 @@ int view_video_set(enum video_source src)
 #ifdef CONFIG_GAME_HALFLIFE
 	case VIDEO_HALFLIFE:
 		fb = hal_layer_acquire(l);
-		v.video_game = halflife_start(fb->width, fb->height, v.pf->game_pcm, i18n_lang());
+		v.video_game = halflife_start(fb->width, fb->height, v.pf->game_pcm, i18n_lang(),
+						v.pf->halflife_soft);
 		if (!v.video_game)
 			return -1;
 		mainloop_add_fd(v.ml, game_proc_fd(v.video_game), POLLIN, on_game, NULL);
