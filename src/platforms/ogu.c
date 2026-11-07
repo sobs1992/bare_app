@@ -91,8 +91,8 @@ const struct platform platform_ogu = {
 	.pcm = { &pcm_alsa, &(const struct pcm_alsa_params){ .device = "/dev/snd/pcmC0D0p" } },
 #endif
 	.game_pcm = "/dev/snd/pcmC0D0p",
-	/* 854x480 at 1:1: VCMI's screen is 854x600, 120 rows follow the cursor */
-	.homm3_native = true,
+	/* VCMI's screen is 854x600, squashed to 854x480; L1 shows it at 1:1 */
+	.homm3_view = HOMM3_VIEW_FIT,
 	/* a row of F1..F6 under the screen, two sticks */
 	.homm3_keys = HOMM3_KEYS_OGU,
 	.quit_combo = GP_BIT(GP_F6),
