@@ -1,6 +1,10 @@
-#include "wine.h"
-
-#include <ctype.h>
+/*
+ * Windows games under Wine (GAME_WINE): every <games>/<dir>/wine.ini is an
+ * entry of the main menu. A game is played by bare_app_wine (ports/wine),
+ * which runs Wine with the SDK's winebare.drv driver, turns its windows
+ * into frames of the video layer and the gamepad into mouse and keyboard
+ * (the [keys] of wine.ini). Nothing of Wine is linked into bare_app.
+ */
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
@@ -10,9 +14,12 @@
 #include <unistd.h>
 
 #include "core/log.h"
+#include "game.h"
+#include "ini.h"
 
 #define TAG "wine"
 #define HOST "bare_app_wine"
+#define WINE_MAX_GAMES 16
 
 struct wine_game {
 	char dir[PATH_MAX];
@@ -20,8 +27,8 @@ struct wine_game {
 	char exe[256];
 };
 
-static struct wine_game games[WINE_MAX_GAMES];
-static int count, selected;
+static struct wine_game found[WINE_MAX_GAMES];
+static int count;
 
 static const char *env_or(const char *name, const char *def)
 {
@@ -30,52 +37,27 @@ static const char *env_or(const char *name, const char *def)
 	return env && *env ? env : def;
 }
 
-static char *trim(char *s)
+/* name and exe of wine.ini, before its first [section] */
+static bool ini_value(const char *section, const char *key, const char *value, void *ud)
 {
-	char *e;
+	struct wine_game *g = ud;
 
-	while (isspace((unsigned char)*s))
-		s++;
-	e = s + strlen(s);
-	while (e > s && isspace((unsigned char)e[-1]))
-		*--e = '\0';
-	return s;
+	if (*section)
+		return false;
+	if (!strcasecmp(key, "name"))
+		snprintf(g->name, sizeof(g->name), "%s", value);
+	else if (!strcasecmp(key, "exe"))
+		snprintf(g->exe, sizeof(g->exe), "%s", value);
+	return true;
 }
 
-/* name and exe of <dir>/wine.ini (before its first [section]); false if
- * there is no wine.ini */
+/* false if there is no wine.ini */
 static bool read_ini(struct wine_game *g)
 {
-	char path[PATH_MAX + 16], line[512], *eq, *key, *value;
-	FILE *f;
+	char path[PATH_MAX + 16];
 
 	snprintf(path, sizeof(path), "%s/wine.ini", g->dir);
-	f = fopen(path, "r");
-	if (!f)
-		return false;
-	while (fgets(line, sizeof(line), f)) {
-		key = trim(line);
-		if (*key == '[')
-			break;
-		if (*key == ';' || *key == '#' || !(eq = strchr(key, '=')))
-			continue;
-		*eq = '\0';
-		value = trim(eq + 1);
-		/* a comment after the value */
-		for (char *c = value; *c; c++)
-			if ((*c == ';' || *c == '#') && c > value && isspace((unsigned char)c[-1])) {
-				*c = '\0';
-				value = trim(value);
-				break;
-			}
-		key = trim(key);
-		if (!strcasecmp(key, "name"))
-			snprintf(g->name, sizeof(g->name), "%s", value);
-		else if (!strcasecmp(key, "exe"))
-			snprintf(g->exe, sizeof(g->exe), "%s", value);
-	}
-	fclose(f);
-	return true;
+	return ini_read(path, ini_value, g) == 0;
 }
 
 static int by_name(const void *a, const void *b)
@@ -83,7 +65,8 @@ static int by_name(const void *a, const void *b)
 	return strcasecmp(((const struct wine_game *)a)->name, ((const struct wine_game *)b)->name);
 }
 
-int wine_scan(void)
+/* Looks for the games again, in the order of their names */
+static int wine_scan(void)
 {
 	const char *root = env_or("BARE_APP_WINE_GAMES", CONFIG_GAME_WINE_GAMES);
 	struct dirent *e;
@@ -91,7 +74,7 @@ int wine_scan(void)
 
 	count = 0;
 	while (d && (e = readdir(d)) && count < WINE_MAX_GAMES) {
-		struct wine_game *g = &games[count];
+		struct wine_game *g = &found[count];
 
 		if (e->d_name[0] == '.')
 			continue;
@@ -106,45 +89,29 @@ int wine_scan(void)
 	}
 	if (d)
 		closedir(d);
-	qsort(games, count, sizeof(games[0]), by_name);
-	if (selected >= count)
-		selected = 0;
+	qsort(found, count, sizeof(found[0]), by_name);
 	return count;
 }
 
-int wine_count(void)
+static int wine_entries(bool rescan)
 {
-	return count;
+	return rescan ? wine_scan() : count;
 }
 
-const char *wine_name(int i)
+/* The "name" of wine.ini, else the directory's name */
+static void wine_info(int i, struct game_info *gi)
 {
-	return i >= 0 && i < count ? games[i].name : "";
+	gi->name = i >= 0 && i < count ? found[i].name : "";
 }
 
-void wine_select(int i)
-{
-	if (i >= 0 && i < count)
-		selected = i;
-}
-
-int wine_selected(void)
-{
-	return selected;
-}
-
-const char *wine_selected_name(void)
-{
-	return wine_name(selected);
-}
-
-const char *wine_missing(void)
+static const char *wine_missing(int i)
 {
 	static char path[PATH_MAX * 2];
-	const struct wine_game *g = &games[selected];
+	const struct wine_game *g;
 
-	if (!count)
+	if (i < 0 || i >= count)
 		return env_or("BARE_APP_WINE_GAMES", CONFIG_GAME_WINE_GAMES);
+	g = &found[i];
 	if (game_proc_sibling(HOST, path, sizeof(path)) < 0 || access(path, X_OK) < 0)
 		return path;
 	snprintf(path, sizeof(path), "%s/wine", env_or("BARE_APP_WINE_BIN", CONFIG_GAME_WINE_BIN));
@@ -162,17 +129,18 @@ const char *wine_missing(void)
 	return NULL;
 }
 
-struct game_proc *wine_start(int width, int height)
+static struct game_proc *wine_start(int i, const struct game_env *ge)
 {
 	char host[PATH_MAX], prefix[PATH_MAX + 32], bin[PATH_MAX + 32];
-	const char *missing = wine_missing();
-	const struct wine_game *g = &games[selected];
+	const char *missing = wine_missing(i);
+	const struct wine_game *g;
 
 	if (missing) {
 		LOGE(TAG, "%s: %s", missing, strerror(ENOENT));
 		errno = ENOENT;
 		return NULL;
 	}
+	g = &found[i];
 	game_proc_sibling(HOST, host, sizeof(host));
 	snprintf(prefix, sizeof(prefix), "BARE_APP_WINE_PREFIX=%s",
 		 env_or("BARE_APP_WINE_PREFIX", CONFIG_GAME_WINE_PREFIX));
@@ -181,8 +149,18 @@ struct game_proc *wine_start(int width, int height)
 	char *const argv[] = { (char *)HOST, (char *)g->dir, NULL };
 	const char *const env[] = { prefix, bin, NULL };
 	struct game_spawn s = { .path = host, .argv = argv, .env = env, .dir = g->dir,
-				.width = width, .height = height };
+				.width = ge->width, .height = ge->height };
 
 	LOGI(TAG, "%s: %s", g->name, g->dir);
 	return game_proc_start(&s);
 }
+
+/* L2 and R2 are the game's (wine.ini [keys]) */
+const struct game_def game_wine = {
+	.id = "wine",
+	.hint = S_WINE_HINT,
+	.entries = wine_entries,
+	.info = wine_info,
+	.missing = wine_missing,
+	.start = wine_start,
+};

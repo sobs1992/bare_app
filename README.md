@@ -211,6 +211,34 @@ SDK, туда копируют с ПК или `scripts/homm3-install.sh` SDK), �
 На ПК: движок собрать с `--64bits --enable-bare-app=<bare_app>/src`, установить в каталог
 и задать `BARE_APP_HALFLIFE_PREFIX`, `BARE_APP_HALFLIFE_GAME`, `BARE_APP_HALFLIFE_DATA`.
 
+## SDL2-игры из game.ini
+
+Пункт меню на каждый `<каталог>/<игра>.ini` и `<каталог>/<игра>/game.ini` из
+`GAME_NATIVE_DIRS` (`/usr/share/bare_app/games /games`; символ `GAME_NATIVE`). Формат с
+комментариями — [docs/game.ini](docs/game.ini): программа, аргументы, что нужно для
+запуска, подсказка, раскладка, переменные окружения. Настройки и сохранения игра
+пишет в свой каталог `/data/<игра>` (это её HOME).
+
+SDL2-игру не надо менять: SDL2 SDK собран с драйверами `bareapp` (`APPS_CONFIG +=
+bare-app.SDL=y`). Окно игры любого размера вписывается в экран с полями, OpenGL ES
+рисует GPU. Геймпад приходит как `SDL_GameController`, а для игр без его поддержки
+кнопки становятся клавишами по строке `keys`. Пример — Chocolate Doom из Buildroot
+(`bare-app.CHOCOLATE_DOOM=y`), у которого есть только
+`package/bare-app/games/chocolate-doom.ini` в SDK.
+
+Свернуть игру — F5, выйти — удерживать F6, как в остальных играх.
+
+Как добавить игру любым из способов, с примерами пакета, `game.ini` и записи в реестре:
+[docs/GAMES.md](docs/GAMES.md).
+
+На ПК: собрать SDL2 2.32 с патчем SDK (`configure --enable-bareapp`), запускать игру
+с этой библиотекой (`LD_LIBRARY_PATH` или rpath) и указать каталог описаний:
+
+```sh
+BARE_APP_NATIVE_DIRS=$PWD/my-games BARE_APP_NATIVE_DATA=/tmp/games-data \
+    build-host/bare_app -p pc-mem
+```
+
 ## Состав сборки (Kconfig)
 
 Что входит в бинарник — платформы, драйверы, сервисы, экраны, шрифты, языки,

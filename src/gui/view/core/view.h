@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 #include "core/input.h"
+#include "games/game.h"
 #include "gui/ctx.h"
 #include "gui/notify.h"
 #include "hal/platform.h"
@@ -73,10 +74,7 @@ const char *ui_key_name(enum ui_key key);
 enum video_source {
 	VIDEO_NONE,
 	VIDEO_TEST_PATTERN,
-	VIDEO_DOOM,		/* games run in their own process and take the gamepad */
-	VIDEO_HOMM3,
-	VIDEO_HALFLIFE,
-	VIDEO_WINE,		/* the game of wine_selected() */
+	VIDEO_GAME,		/* view_game_selected(): in its own process, takes the gamepad */
 };
 
 bool view_video_available(void);
@@ -95,15 +93,24 @@ void view_video_input(const struct gp_event *ev);
  * it.
  */
 void view_video_minimize(void);
-/* The button that minimises a source's game: F5, Heroes III with the GO
- * Ultra's keys F1 */
-enum gp_button view_video_minimize_button(enum video_source src);
-/* Heroes III's F keys on this platform */
-enum homm3_keys view_homm3_keys(void);
+/* The button that minimises the game in the layer (game_def.minimize_for) */
+enum gp_button view_game_minimize_button(void);
 /* The minimised game, VIDEO_NONE if there is none */
 enum video_source view_video_minimized(void);
 /* The source in the layer now, VIDEO_NONE also while it is minimised */
 enum video_source view_video_shown(void);
+
+/*
+ * The game VIDEO_GAME starts (games/game.h): picked in the menu before its
+ * screen opens. view_video_set(VIDEO_GAME) of another game than the one in
+ * the layer ends that one.
+ */
+void view_game_select(struct game_ref g);
+struct game_ref view_game_selected(void);
+/* The game in the layer, in front or minimised; def NULL if none */
+struct game_ref view_game(void);
+/* What this platform starts games with: the platform, its PCM device */
+const struct platform *view_platform(void);
 
 /* Frames shown since the source was set (a game that is still loading: 0) */
 unsigned view_video_frames(void);

@@ -214,9 +214,16 @@ endmenu
 
 menu "Games"
 
+config GAMES
+	bool
+	help
+	  Selected by every game: the game registry (src/games/game.h), its
+	  screen and the process link (games/game_proc.c).
+
 config GAME_DOOM
 	bool "Doom (separate program under GPLv2)"
 	depends on VIEW_LVGL
+	select GAMES
 	help
 	  "Doom" in the main menu. The game is bare_app_doom, built from
 	  ports/doom (doomgeneric, GPLv2) and installed next to bare_app,
@@ -258,6 +265,7 @@ endif
 config GAME_HOMM3
 	bool "Heroes of Might and Magic III (VCMI, separate program)"
 	depends on VIEW_LVGL
+	select GAMES
 	help
 	  "Heroes III" in the main menu: VCMI's client, built with its
 	  bare_app link by the SDK package vcmi (GPLv2, APPS_CONFIG
@@ -299,6 +307,7 @@ endif
 config GAME_HALFLIFE
 	bool "Half-Life (Xash3D FWGS, separate program)"
 	depends on VIEW_LVGL
+	select GAMES
 	help
 	  "Half-Life" in the main menu: the Xash3D FWGS engine (GPLv3)
 	  built with its bare_app platform and the game code of
@@ -343,9 +352,45 @@ config GAME_HALFLIFE_DATA
 
 endif
 
+config GAME_NATIVE
+	bool "Games described by game.ini (SDL games, separate programs)"
+	depends on VIEW_LVGL
+	select GAMES
+	help
+	  Every <dir>/*.ini and <dir>/<game>/game.ini of GAME_NATIVE_DIRS is
+	  an entry of the main menu: a program of its own, started like Doom
+	  with bare_app's link (games/game_ipc.h). SDL2 games need no change:
+	  the SDK's SDL2 (APPS_CONFIG bare-app.SDL=y) has the video and
+	  joystick drivers "bareapp", which draw the game's window into the
+	  video layer (fitted to it; OpenGL ES by the GPU) and make the
+	  gamepad a game controller and the keys the ini names.
+	  docs/game.ini describes the file. A package installs
+	  /usr/share/bare_app/games/<game>.ini; a game copied from a PC
+	  brings <games>/<game>/game.ini.
+
+if GAME_NATIVE
+
+config GAME_NATIVE_DIRS
+	string "Where the descriptions are"
+	default "/usr/share/bare_app/games /games"
+	help
+	  Directories separated by spaces. BARE_APP_NATIVE_DIRS overrides
+	  them at run time.
+
+config GAME_NATIVE_DATA
+	string "Data directory"
+	default "/data"
+	help
+	  Each game gets <dir>/<game> as its HOME (settings, saved games)
+	  and working directory, made when it starts. "~/" means $HOME.
+	  BARE_APP_NATIVE_DATA overrides it at run time.
+
+endif
+
 config GAME_WINE
 	bool "Windows games (Wine, separate program)"
 	depends on VIEW_LVGL
+	select GAMES
 	help
 	  Every <games>/<game>/wine.ini is an entry of the main menu: a
 	  Windows game run by Wine with the SDK's winebare.drv driver

@@ -1,5 +1,11 @@
-#include "homm3.h"
-
+/*
+ * Heroes of Might and Magic III (GAME_HOMM3): VCMI's client (SDK package
+ * vcmi, GPLv2) built with its bare_app link. VCMI draws in software into
+ * an SDL window kept in memory (dummy video driver) and sends it fitted to
+ * the frame as the platform's homm3_view says, or a 1:1 part of it around
+ * the cursor; the gamepad drives it as an SDL game controller, with the F
+ * keys of the platform's homm3_keys.
+ */
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -9,6 +15,8 @@
 #include <unistd.h>
 
 #include "core/log.h"
+#include "game.h"
+#include "hal/platform.h"
 
 #define TAG "homm3"
 
@@ -16,24 +24,27 @@
  * directory gets the link vcmi -> the game directory */
 #define LINK_DIR "/tmp/bare_app_homm3"
 
-const char *homm3_game(void)
+/* Game directory (Data, Maps, Mp3, Mods) */
+static const char *homm3_game(void)
 {
 	const char *env = getenv("BARE_APP_HOMM3_GAME");
 
 	return env && *env ? env : CONFIG_GAME_HOMM3_GAME;
 }
 
-const char *homm3_data(void)
+/* Saved games in <data>/vcmi, settings in <data>/config/vcmi */
+static const char *homm3_data(void)
 {
 	const char *env = getenv("BARE_APP_HOMM3_DATA");
 
 	return env && *env ? env : CONFIG_GAME_HOMM3_DATA;
 }
 
-const char *homm3_missing(void)
+static const char *homm3_missing(int entry)
 {
 	static char path[PATH_MAX];
 
+	(void)entry;
 	if (access(CONFIG_GAME_HOMM3_PROGRAM, X_OK) < 0)
 		return CONFIG_GAME_HOMM3_PROGRAM;
 	snprintf(path, sizeof(path), "%s/Data", homm3_game());
@@ -50,13 +61,17 @@ static int game_link(void)
 	return symlink(homm3_game(), LINK_DIR "/vcmi");
 }
 
-struct game_proc *homm3_start(int width, int height, const char *pcm, const char *lang,
-			      enum homm3_view view, enum homm3_keys keys)
+/* The language: VCMI's and its mods' texts; the original game's are in
+ * the language of its data */
+static struct game_proc *homm3_start(int entry, const struct game_env *ge)
 {
+	const char *pcm = ge->pcm, *lang = ge->lang;
+	enum homm3_view view = ge->pf->homm3_view;
+	enum homm3_keys keys = ge->pf->homm3_keys;
 	char xdg_data[PATH_MAX + 16], xdg_config[PATH_MAX + 32], xdg_cache[PATH_MAX + 32];
 	char audiodev[64] = "", name[32], language[32];
 	char *const argv[] = { (char *)"vcmiclient", (char *)"--nointro", NULL };
-	const char *missing = homm3_missing();
+	const char *missing = homm3_missing(entry);
 
 	if (missing) {
 		LOGE(TAG, "%s: %s", missing, strerror(ENOENT));
@@ -96,9 +111,31 @@ struct game_proc *homm3_start(int width, int height, const char *pcm, const char
 		env[n++] = "BARE_APP_VCMI_KEYS=ogu";
 	env[n] = NULL;
 	struct game_spawn s = { .path = CONFIG_GAME_HOMM3_PROGRAM, .argv = argv, .env = env,
-				.dir = homm3_data(), .width = width, .height = height };
+				.dir = homm3_data(), .width = ge->width, .height = ge->height };
 
 	LOGI(TAG, "game %s, data %s, sound %s, language %s", homm3_game(), homm3_data(),
 	     audiodev[0] ? name : "off", lang);
 	return game_proc_start(&s);
 }
+
+static enum str_id homm3_hint(const struct platform *pf)
+{
+	return pf->homm3_keys == HOMM3_KEYS_OGU ? S_HOMM3_HINT_OGU : S_HOMM3_HINT;
+}
+
+/* F5 is the game's on the GO Ultra: cancel or end the turn */
+static enum gp_button homm3_minimize(const struct platform *pf)
+{
+	return pf->homm3_keys == HOMM3_KEYS_OGU ? GP_F1 : GP_F5;
+}
+
+const struct game_def game_homm3 = {
+	.id = "homm3",
+	.title = S_HOMM3,
+	.hint = S_HOMM3_HINT,
+	.trigger_volume = true,
+	.missing = homm3_missing,
+	.start = homm3_start,
+	.hint_for = homm3_hint,
+	.minimize_for = homm3_minimize,
+};

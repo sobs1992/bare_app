@@ -1,5 +1,8 @@
-#include "doom.h"
-
+/*
+ * Doom (GAME_DOOM): bare_app_doom next to this program (ports/doom:
+ * doomgeneric, GPLv2). It keeps its state in globals and leaves with
+ * exit(), so a process is also the only way to restart the engine.
+ */
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -8,6 +11,7 @@
 #include <unistd.h>
 
 #include "core/log.h"
+#include "game.h"
 
 #define TAG "doom"
 #define GAME "bare_app_doom"
@@ -18,7 +22,9 @@ static const char *const iwads[] = {
 	"freedoom2.wad", "freedoom1.wad", "doom1.wad",
 };
 
-const char *doom_wad(void)
+/* $BARE_APP_DOOM_WAD, else the first known IWAD in CONFIG_GAME_DOOM_GAME,
+ * else CONFIG_GAME_DOOM_WAD */
+static const char *doom_wad(void)
 {
 	static char path[PATH_MAX];
 	const char *env = getenv("BARE_APP_DOOM_WAD");
@@ -33,14 +39,22 @@ const char *doom_wad(void)
 	return CONFIG_GAME_DOOM_WAD;
 }
 
-struct game_proc *doom_start(int width, int height, const char *pcm)
+static const char *doom_missing(int entry)
 {
+	(void)entry;
+	return access(doom_wad(), R_OK) == 0 ? NULL : doom_wad();
+}
+
+static struct game_proc *doom_start(int entry, const struct game_env *ge)
+{
+	const char *pcm = ge->pcm;
 	char game[PATH_MAX], dir[PATH_MAX];
 	char *const argv[] = { (char *)GAME, (char *)"-iwad", (char *)doom_wad(),
 			       (char *)(pcm ? "-pcm" : "-nosound"), (char *)pcm, NULL };
 	struct game_spawn s = { .path = game, .argv = argv, .dir = dir,
-				.width = width, .height = height };
+				.width = ge->width, .height = ge->height };
 
+	(void)entry;
 	if (access(doom_wad(), R_OK) < 0) {
 		LOGE(TAG, "IWAD %s: %s", doom_wad(), strerror(errno));
 		errno = ENOENT;
@@ -59,3 +73,13 @@ struct game_proc *doom_start(int width, int height, const char *pcm)
 	LOGI(TAG, "-iwad %s, sound %s", doom_wad(), pcm ? pcm : "off");
 	return game_proc_start(&s);
 }
+
+const struct game_def game_doom = {
+	.id = "doom",
+	.title = S_DOOM,
+	.hint = S_DOOM_HINT,
+	.missing_fmt = S_DOOM_NO_WAD_FMT,
+	.trigger_volume = true,
+	.missing = doom_missing,
+	.start = doom_start,
+};

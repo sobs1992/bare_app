@@ -1,5 +1,11 @@
-#include "halflife.h"
-
+/*
+ * Half-Life (GAME_HALFLIFE): the Xash3D FWGS engine (GPLv3) built with its
+ * bare_app platform and the game code of hlsdk-portable (SDK packages
+ * xash3d-fwgs and hlsdk-portable). The engine renders with OpenGL ES on the
+ * GPU (in software without Mesa) into the frames of the video layer; the
+ * gamepad drives it as the engine's own gamepad. The game files (the valve
+ * directory of a bought copy) are not included: see GAME_HALFLIFE_GAME.
+ */
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
@@ -9,6 +15,8 @@
 #include <unistd.h>
 
 #include "core/log.h"
+#include "game.h"
+#include "hal/platform.h"
 
 #define TAG "halflife"
 
@@ -44,12 +52,14 @@ static const char *prefix(void)
 	return env_or("BARE_APP_HALFLIFE_PREFIX", CONFIG_GAME_HALFLIFE_PREFIX);
 }
 
-const char *halflife_game(void)
+/* Directory with the game's valve directory, read only */
+static const char *halflife_game(void)
 {
 	return env_or("BARE_APP_HALFLIFE_GAME", CONFIG_GAME_HALFLIFE_GAME);
 }
 
-const char *halflife_data(void)
+/* Settings and saved games */
+static const char *halflife_data(void)
 {
 	return env_or("BARE_APP_HALFLIFE_DATA", CONFIG_GAME_HALFLIFE_DATA);
 }
@@ -89,10 +99,11 @@ static int game_lib(const char *sub, const char *name, char *buf, size_t size)
 	return -1;
 }
 
-const char *halflife_missing(void)
+static const char *halflife_missing(int entry)
 {
 	static char path[PATH_MAX];
 
+	(void)entry;
 	snprintf(path, sizeof(path), "%s" PROGRAM, prefix());
 	if (access(path, X_OK) < 0)
 		return path;
@@ -153,12 +164,21 @@ static const char *language(const char *lang)
 	return lang && !strncmp(lang, "ru", 2) ? "russian" : "english";
 }
 
-struct game_proc *halflife_start(int width, int height, const char *pcm, const char *lang, bool soft)
+/*
+ * The game takes its texts from <game>/valve_<language> (a bought copy has
+ * valve_russian) when there are some for bare_app's language. The renderer
+ * is the one chosen in the game's menu (Video modes); until one is, OpenGL
+ * ES if installed and the platform does not ask for software
+ * ($BARE_APP_HALFLIFE_REF overrides all of them).
+ */
+static struct game_proc *halflife_start(int entry, const struct game_env *ge)
 {
+	const char *pcm = ge->pcm, *lang = ge->lang;
+	bool soft = ge->pf->halflife_soft;
 	char program[PATH_MAX], server[PATH_MAX], client[PATH_MAX], data[PATH_MAX];
 	char basedir[PATH_MAX + 32], rodir[PATH_MAX + 32], extras[PATH_MAX + 32], libs[PATH_MAX + 32];
 	char alsa[32] = "";
-	const char *missing = halflife_missing();
+	const char *missing = halflife_missing(entry);
 
 	if (missing) {
 		LOGE(TAG, "%s: %s", missing, strerror(ENOENT));
@@ -211,9 +231,18 @@ struct game_proc *halflife_start(int width, int height, const char *pcm, const c
 	/* for the GPU renderer, whoever chose it; ignored by the software one */
 	const char *const env[] = { basedir, rodir, extras, libs, GLES_ENV, NULL };
 	struct game_spawn s = { .path = program, .argv = argv, .env = env, .dir = data,
-				.width = width, .height = height };
+				.width = ge->width, .height = ge->height };
 
 	LOGI(TAG, "game %s, data %s, renderer %s, language %s, sound %s", halflife_game(), data,
 	     ref ? ref : "of the game's menu", language(lang), alsa[0] ? alsa : "off");
 	return game_proc_start(&s);
 }
+
+/* L2 and R2 are the game's */
+const struct game_def game_halflife = {
+	.id = "halflife",
+	.title = S_HALFLIFE,
+	.hint = S_HALFLIFE_HINT,
+	.missing = halflife_missing,
+	.start = halflife_start,
+};

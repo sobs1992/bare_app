@@ -11,10 +11,6 @@
 #include "core/log.h"
 #include "core/mainloop.h"
 #include "core/util.h"
-#include "games/doom.h"
-#include "games/halflife.h"
-#include "games/homm3.h"
-#include "games/wine.h"
 #include "gui/action.h"
 #include "hal/platform.h"
 #include "i18n.h"
@@ -66,7 +62,8 @@ static struct {
 	enum video_source video_src;
 	struct mailbox *video_mb;
 	struct testpattern *video_tp;
-	struct game_proc *video_game;	/* VIDEO_DOOM, VIDEO_HOMM3, VIDEO_HALFLIFE, VIDEO_WINE */
+	struct game_proc *video_game;	/* VIDEO_GAME: the process of 'game' */
+	struct game_ref game, game_sel;	/* in the layer; to start next */
 	bool video_minimized;		/* video_game is stopped in the background */
 	unsigned video_frames;
 	view_video_end_cb video_end;
@@ -375,7 +372,7 @@ static void deliver(const struct gp_event *ev)
 	}
 	if (ev->type != GP_EV_BUTTON)
 		return;
-	if (ev->code == GP_F5 || ev->code == view_video_minimize_button(view_video_minimized())) {
+	if (ev->code == GP_F5 || ev->code == view_game_minimize_button()) {
 		if (ev->pressed && !ev->repeat)
 			game_unminimize();
 		return;
@@ -416,8 +413,7 @@ bool view_video_available(void)
 	return video_layer() != NULL;
 }
 
-#if defined(CONFIG_GAME_DOOM) || defined(CONFIG_GAME_HOMM3) || defined(CONFIG_GAME_HALFLIFE) || \
-    defined(CONFIG_GAME_WINE)
+#ifdef CONFIG_GAMES
 #define HAVE_GAMES
 #endif
 #if defined(CONFIG_VIDEO_TESTPATTERN) || defined(HAVE_GAMES)
@@ -491,7 +487,8 @@ static void on_game(int fd, short revents, void *ud)
 	status = game_proc_stop(v.video_game);
 	v.video_game = NULL;
 	v.video_minimized = false;
-	LOGI(TAG, "video: %u frames shown", v.video_frames);
+	LOGI(TAG, "%s: %u frames shown", v.game.def->id, v.video_frames);
+	v.game = (struct game_ref){ 0 };
 	if (l)
 		video_clear(l);
 	v.video_src = VIDEO_NONE;
@@ -528,22 +525,10 @@ static void game_quit(void)
 /* F5 outside a game: back to the minimised one */
 static void game_unminimize(void)
 {
-	switch (view_video_minimized()) {
-	case VIDEO_DOOM:
-		gui_action_post(ACT_OPEN_SCREEN, SCREEN_DOOM);
-		break;
-	case VIDEO_HOMM3:
-		gui_action_post(ACT_OPEN_SCREEN, SCREEN_HOMM3);
-		break;
-	case VIDEO_HALFLIFE:
-		gui_action_post(ACT_OPEN_SCREEN, SCREEN_HALFLIFE);
-		break;
-	case VIDEO_WINE:
-		gui_action_post(ACT_OPEN_SCREEN, SCREEN_WINE);
-		break;
-	default:
-		break;
-	}
+	if (view_video_minimized() != VIDEO_GAME)
+		return;
+	v.game_sel = v.game;
+	gui_action_post(ACT_OPEN_SCREEN, SCREEN_GAME);
 }
 
 #ifdef HAVE_VIDEO_SOURCES
@@ -568,7 +553,8 @@ static void video_stop(struct hal_layer *l)
 		game_proc_stop(v.video_game);
 		v.video_game = NULL;
 		v.video_minimized = false;
-		LOGI(TAG, "video: %u frames shown", v.video_frames);
+		LOGI(TAG, "%s: %u frames shown", v.game.def->id, v.video_frames);
+		v.game = (struct game_ref){ 0 };
 	}
 #endif
 	video_clear(l);	/* leave the layer black */
@@ -592,18 +578,37 @@ void view_video_minimize(void)
 		return;
 	game_proc_pause(v.video_game);
 	v.video_minimized = true;
-	LOGI(TAG, "video source %d minimised", v.video_src);
+	LOGI(TAG, "%s minimised", v.game.def->id);
 #endif
 }
 
-enum gp_button view_video_minimize_button(enum video_source src)
+enum gp_button view_game_minimize_button(void)
 {
-	return src == VIDEO_HOMM3 && v.pf->homm3_keys == HOMM3_KEYS_OGU ? GP_F1 : GP_F5;
+#ifdef HAVE_GAMES
+	return game_minimize_button(v.game, v.pf);
+#else
+	return GP_F5;
+#endif
 }
 
-enum homm3_keys view_homm3_keys(void)
+void view_game_select(struct game_ref g)
 {
-	return v.pf->homm3_keys;
+	v.game_sel = g;
+}
+
+struct game_ref view_game_selected(void)
+{
+	return v.game_sel;
+}
+
+struct game_ref view_game(void)
+{
+	return v.game;
+}
+
+const struct platform *view_platform(void)
+{
+	return v.pf;
 }
 
 enum video_source view_video_shown(void)
@@ -640,13 +645,13 @@ int view_video_set(enum video_source src)
 		errno = ENODEV;
 		return src == VIDEO_NONE ? 0 : -1;
 	}
-	if (src == v.video_src) {
+	if (src == v.video_src && (src != VIDEO_GAME || game_ref_eq(v.game, v.game_sel))) {
 #ifdef HAVE_GAMES
 		if (v.video_minimized) {
 			/* its last frame is still in the layer, the count goes on */
 			game_proc_resume(v.video_game);
 			v.video_minimized = false;
-			LOGI(TAG, "video source %d back", src);
+			LOGI(TAG, "%s back", v.game.def->id);
 		}
 #endif
 		return 0;
@@ -669,43 +674,25 @@ int view_video_set(enum video_source src)
 		v.video_tp = testpattern_start(v.video_mb, 30);
 		break;
 #endif
-#ifdef CONFIG_GAME_DOOM
-	case VIDEO_DOOM:
+#ifdef HAVE_GAMES
+	case VIDEO_GAME: {
+		struct game_env env = { .pf = v.pf, .pcm = v.pf->game_pcm, .lang = i18n_lang() };
+
+		if (!v.game_sel.def) {
+			errno = EINVAL;
+			return -1;
+		}
 		fb = hal_layer_acquire(l);
-		v.video_game = doom_start(fb->width, fb->height, v.pf->game_pcm);
+		env.width = fb->width;
+		env.height = fb->height;
+		v.video_game = v.game_sel.def->start(v.game_sel.entry, &env);
 		if (!v.video_game)
 			return -1;
+		v.game = v.game_sel;
 		mainloop_add_fd(v.ml, game_proc_fd(v.video_game), POLLIN, on_game, NULL);
+		LOGI(TAG, "game %s, entry %d", v.game.def->id, v.game.entry);
 		break;
-#endif
-#ifdef CONFIG_GAME_HOMM3
-	case VIDEO_HOMM3:
-		fb = hal_layer_acquire(l);
-		v.video_game = homm3_start(fb->width, fb->height, v.pf->game_pcm, i18n_lang(),
-					     v.pf->homm3_view, v.pf->homm3_keys);
-		if (!v.video_game)
-			return -1;
-		mainloop_add_fd(v.ml, game_proc_fd(v.video_game), POLLIN, on_game, NULL);
-		break;
-#endif
-#ifdef CONFIG_GAME_HALFLIFE
-	case VIDEO_HALFLIFE:
-		fb = hal_layer_acquire(l);
-		v.video_game = halflife_start(fb->width, fb->height, v.pf->game_pcm, i18n_lang(),
-						v.pf->halflife_soft);
-		if (!v.video_game)
-			return -1;
-		mainloop_add_fd(v.ml, game_proc_fd(v.video_game), POLLIN, on_game, NULL);
-		break;
-#endif
-#ifdef CONFIG_GAME_WINE
-	case VIDEO_WINE:
-		fb = hal_layer_acquire(l);
-		v.video_game = wine_start(fb->width, fb->height);
-		if (!v.video_game)
-			return -1;
-		mainloop_add_fd(v.ml, game_proc_fd(v.video_game), POLLIN, on_game, NULL);
-		break;
+	}
 #endif
 	default:
 		(void)fb;
