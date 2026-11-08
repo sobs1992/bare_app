@@ -6,6 +6,7 @@
 #include <limits.h>
 #include <math.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -329,4 +330,48 @@ int game_proc_stop(struct game_proc *g)
 	munmap(g->shm, g->shm_size);
 	free(g);
 	return status;
+}
+
+const char *game_setting(const char *name, const char *def)
+{
+	const char *env = getenv(name);
+
+	return env && *env ? env : def;
+}
+
+void game_vars_add(struct game_vars *gv, const char *fmt, ...)
+{
+	size_t room = sizeof(gv->buf) - gv->used;
+	va_list ap;
+	int n;
+
+	if (gv->n == GAME_VARS_MAX) {
+		LOGW(TAG, "too many variables for the game, %s dropped", fmt);
+		return;
+	}
+	va_start(ap, fmt);
+	n = vsnprintf(gv->buf + gv->used, room, fmt, ap);
+	va_end(ap);
+	if (n < 0 || (size_t)n >= room) {
+		LOGW(TAG, "no room for a variable of the game, %s dropped", fmt);
+		return;
+	}
+	gv->v[gv->n++] = gv->buf + gv->used;
+	gv->v[gv->n] = NULL;
+	gv->used += (size_t)n + 1;
+}
+
+void game_vars_sdl_audio(struct game_vars *gv, const char *pcm, char *alsa, size_t size)
+{
+	char name[32];
+
+	if (pcm && game_proc_alsa_name(pcm, name, sizeof(name)) == 0) {
+		game_vars_add(gv, "SDL_AUDIODRIVER=alsa");
+		game_vars_add(gv, "AUDIODEV=%s", name);
+	} else {
+		game_vars_add(gv, "SDL_AUDIODRIVER=dummy");
+		name[0] = '\0';
+	}
+	if (alsa)
+		snprintf(alsa, size, "%s", name);
 }

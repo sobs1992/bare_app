@@ -39,29 +39,22 @@
 #define GLES_REF "gles3compat"
 #define GLES_ENV "PAN_MESA_DEBUG=noafbc"
 
-static const char *env_or(const char *name, const char *def)
-{
-	const char *env = getenv(name);
-
-	return env && *env ? env : def;
-}
-
 /* $BARE_APP_HALFLIFE_PREFIX: the engine installed elsewhere (tests) */
 static const char *prefix(void)
 {
-	return env_or("BARE_APP_HALFLIFE_PREFIX", CONFIG_GAME_HALFLIFE_PREFIX);
+	return game_setting("BARE_APP_HALFLIFE_PREFIX", CONFIG_GAME_HALFLIFE_PREFIX);
 }
 
 /* Directory with the game's valve directory, read only */
 static const char *halflife_game(void)
 {
-	return env_or("BARE_APP_HALFLIFE_GAME", CONFIG_GAME_HALFLIFE_GAME);
+	return game_setting("BARE_APP_HALFLIFE_GAME", CONFIG_GAME_HALFLIFE_GAME);
 }
 
 /* Settings and saved games */
 static const char *halflife_data(void)
 {
-	return env_or("BARE_APP_HALFLIFE_DATA", CONFIG_GAME_HALFLIFE_DATA);
+	return game_setting("BARE_APP_HALFLIFE_DATA", CONFIG_GAME_HALFLIFE_DATA);
 }
 
 /*
@@ -149,9 +142,9 @@ static bool menu_renderer(const char *data)
  */
 static const char *renderer(const char *data, bool soft)
 {
-	const char *env = getenv("BARE_APP_HALFLIFE_REF");
+	const char *env = game_setting("BARE_APP_HALFLIFE_REF", NULL);
 
-	if (env && *env)
+	if (env)
 		return env;
 	if (menu_renderer(data))
 		return NULL;
@@ -169,14 +162,16 @@ static const char *language(const char *lang)
  * valve_russian) when there are some for bare_app's language. The renderer
  * is the one chosen in the game's menu (Video modes); until one is, OpenGL
  * ES if installed and the platform does not ask for software
+ * ("halflife.renderer=soft" in its game_opts)
  * ($BARE_APP_HALFLIFE_REF overrides all of them).
  */
 static struct game_proc *halflife_start(int entry, const struct game_env *ge)
 {
 	const char *pcm = ge->pcm, *lang = ge->lang;
-	bool soft = ge->pf->halflife_soft;
+	const char *ref_opt = platform_opt(ge->pf, "halflife.renderer");
+	bool soft = ref_opt && !strcmp(ref_opt, "soft");
 	char program[PATH_MAX], server[PATH_MAX], client[PATH_MAX], data[PATH_MAX];
-	char basedir[PATH_MAX + 32], rodir[PATH_MAX + 32], extras[PATH_MAX + 32], libs[PATH_MAX + 32];
+	struct game_vars env = { 0 };
 	char alsa[32] = "";
 	const char *missing = halflife_missing(entry);
 
@@ -199,11 +194,13 @@ static struct game_proc *halflife_start(int entry, const struct game_env *ge)
 	 * Read-only game files and a writable base directory of the engine's
 	 * own, where it keeps the settings and saved games (valve/SAVE)
 	 */
-	snprintf(basedir, sizeof(basedir), "XASH3D_BASEDIR=%s", data);
-	snprintf(rodir, sizeof(rodir), "XASH3D_RODIR=%s", halflife_game());
-	snprintf(extras, sizeof(extras), "XASH3D_EXTRAS_PAK1=%s" EXTRAS, prefix());
+	game_vars_add(&env, "XASH3D_BASEDIR=%s", data);
+	game_vars_add(&env, "XASH3D_RODIR=%s", halflife_game());
+	game_vars_add(&env, "XASH3D_EXTRAS_PAK1=%s" EXTRAS, prefix());
 	/* the launcher loads the engine (libxash.so) by its name only */
-	snprintf(libs, sizeof(libs), "LD_LIBRARY_PATH=%s" ENGINE_LIBS, prefix());
+	game_vars_add(&env, "LD_LIBRARY_PATH=%s" ENGINE_LIBS, prefix());
+	/* for the GPU renderer, whoever chose it; ignored by the software one */
+	game_vars_add(&env, GLES_ENV);
 
 	const char *ref = renderer(data, soft);
 	char *argv[16];
@@ -228,9 +225,7 @@ static struct game_proc *halflife_start(int entry, const struct game_env *ge)
 		argv[n++] = (char *)"-nosound";
 	}
 	argv[n] = NULL;
-	/* for the GPU renderer, whoever chose it; ignored by the software one */
-	const char *const env[] = { basedir, rodir, extras, libs, GLES_ENV, NULL };
-	struct game_spawn s = { .path = program, .argv = argv, .env = env, .dir = data,
+	struct game_spawn s = { .path = program, .argv = argv, .env = env.v, .dir = data,
 				.width = ge->width, .height = ge->height };
 
 	LOGI(TAG, "game %s, data %s, renderer %s, language %s, sound %s", halflife_game(), data,

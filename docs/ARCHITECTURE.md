@@ -224,6 +224,27 @@ view знают игры только через эту таблицу: switch �
 Каждая игра включает символ `GAMES` в Kconfig, по нему собираются общие части:
 `games/games.c`, `games/game_proc.c`, `screens/game.c`.
 
+Общее для адаптеров игр — в `games/game_proc.h`: `game_setting()` (путь из Kconfig,
+который подменяет переменная окружения), `struct game_vars` (окружение игры поверх
+окружения bare_app, `game_vars_sdl_audio()` для звука SDL), `game_proc_mkdir()`,
+`game_proc_alsa_name()`. Что игре надо знать о плате, платформа говорит строками
+`"игра.ключ=значение"` в `game_opts` (`homm3.keys=ogu`, `halflife.renderer=soft`), а
+читает их сама игра через `platform_opt()`: в `struct platform` нет полей конкретных
+игр.
+
+В образе игру включает одна опция пакета bare-app в `APPS_CONFIG` прошивки
+(`bare-app.HOMM3=y`): пакет собирает движок и передаёт bare_app
+`-DBARE_APP_CONFIG_EXTRA="CONFIG_GAME_HOMM3=y;..."`, эти строки ложатся поверх
+defconfig. Отдельно включать игру в defconfig bare_app нужно только для сборки без
+Buildroot.
+
+Сторону игры реализует `games/game_ipc_client.h` (только заголовок, C и C++):
+`game_link_open()`, `game_link_frame()`, `game_link_publish()`, `game_link_recv()`. Им
+пользуются `ports/doom`, `ports/wine` и драйверы SDL; у VCMI и Xash3D своя копия в
+их патчах. `game_ipc.h`, `game_ipc_client.h` и `core/input.h` пакет bare-app ставит в
+`$(STAGING_DIR)/usr/include/bare_app/`, оттуда их берут пакеты игр. Эти два
+заголовка — под MIT: они компилируются в игры с любой лицензией.
+
 Граница лицензий держится так же, как граница с LVGL: GPL-код есть только в `ports/doom/`
 и в пакете `vcmi` SDK, а собираются из них отдельные исполняемые файлы. Через границу
 проходят только пиксели и события геймпада (`GP_*`, оси) по протоколу

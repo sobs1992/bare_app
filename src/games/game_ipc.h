@@ -1,8 +1,9 @@
 /*
  * Between bare_app (view thread, games/game_proc.c) and a game process:
- * bare_app_doom (ports/doom/doom_main.c, GPLv2) or VCMI's client with its
- * bare_app link (SDK package vcmi, GPLv2). This header is part of bare_app
- * and only describes the exchange. The game inherits two descriptors:
+ * bare_app_doom (ports/doom), VCMI's client and Xash3D with their bare_app
+ * links (SDK packages vcmi, xash3d-fwgs), bare_app_wine, SDL games through
+ * SDL's bareapp drivers. game_ipc_client.h is the game's side of it. The
+ * game inherits two descriptors:
  *
  *   GAME_IPC_SOCK  SOCK_SEQPACKET socket, one struct game_msg per packet:
  *                  game -> app: GAME_MSG_FRAME after publishing a frame;
@@ -16,6 +17,11 @@
  * consumer another, the third is in 'middle'. Each side swaps its own
  * buffer with 'middle'; GAME_SHM_FRESH marks a published frame not taken yet.
  * The producer starts with buffer 0, 'middle' holds 1, the app holds 2.
+ *
+ * It is compiled into games under their own licences (GPL, LGPL, zlib), so
+ * unlike the rest of bare_app this header is under the MIT licence.
+ *
+ * SPDX-License-Identifier: MIT
  */
 #pragma once
 

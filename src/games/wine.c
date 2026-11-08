@@ -30,13 +30,6 @@ struct wine_game {
 static struct wine_game found[WINE_MAX_GAMES];
 static int count;
 
-static const char *env_or(const char *name, const char *def)
-{
-	const char *env = getenv(name);
-
-	return env && *env ? env : def;
-}
-
 /* name and exe of wine.ini, before its first [section] */
 static bool ini_value(const char *section, const char *key, const char *value, void *ud)
 {
@@ -68,7 +61,7 @@ static int by_name(const void *a, const void *b)
 /* Looks for the games again, in the order of their names */
 static int wine_scan(void)
 {
-	const char *root = env_or("BARE_APP_WINE_GAMES", CONFIG_GAME_WINE_GAMES);
+	const char *root = game_setting("BARE_APP_WINE_GAMES", CONFIG_GAME_WINE_GAMES);
 	struct dirent *e;
 	DIR *d = opendir(root);
 
@@ -110,11 +103,11 @@ static const char *wine_missing(int i)
 	const struct wine_game *g;
 
 	if (i < 0 || i >= count)
-		return env_or("BARE_APP_WINE_GAMES", CONFIG_GAME_WINE_GAMES);
+		return game_setting("BARE_APP_WINE_GAMES", CONFIG_GAME_WINE_GAMES);
 	g = &found[i];
 	if (game_proc_sibling(HOST, path, sizeof(path)) < 0 || access(path, X_OK) < 0)
 		return path;
-	snprintf(path, sizeof(path), "%s/wine", env_or("BARE_APP_WINE_BIN", CONFIG_GAME_WINE_BIN));
+	snprintf(path, sizeof(path), "%s/wine", game_setting("BARE_APP_WINE_BIN", CONFIG_GAME_WINE_BIN));
 	if (access(path, X_OK) < 0)
 		return path;
 	/* a path of its own (C:\...) is not checked */
@@ -131,7 +124,8 @@ static const char *wine_missing(int i)
 
 static struct game_proc *wine_start(int i, const struct game_env *ge)
 {
-	char host[PATH_MAX], prefix[PATH_MAX + 32], bin[PATH_MAX + 32];
+	char host[PATH_MAX];
+	struct game_vars env = { 0 };
 	const char *missing = wine_missing(i);
 	const struct wine_game *g;
 
@@ -142,13 +136,12 @@ static struct game_proc *wine_start(int i, const struct game_env *ge)
 	}
 	g = &found[i];
 	game_proc_sibling(HOST, host, sizeof(host));
-	snprintf(prefix, sizeof(prefix), "BARE_APP_WINE_PREFIX=%s",
-		 env_or("BARE_APP_WINE_PREFIX", CONFIG_GAME_WINE_PREFIX));
-	snprintf(bin, sizeof(bin), "BARE_APP_WINE_BIN=%s", env_or("BARE_APP_WINE_BIN", CONFIG_GAME_WINE_BIN));
+	game_vars_add(&env, "BARE_APP_WINE_PREFIX=%s",
+		      game_setting("BARE_APP_WINE_PREFIX", CONFIG_GAME_WINE_PREFIX));
+	game_vars_add(&env, "BARE_APP_WINE_BIN=%s", game_setting("BARE_APP_WINE_BIN", CONFIG_GAME_WINE_BIN));
 
 	char *const argv[] = { (char *)HOST, (char *)g->dir, NULL };
-	const char *const env[] = { prefix, bin, NULL };
-	struct game_spawn s = { .path = host, .argv = argv, .env = env, .dir = g->dir,
+	struct game_spawn s = { .path = host, .argv = argv, .env = env.v, .dir = g->dir,
 				.width = ge->width, .height = ge->height };
 
 	LOGI(TAG, "%s: %s", g->name, g->dir);

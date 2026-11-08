@@ -13,9 +13,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -26,7 +23,7 @@
 #include "m_controls.h"
 
 #include "core/input.h"
-#include "games/game_ipc.h"
+#include "games/game_ipc_client.h"
 
 #define SRC_W DOOMGENERIC_RESX
 #define SRC_H DOOMGENERIC_RESY
@@ -37,8 +34,7 @@
 extern int messageToPrint;
 extern boolean messageNeedsInput;
 
-static struct game_shm *shm;
-static unsigned back;		/* buffer being drawn */
+static struct game_link app;	/* bare_app */
 static int dst_x, dst_y, dst_w, dst_h;
 static int *xmap, *ymap;
 static volatile sig_atomic_t stop;
@@ -153,19 +149,15 @@ static void on_button(enum gp_button b, bool pressed)
 static void pump(void)
 {
 	struct game_msg m;
-	ssize_t n;
+	int n;
 
 	if (stop)
 		I_Quit();	/* SIGTERM from bare_app: leave saving the config */
-	for (;;) {
-		n = recv(GAME_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT);
-		if (n == sizeof(m) && m.type == GAME_MSG_BUTTON)
+	while ((n = game_link_recv(&m)) > 0)
+		if (m.type == GAME_MSG_BUTTON)
 			on_button(m.code, m.pressed);
-		else if (n == 0)
-			I_Quit();	/* bare_app is gone */
-		else if (n < 0 && errno != EINTR)
-			break;
-	}
+	if (n < 0)
+		I_Quit();	/* bare_app is gone */
 	if (weapon_key && (int32_t)(DG_GetTicksMs() - weapon_release) >= 0) {
 		push(0, weapon_key);
 		weapon_key = 0;
@@ -179,14 +171,14 @@ void DG_Init(void)
 	int x, y;
 
 	/* 4:3 like on a CRT, as large as the layer allows */
-	dst_h = shm->height;
+	dst_h = app.shm->height;
 	dst_w = dst_h * 4 / 3;
-	if (dst_w > (int)shm->width) {
-		dst_w = shm->width;
+	if (dst_w > (int)app.shm->width) {
+		dst_w = app.shm->width;
 		dst_h = dst_w * 3 / 4;
 	}
-	dst_x = (shm->width - dst_w) / 2;
-	dst_y = (shm->height - dst_h) / 2;
+	dst_x = (app.shm->width - dst_w) / 2;
+	dst_y = (app.shm->height - dst_h) / 2;
 	xmap = malloc(sizeof(*xmap) * dst_w);
 	ymap = malloc(sizeof(*ymap) * dst_h);
 	if (!xmap || !ymap)
@@ -195,13 +187,11 @@ void DG_Init(void)
 		xmap[x] = x * SRC_W / dst_w;
 	for (y = 0; y < dst_h; y++)
 		ymap[y] = y * SRC_H / dst_h;
-	back = 0;	/* the app holds 2, 'middle' has 1 */
 }
 
 void DG_DrawFrame(void)
 {
-	uint8_t *frame = game_shm_frame(shm, back);
-	struct game_msg m = { .type = GAME_MSG_FRAME };
+	uint8_t *frame = game_link_frame(&app);
 	int x, y;
 
 	/*
@@ -216,20 +206,18 @@ void DG_DrawFrame(void)
 	memcpy(last, DG_ScreenBuffer, sizeof(last));
 	have_last = true;
 	for (y = 0; y < dst_h; y++) {
-		uint32_t *out = (uint32_t *)(frame + (size_t)(dst_y + y) * shm->stride) + dst_x;
+		uint32_t *out = (uint32_t *)(frame + (size_t)(dst_y + y) * app.shm->stride) + dst_x;
 		const uint32_t *in = DG_ScreenBuffer + ymap[y] * SRC_W;
 
 		if (y && ymap[y] == ymap[y - 1]) {
-			memcpy(out, (uint8_t *)out - shm->stride, (size_t)dst_w * 4);
+			memcpy(out, (uint8_t *)out - app.shm->stride, (size_t)dst_w * 4);
 			continue;
 		}
 		for (x = 0; x < dst_w; x++)
 			out[x] = in[xmap[x]] & 0xffffff;
 	}
-	back = atomic_exchange(&shm->middle, back | GAME_SHM_FRESH) & ~GAME_SHM_FRESH;
-	/* a full socket already holds a "frame" message: nothing to add */
-	if (send(GAME_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT | MSG_NOSIGNAL) < 0 && errno == EPIPE)
-		I_Quit();
+	if (game_link_publish(&app) < 0)
+		I_Quit();	/* bare_app is gone */
 	pump();
 }
 
@@ -285,17 +273,10 @@ static void on_term(int sig)
 int main(int argc, char **argv)
 {
 	struct sigaction sa = { .sa_handler = on_term };
-	struct stat st;
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
-	if (fstat(GAME_IPC_SHM, &st) < 0 || st.st_size < GAME_SHM_HEADER) {
-		fprintf(stderr, "bare_app_doom: started by bare_app only\n");
-		return 2;
-	}
-	shm = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, GAME_IPC_SHM, 0);
-	if (shm == MAP_FAILED || shm->magic != GAME_SHM_MAGIC ||
-	    game_shm_size(shm) > (size_t)st.st_size) {
-		fprintf(stderr, "bare_app_doom: bad frame memory\n");
+	if (game_link_open(&app, false) < 0) {
+		fprintf(stderr, "bare_app_doom: started by bare_app only (%s)\n", strerror(errno));
 		return 2;
 	}
 	sigaction(SIGTERM, &sa, NULL);

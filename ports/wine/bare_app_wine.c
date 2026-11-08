@@ -41,7 +41,7 @@
 #include <unistd.h>
 
 #include "core/input.h"
-#include "games/game_ipc.h"
+#include "games/game_ipc_client.h"
 #include "winebare_proto.h"
 
 extern char **environ;
@@ -500,8 +500,7 @@ static bool cursor_shown = true;
 
 static bool trace;			/* $BARE_APP_WINE_TRACE: cursor and input */
 
-static struct game_shm *shm;
-static unsigned back;			/* the frame buffer being drawn */
+static struct game_link app;		/* bare_app: frames, gamepad */
 static int dst_x, dst_y, dst_w, dst_h;	/* the screen in the frame */
 static int32_t *xmap, *ymap;		/* source pixel << 8 | weight */
 
@@ -518,14 +517,14 @@ static void set_mode(struct wb_mode m)
 	screen = s;
 	mode = m;
 	/* the aspect kept, centred */
-	dst_h = shm->height;
+	dst_h = app.shm->height;
 	dst_w = (int)((int64_t)dst_h * m.width / m.height);
-	if (dst_w > (int)shm->width) {
-		dst_w = shm->width;
+	if (dst_w > (int)app.shm->width) {
+		dst_w = app.shm->width;
 		dst_h = (int)((int64_t)dst_w * m.height / m.width);
 	}
-	dst_x = (shm->width - dst_w) / 2;
-	dst_y = (shm->height - dst_h) / 2;
+	dst_x = (app.shm->width - dst_w) / 2;
+	dst_y = (app.shm->height - dst_h) / 2;
 	free(xmap);
 	free(ymap);
 	xmap = malloc(sizeof(*xmap) * dst_w);
@@ -645,25 +644,25 @@ static inline uint32_t lerp(uint32_t a, uint32_t b, uint32_t f)
 	       ((((a & 0x00ff00) * g + (b & 0x00ff00) * f) >> 8) & 0x00ff00);
 }
 
-/* The screen into the frame buffer BACK, bilinear */
+/* The screen into the frame being drawn, bilinear */
 static void scale(void)
 {
-	uint8_t *frame = game_shm_frame(shm, back);
+	uint8_t *frame = game_link_frame(&app);
 	uint32_t w = mode.width, last_row = (uint32_t)-1;
 	int x, y;
 
-	for (y = 0; y < (int)shm->height; y++) {
-		uint32_t *out = (uint32_t *)(frame + (size_t)y * shm->stride);
+	for (y = 0; y < (int)app.shm->height; y++) {
+		uint32_t *out = (uint32_t *)(frame + (size_t)y * app.shm->stride);
 
 		if (y < dst_y || y >= dst_y + dst_h) {
-			memset(out, 0, (size_t)shm->width * 4);
+			memset(out, 0, (size_t)app.shm->width * 4);
 			continue;
 		}
 		memset(out, 0, (size_t)dst_x * 4);
-		memset(out + dst_x + dst_w, 0, (size_t)(shm->width - dst_x - dst_w) * 4);
+		memset(out + dst_x + dst_w, 0, (size_t)(app.shm->width - dst_x - dst_w) * 4);
 		out += dst_x;
 		if ((uint32_t)ymap[y - dst_y] == last_row) {
-			memcpy(out, (uint8_t *)out - shm->stride, (size_t)dst_w * 4);
+			memcpy(out, (uint8_t *)out - app.shm->stride, (size_t)dst_w * 4);
 			continue;
 		}
 		last_row = ymap[y - dst_y];
@@ -683,16 +682,10 @@ static void scale(void)
 
 static int publish(void)
 {
-	struct game_msg m = { .type = GAME_MSG_FRAME };
-
 	compose();
 	scale();
-	back = atomic_exchange(&shm->middle, back | GAME_SHM_FRESH) & ~GAME_SHM_FRESH;
 	dirty = false;
-	/* a full socket already holds a "frame" message */
-	if (send(GAME_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT | MSG_NOSIGNAL) < 0 && errno == EPIPE)
-		return -1;
-	return 0;
+	return game_link_publish(&app);
 }
 
 /* ---- the Wine processes ------------------------------------------------------ */
@@ -1199,18 +1192,16 @@ static void on_axis(enum gp_axis a, int value)
 static bool read_app(void)
 {
 	struct game_msg m;
-	ssize_t n;
+	int n;
 
 	for (;;) {
-		n = recv(GAME_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT);
-		if (n == 0)
+		n = game_link_recv(&m);
+		if (n < 0)
 			return false;
-		if (n < 0) {
+		if (n == 0) {
 			numpad_update();
-			return errno == EAGAIN || errno == EINTR;
+			return true;
 		}
-		if (n != sizeof(m))
-			continue;
 		if (m.type == GAME_MSG_BUTTON)
 			on_button(m.code, m.pressed, m.flags & GAME_BTN_STICK);
 		else if (m.type == GAME_MSG_AXIS)
@@ -1240,23 +1231,13 @@ static void kill_wine(void)
 	run(argv, NULL);
 }
 
+/* not for Wine and its children: the link is closed on exec */
 static int open_shm(void)
 {
-	struct stat st;
-
-	if (fstat(GAME_IPC_SHM, &st) < 0 || st.st_size < GAME_SHM_HEADER) {
-		msg("started by bare_app only");
+	if (game_link_open(&app, false) < 0) {
+		msg("started by bare_app only (%s)", strerror(errno));
 		return -1;
 	}
-	shm = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, GAME_IPC_SHM, 0);
-	if (shm == MAP_FAILED || shm->magic != GAME_SHM_MAGIC || game_shm_size(shm) > (size_t)st.st_size) {
-		msg("bad frame memory");
-		return -1;
-	}
-	/* not for Wine and its children */
-	fcntl(GAME_IPC_SOCK, F_SETFD, FD_CLOEXEC);
-	fcntl(GAME_IPC_SHM, F_SETFD, FD_CLOEXEC);
-	back = 0;	/* the app holds 2, 'middle' has 1 */
 	return 0;
 }
 

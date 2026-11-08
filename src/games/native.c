@@ -46,13 +46,6 @@ struct native_game {
 static struct native_game *found;
 static int count;
 
-static const char *env_or(const char *name, const char *def)
-{
-	const char *env = getenv(name);
-
-	return env && *env ? env : def;
-}
-
 #define COPY(dst, src) snprintf(dst, sizeof(dst), "%s", src)
 
 static bool yes(const char *v)
@@ -184,7 +177,7 @@ static int native_scan(void)
 			return 0;
 	}
 	count = 0;
-	snprintf(dirs, sizeof(dirs), "%s", env_or("BARE_APP_NATIVE_DIRS", CONFIG_GAME_NATIVE_DIRS));
+	snprintf(dirs, sizeof(dirs), "%s", game_setting("BARE_APP_NATIVE_DIRS", CONFIG_GAME_NATIVE_DIRS));
 	for (dir = strtok_r(dirs, " :", &save); dir; dir = strtok_r(NULL, " :", &save))
 		scan_dir(dir);
 	qsort(found, count, sizeof(found[0]), by_name);
@@ -224,7 +217,7 @@ static const char *native_missing(int i)
 	const struct native_game *g;
 
 	if (i < 0 || i >= count)
-		return env_or("BARE_APP_NATIVE_DIRS", CONFIG_GAME_NATIVE_DIRS);
+		return game_setting("BARE_APP_NATIVE_DIRS", CONFIG_GAME_NATIVE_DIRS);
 	g = &found[i];
 	resolve(g, g->exe, path, sizeof(path));
 	if (access(path, X_OK) < 0)
@@ -303,13 +296,12 @@ static int split(char *buf, char **argv, int max)
 
 static struct game_proc *native_start(int i, const struct game_env *ge)
 {
-	static char envs[MAX_ENV + 16][PATH_MAX + 32];
-	char exe[PATH_MAX], data[PATH_MAX], cwd[PATH_MAX], args[PATH_MAX], alsa[32] = "";
+	char exe[PATH_MAX], data[PATH_MAX], cwd[PATH_MAX], args[PATH_MAX], alsa[32];
 	char *argv[MAX_ARGS + 2];
-	const char *env[MAX_ENV + 16];
+	struct game_vars env = { 0 };
 	const char *missing = native_missing(i);
 	const struct native_game *g;
-	int n = 0, e = 0;
+	int n = 0;
 
 	if (missing) {
 		LOGE(TAG, "%s: %s", missing, strerror(ENOENT));
@@ -318,7 +310,7 @@ static struct game_proc *native_start(int i, const struct game_env *ge)
 	}
 	g = &found[i];
 	resolve(g, g->exe, exe, sizeof(exe));
-	snprintf(cwd, sizeof(cwd), "%s/%s", env_or("BARE_APP_NATIVE_DATA", CONFIG_GAME_NATIVE_DATA), g->id);
+	snprintf(cwd, sizeof(cwd), "%s/%s", game_setting("BARE_APP_NATIVE_DATA", CONFIG_GAME_NATIVE_DATA), g->id);
 	if (game_proc_mkdir(cwd, data, sizeof(data)) < 0) {
 		LOGE(TAG, "%s: %s", cwd, strerror(errno));
 		return NULL;
@@ -335,40 +327,32 @@ static struct game_proc *native_start(int i, const struct game_env *ge)
 	n += split(args, argv + n, MAX_ARGS);
 	argv[n] = NULL;
 
-#define ENV(...) snprintf(envs[e], sizeof(envs[e]), __VA_ARGS__), env[e] = envs[e], e++
 	/* the game's settings and saved games in its data directory */
-	ENV("HOME=%s", data);
-	ENV("XDG_DATA_HOME=%s/.local/share", data);
-	ENV("XDG_CONFIG_HOME=%s/.config", data);
-	ENV("XDG_CACHE_HOME=%s/.cache", data);
-	ENV("BARE_APP_LANG=%s", ge->lang);
-	ENV("SDL_VIDEODRIVER=bareapp");
+	game_vars_add(&env, "HOME=%s", data);
+	game_vars_add(&env, "XDG_DATA_HOME=%s/.local/share", data);
+	game_vars_add(&env, "XDG_CONFIG_HOME=%s/.config", data);
+	game_vars_add(&env, "XDG_CACHE_HOME=%s/.cache", data);
+	game_vars_add(&env, "BARE_APP_LANG=%s", ge->lang);
+	game_vars_add(&env, "SDL_VIDEODRIVER=bareapp");
 	/* Mesa's panfrost without AFBC: see GLES_ENV in halflife.c */
-	ENV("PAN_MESA_DEBUG=noafbc");
-	if (ge->pcm && game_proc_alsa_name(ge->pcm, alsa, sizeof(alsa)) == 0) {
-		ENV("SDL_AUDIODRIVER=alsa");
-		ENV("AUDIODEV=%s", alsa);
-	} else {
-		ENV("SDL_AUDIODRIVER=dummy");
-	}
+	game_vars_add(&env, "PAN_MESA_DEBUG=noafbc");
+	game_vars_sdl_audio(&env, ge->pcm, alsa, sizeof(alsa));
 	if (g->keys[0])
-		ENV("SDL_BAREAPP_KEYS=%s", g->keys);
+		game_vars_add(&env, "SDL_BAREAPP_KEYS=%s", g->keys);
 	if (g->gamepad[0])
-		ENV("SDL_BAREAPP_GAMEPAD=%s", g->gamepad);
+		game_vars_add(&env, "SDL_BAREAPP_GAMEPAD=%s", g->gamepad);
 	if (g->scale[0])
-		ENV("SDL_BAREAPP_SCALE=%s", g->scale);
+		game_vars_add(&env, "SDL_BAREAPP_SCALE=%s", g->scale);
 	if (g->filter[0])
-		ENV("SDL_BAREAPP_FILTER=%s", g->filter);
+		game_vars_add(&env, "SDL_BAREAPP_FILTER=%s", g->filter);
 	if (g->fps[0])
-		ENV("SDL_BAREAPP_FPS=%s", g->fps);
+		game_vars_add(&env, "SDL_BAREAPP_FPS=%s", g->fps);
 	for (int k = 0; k < g->n_env; k++) {
 		expand(g->env[k], ge, data, g->dir, args, sizeof(args));
-		ENV("%s", args);
+		game_vars_add(&env, "%s", args);
 	}
-#undef ENV
-	env[e] = NULL;
 
-	struct game_spawn s = { .path = exe, .argv = argv, .env = env, .dir = cwd,
+	struct game_spawn s = { .path = exe, .argv = argv, .env = env.v, .dir = cwd,
 				.width = ge->width, .height = ge->height };
 
 	LOGI(TAG, "%s: %s, data %s, sound %s", g->name, exe, data, alsa[0] ? alsa : "off");

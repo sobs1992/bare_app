@@ -78,6 +78,16 @@ void platform_list(void)
 		printf("%s\n", platforms[i]->name);
 }
 
+const char *platform_opt(const struct platform *pf, const char *key)
+{
+	size_t len = strlen(key);
+
+	for (const char *const *o = pf ? pf->game_opts : NULL; o && *o; o++)
+		if (!strncmp(*o, key, len) && (*o)[len] == '=')
+			return *o + len + 1;
+	return NULL;
+}
+
 const char *platform_model(void)
 {
 	return model;

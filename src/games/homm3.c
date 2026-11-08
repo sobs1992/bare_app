@@ -2,9 +2,9 @@
  * Heroes of Might and Magic III (GAME_HOMM3): VCMI's client (SDK package
  * vcmi, GPLv2) built with its bare_app link. VCMI draws in software into
  * an SDL window kept in memory (dummy video driver) and sends it fitted to
- * the frame as the platform's homm3_view says, or a 1:1 part of it around
+ * the frame as the platform's "homm3.view" says, or a 1:1 part of it around
  * the cursor; the gamepad drives it as an SDL game controller, with the F
- * keys of the platform's homm3_keys.
+ * keys "homm3.keys" names (platform game_opts).
  */
 #include <errno.h>
 #include <limits.h>
@@ -20,6 +20,27 @@
 
 #define TAG "homm3"
 
+/*
+ * homm3.view, how VCMI fills the frame:
+ *   double  (default) drawn at twice the frame, taken 2:1 or as a 1:1
+ *           magnifier (L1)
+ *   native  1:1: VCMI's screen the frame's size, at least the 800x600 its
+ *           windows need; the frame is the part the cursor points at
+ *   fit     the same screen whole in the frame, each axis by itself
+ *           (854x480: 854x600 squashed down only), L1 a 1:1 magnifier
+ * homm3.keys, Heroes III's F keys:
+ *   oga     (default) F1, F2 held: Ctrl, Shift; F3 cancel, F4 options,
+ *           F5 minimise
+ *   ogu     F1 minimise, F2, F3 held: Ctrl, Shift; F4 accept, F5 cancel or
+ *           end the turn; the right stick as the D-pad
+ */
+static bool opt_is(const struct platform *pf, const char *key, const char *value)
+{
+	const char *v = platform_opt(pf, key);
+
+	return v && !strcmp(v, value);
+}
+
 /* VCMI looks for the game in <dir>/vcmi of each $XDG_DATA_DIRS entry: this
  * directory gets the link vcmi -> the game directory */
 #define LINK_DIR "/tmp/bare_app_homm3"
@@ -27,17 +48,13 @@
 /* Game directory (Data, Maps, Mp3, Mods) */
 static const char *homm3_game(void)
 {
-	const char *env = getenv("BARE_APP_HOMM3_GAME");
-
-	return env && *env ? env : CONFIG_GAME_HOMM3_GAME;
+	return game_setting("BARE_APP_HOMM3_GAME", CONFIG_GAME_HOMM3_GAME);
 }
 
 /* Saved games in <data>/vcmi, settings in <data>/config/vcmi */
 static const char *homm3_data(void)
 {
-	const char *env = getenv("BARE_APP_HOMM3_DATA");
-
-	return env && *env ? env : CONFIG_GAME_HOMM3_DATA;
+	return game_setting("BARE_APP_HOMM3_DATA", CONFIG_GAME_HOMM3_DATA);
 }
 
 static const char *homm3_missing(int entry)
@@ -65,13 +82,10 @@ static int game_link(void)
  * the language of its data */
 static struct game_proc *homm3_start(int entry, const struct game_env *ge)
 {
-	const char *pcm = ge->pcm, *lang = ge->lang;
-	enum homm3_view view = ge->pf->homm3_view;
-	enum homm3_keys keys = ge->pf->homm3_keys;
-	char xdg_data[PATH_MAX + 16], xdg_config[PATH_MAX + 32], xdg_cache[PATH_MAX + 32];
-	char audiodev[64] = "", name[32], language[32];
 	char *const argv[] = { (char *)"vcmiclient", (char *)"--nointro", NULL };
 	const char *missing = homm3_missing(entry);
+	struct game_vars env = { 0 };
+	char alsa[32];
 
 	if (missing) {
 		LOGE(TAG, "%s: %s", missing, strerror(ENOENT));
@@ -82,51 +96,39 @@ static struct game_proc *homm3_start(int entry, const struct game_env *ge)
 		LOGE(TAG, "%s/vcmi: %s", LINK_DIR, strerror(errno));
 		return NULL;
 	}
-	snprintf(xdg_data, sizeof(xdg_data), "XDG_DATA_HOME=%s", homm3_data());
-	snprintf(xdg_config, sizeof(xdg_config), "XDG_CONFIG_HOME=%s/config", homm3_data());
-	snprintf(xdg_cache, sizeof(xdg_cache), "XDG_CACHE_HOME=%s/cache", homm3_data());
-	if (pcm && game_proc_alsa_name(pcm, name, sizeof(name)) == 0)
-		snprintf(audiodev, sizeof(audiodev), "AUDIODEV=%s", name);
+	game_vars_add(&env, "SDL_VIDEODRIVER=dummy");
+	/* SIGTERM ends the game; SDL would turn it into "quit?" */
+	game_vars_add(&env, "SDL_NO_SIGNAL_HANDLERS=1");
+	game_vars_add(&env, "XDG_DATA_DIRS=" LINK_DIR);
+	game_vars_add(&env, "XDG_DATA_HOME=%s", homm3_data());
+	game_vars_add(&env, "XDG_CONFIG_HOME=%s/config", homm3_data());
+	game_vars_add(&env, "XDG_CACHE_HOME=%s/cache", homm3_data());
 	/* VCMI's link turns it into its own language setting */
-	snprintf(language, sizeof(language), "BARE_APP_LANG=%s", lang);
-
-	const char *env[16] = {
-		"SDL_VIDEODRIVER=dummy",
-		/* SIGTERM ends the game; SDL would turn it into "quit?" */
-		"SDL_NO_SIGNAL_HANDLERS=1",
-		"XDG_DATA_DIRS=" LINK_DIR, xdg_data, xdg_config, xdg_cache, language,
-		audiodev[0] ? "SDL_AUDIODRIVER=alsa" : "SDL_AUDIODRIVER=dummy",
-	};
-	size_t n = 0;
-
-	while (env[n])
-		n++;
-	if (audiodev[0])
-		env[n++] = audiodev;
-	if (view == HOMM3_VIEW_NATIVE)
-		env[n++] = "BARE_APP_VCMI_NATIVE=1";
-	else if (view == HOMM3_VIEW_FIT)
-		env[n++] = "BARE_APP_VCMI_FIT=1";
-	if (keys == HOMM3_KEYS_OGU)
-		env[n++] = "BARE_APP_VCMI_KEYS=ogu";
-	env[n] = NULL;
-	struct game_spawn s = { .path = CONFIG_GAME_HOMM3_PROGRAM, .argv = argv, .env = env,
+	game_vars_add(&env, "BARE_APP_LANG=%s", ge->lang);
+	game_vars_sdl_audio(&env, ge->pcm, alsa, sizeof(alsa));
+	if (opt_is(ge->pf, "homm3.view", "native"))
+		game_vars_add(&env, "BARE_APP_VCMI_NATIVE=1");
+	else if (opt_is(ge->pf, "homm3.view", "fit"))
+		game_vars_add(&env, "BARE_APP_VCMI_FIT=1");
+	if (opt_is(ge->pf, "homm3.keys", "ogu"))
+		game_vars_add(&env, "BARE_APP_VCMI_KEYS=ogu");
+	struct game_spawn s = { .path = CONFIG_GAME_HOMM3_PROGRAM, .argv = argv, .env = env.v,
 				.dir = homm3_data(), .width = ge->width, .height = ge->height };
 
 	LOGI(TAG, "game %s, data %s, sound %s, language %s", homm3_game(), homm3_data(),
-	     audiodev[0] ? name : "off", lang);
+	     alsa[0] ? alsa : "off", ge->lang);
 	return game_proc_start(&s);
 }
 
 static enum str_id homm3_hint(const struct platform *pf)
 {
-	return pf->homm3_keys == HOMM3_KEYS_OGU ? S_HOMM3_HINT_OGU : S_HOMM3_HINT;
+	return opt_is(pf, "homm3.keys", "ogu") ? S_HOMM3_HINT_OGU : S_HOMM3_HINT;
 }
 
 /* F5 is the game's on the GO Ultra: cancel or end the turn */
 static enum gp_button homm3_minimize(const struct platform *pf)
 {
-	return pf->homm3_keys == HOMM3_KEYS_OGU ? GP_F1 : GP_F5;
+	return opt_is(pf, "homm3.keys", "ogu") ? GP_F1 : GP_F5;
 }
 
 const struct game_def game_homm3 = {

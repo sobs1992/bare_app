@@ -14,27 +14,6 @@
 #define PLATFORM_MAX_INPUTS 4
 #define PLATFORM_MAX_DISPLAYS 2
 
-/* How Heroes III (VCMI) fills the frame */
-enum homm3_view {
-	/* drawn at twice the frame, taken 2:1 or as a 1:1 magnifier (L1) */
-	HOMM3_VIEW_DOUBLE,
-	/* 1:1: VCMI's screen the frame's size, at least the 800x600 its
-	 * windows need; the frame is the part the cursor points at */
-	HOMM3_VIEW_NATIVE,
-	/* the same screen whole in the frame, each axis by itself (854x480:
-	 * 854x600 squashed down only), L1 a 1:1 magnifier (BARE_APP_VCMI_FIT) */
-	HOMM3_VIEW_FIT,
-};
-
-/* Heroes III's F keys */
-enum homm3_keys {
-	/* F1, F2 held: Ctrl, Shift; F3 cancel, F4 options, F5 minimise */
-	HOMM3_KEYS_OGA,
-	/* F1 minimise, F2, F3 held: Ctrl, Shift; F4 accept, F5 cancel or end
-	 * the turn; the right stick as the D-pad (BARE_APP_VCMI_KEYS=ogu) */
-	HOMM3_KEYS_OGU,
-};
-
 struct hal_dev {
 	const void *ops;	/* struct hal_*_ops matching the field */
 	const void *params;	/* driver specific */
@@ -53,11 +32,9 @@ struct platform {
 	struct hal_dev pcm;			/* hal_pcm_ops, optional: interface sounds */
 	/* ALSA PCM device games play to (bare_app_doom -pcm), NULL: games are silent */
 	const char *game_pcm;
-	enum homm3_view homm3_view;
-	enum homm3_keys homm3_keys;
-	/* Half-Life draws in software until another renderer is chosen in the
-	 * game's menu (where its software renderer is faster than the GPU one) */
-	bool halflife_soft;
+	/* What the games should know of this board: "game.key=value" (homm3.keys=ogu),
+	 * read by the games themselves (platform_opt()); NULL-terminated, may be NULL */
+	const char *const *game_opts;
 	struct hal_dev wifi;			/* hal_wifi_ops, optional */
 	/* GP_BIT() mask: pressing all of them quits the application */
 	uint32_t quit_combo;
@@ -77,5 +54,7 @@ struct platform {
 /* By name if given, otherwise by /proc/device-tree/compatible, otherwise "pc" */
 const struct platform *platform_probe(const char *name);
 void platform_list(void);
+/* The value of "key=value" in pf->game_opts, NULL if it has none */
+const char *platform_opt(const struct platform *pf, const char *key);
 /* Board model from the device tree, "" if none */
 const char *platform_model(void);

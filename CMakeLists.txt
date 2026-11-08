@@ -205,4 +205,16 @@ if(CONFIG_BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
 	add_test(NAME headless_smoke
 		COMMAND ${CMAKE_COMMAND} -DBARE_APP=$<TARGET_FILE:bare_app>
 			-P ${CMAKE_CURRENT_SOURCE_DIR}/tests/headless_smoke.cmake)
+	# a game of game_ipc_client.h, started from the menu by its game.ini
+	if(CONFIG_GAME_NATIVE AND CONFIG_VIEW_LVGL)
+		add_executable(fake_game tests/fake_game.c)
+		target_include_directories(fake_game PRIVATE src)
+		target_compile_options(fake_game PRIVATE ${WARN})
+		file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/test-games/fake/game.ini
+		     CONTENT "name = Fake game\nexe = $<TARGET_FILE:fake_game>\n")
+		add_test(NAME game_smoke
+			COMMAND ${CMAKE_COMMAND} -DBARE_APP=$<TARGET_FILE:bare_app>
+				-DGAMES_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-games
+				-P ${CMAKE_CURRENT_SOURCE_DIR}/tests/game_smoke.cmake)
+	endif()
 endif()

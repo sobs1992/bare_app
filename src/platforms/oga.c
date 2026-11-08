@@ -88,8 +88,12 @@ const struct platform platform_oga = {
 	.pcm = { &pcm_alsa, &(const struct pcm_alsa_params){ .device = "/dev/snd/pcmC0D0p" } },
 #endif
 	.game_pcm = "/dev/snd/pcmC0D0p",
-	/* the Cortex-A35 reads the GPU's frames slower than it draws them */
-	.halflife_soft = true,
+	.game_opts = (const char *const[]){
+		/* Half-Life draws in software until the game's menu picks another
+		 * renderer: the Cortex-A35 reads the GPU's frames slower than it
+		 * draws them */
+		"halflife.renderer=soft",
+		NULL },
 #ifdef CONFIG_WIFI
 	/* ESP8089 on the Black Edition; rev 1.0 has no wlan0 and never answers */
 	.wifi = { &wifi_wpa, &(const struct wifi_wpa_params){

@@ -27,9 +27,9 @@ static const char *const iwads[] = {
 static const char *doom_wad(void)
 {
 	static char path[PATH_MAX];
-	const char *env = getenv("BARE_APP_DOOM_WAD");
+	const char *env = game_setting("BARE_APP_DOOM_WAD", NULL);
 
-	if (env && *env)
+	if (env)
 		return env;
 	for (size_t i = 0; CONFIG_GAME_DOOM_GAME[0] && i < sizeof(iwads) / sizeof(iwads[0]); i++) {
 		snprintf(path, sizeof(path), "%s/%s", CONFIG_GAME_DOOM_GAME, iwads[i]);

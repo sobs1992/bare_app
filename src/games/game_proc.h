@@ -51,3 +51,22 @@ int game_proc_sibling(const char *name, char *buf, size_t size);
 int game_proc_alsa_name(const char *node, char *buf, size_t size);
 /* dir with "~/" expanded to $HOME, created with its parents if missing */
 int game_proc_mkdir(const char *dir, char *buf, size_t size);
+
+/* $name if set and not empty, else def: a setting the environment overrides
+ * (BARE_APP_HOMM3_GAME...) */
+const char *game_setting(const char *name, const char *def);
+
+/* The variables a game gets on top of bare_app's environment; zeroed is
+ * empty. v is game_spawn.env. */
+#define GAME_VARS_MAX 32
+struct game_vars {
+	const char *v[GAME_VARS_MAX + 1];	/* NULL-terminated */
+	int n;
+	size_t used;
+	char buf[8192];
+};
+/* "NAME=value" as fmt says; past the room it is dropped (logged) */
+void game_vars_add(struct game_vars *gv, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+/* SDL's sound on the ALSA PCM device node pcm (AUDIODEV), none if NULL;
+ * the device name alsa-lib opens into alsa (may be NULL) */
+void game_vars_sdl_audio(struct game_vars *gv, const char *pcm, char *alsa, size_t size);

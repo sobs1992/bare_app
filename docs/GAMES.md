@@ -274,48 +274,46 @@ needs = data
 Если в движке нет SDL или его вывод нужно делать по-своему (лупа в Героях III, рендер
 Half-Life), игра говорит с bare_app напрямую, а в bare_app добавляется запись реестра.
 
-**Сторона игры.** Протокол — `src/games/game_ipc.h`. Игра получает дескриптор 3
-(сокет `SOCK_SEQPACKET`) и 4 (memfd с тремя кадрами XRGB8888). Минимальный цикл:
+**Сторона игры.** Протокол — `src/games/game_ipc.h`: игра получает дескриптор 3
+(сокет `SOCK_SEQPACKET`) и 4 (memfd с тремя кадрами XRGB8888). Сторона игры уже
+написана в `src/games/game_ipc_client.h` (только заголовок, C и C++). Оба заголовка под
+лицензией MIT, их можно включать в игру с любой лицензией. В Buildroot они лежат в
+`$(STAGING_DIR)/usr/include/bare_app/` (`games/`, `core/`), пакет игры зависит от
+`bare-app`. Минимальный цикл:
 
 ```c
-#include <stdatomic.h>
-#include <sys/mman.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
+#include <poll.h>
 
-#include "game_ipc.h"   /* из bare_app/src/games, с ним core/input.h */
+#include "core/input.h"             /* enum gp_button, enum gp_axis */
+#include "games/game_ipc_client.h"
 
-struct stat st;
-fstat(GAME_IPC_SHM, &st);
-struct game_shm *shm = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED,
-                            GAME_IPC_SHM, 0);
-unsigned back = 0;      /* игра начинает с буфера 0 */
+struct game_link app;
+struct game_msg m;
+int n;
 
+if (game_link_open(&app, false) < 0)
+	exit(2);                    /* запущена не из bare_app */
 for (;;) {
-	struct game_msg m;
-	ssize_t n;
-
-	/* кнопки и оси */
-	while ((n = recv(GAME_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT)) == sizeof(m)) {
+	/* кнопки и оси; ждать их можно poll() на GAME_IPC_SOCK */
+	while ((n = game_link_recv(&m)) > 0) {
 		if (m.type == GAME_MSG_BUTTON)
-			on_button(m.code, m.pressed, m.flags & GAME_BTN_STICK);  /* enum gp_button */
+			on_button(m.code, m.pressed, m.flags & GAME_BTN_STICK);
 		else if (m.type == GAME_MSG_AXIS)
-			on_axis(m.code, m.value);  /* enum gp_axis, -32767..32767 */
+			on_axis(m.code, m.value);   /* -32767..32767 */
 	}
-	if (n == 0)
-		break;  /* bare_app закрыл сокет: выйти */
+	if (n < 0)
+		break;              /* bare_app закрыл сокет: выйти */
 
-	/* кадр размера shm->width x shm->height, строка shm->stride байт */
-	draw(game_shm_frame(shm, back), shm->width, shm->height, shm->stride);
-	back = atomic_exchange(&shm->middle, back | GAME_SHM_FRESH) & ~GAME_SHM_FRESH;
-	m = (struct game_msg){ .type = GAME_MSG_FRAME };
-	send(GAME_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT | MSG_NOSIGNAL);
+	/* кадр app.shm->width x app.shm->height, строка app.shm->stride байт */
+	draw(game_link_frame(&app));
+	if (game_link_publish(&app) < 0)
+		break;
 }
 ```
 
 Кадр уже должен быть размера слоя: масштабирует игра. Неизменившиеся кадры лучше не
-отправлять. Готовые образцы: `ports/doom/doom_main.c` (C) и патч связи VCMI в пакете
-`vcmi` SDK (C++).
+отправлять. Готовые образцы: `tests/fake_game.c` (самый короткий),
+`ports/doom/doom_main.c`, `ports/wine/bare_app_wine.c`.
 
 **Сторона bare_app.** Файл `src/games/mygame.c`:
 
@@ -346,24 +344,24 @@ static const char *mygame_missing(int entry)
 
 static struct game_proc *mygame_start(int entry, const struct game_env *ge)
 {
-	char data[PATH_MAX], audio[32] = "";
+	char data[PATH_MAX];
 	char *const argv[] = { (char *)"mygame", (char *)"--lang", (char *)ge->lang, NULL };
 	const char *missing = mygame_missing(entry);
+	struct game_vars env = { 0 };
 
 	if (missing) {
 		LOGE(TAG, "%s: %s", missing, strerror(ENOENT));
 		errno = ENOENT;
 		return NULL;
 	}
-	if (game_proc_mkdir("/data/mygame", data, sizeof(data)) < 0)
+	/* BARE_APP_MYGAME_DATA подменяет каталог при проверке на ПК */
+	if (game_proc_mkdir(game_setting("BARE_APP_MYGAME_DATA", "/data/mygame"),
+			    data, sizeof(data)) < 0)
 		return NULL;
-	if (ge->pcm)
-		game_proc_alsa_name(ge->pcm, audio, sizeof(audio));   /* plughw:0,0 */
-
-	char audiodev[48];
-	snprintf(audiodev, sizeof(audiodev), "MYGAME_AUDIO=%s", audio);
-	const char *const env[] = { audiodev, NULL };
-	struct game_spawn s = { .path = CONFIG_GAME_MYGAME_PROGRAM, .argv = argv, .env = env,
+	/* окружение поверх окружения bare_app; для SDL-игры звук — game_vars_sdl_audio() */
+	game_vars_add(&env, "MYGAME_DATA=%s", data);
+	game_vars_add(&env, "MYGAME_PCM=%s", ge->pcm ? ge->pcm : "");
+	struct game_spawn s = { .path = CONFIG_GAME_MYGAME_PROGRAM, .argv = argv, .env = env.v,
 				.dir = data, .width = ge->width, .height = ge->height };
 
 	return game_proc_start(&s);
@@ -400,7 +398,14 @@ const struct game_def game_mygame = {
 - `CMakeLists.txt`: `add_if(CONFIG_GAME_MYGAME src/games/mygame.c)`;
 - `src/gui/view/core/i18n.h` и `i18n.c`: `S_MYGAME`, `S_MYGAME_HINT` на английском и
   русском;
-- `configs/ogu_defconfig` и `oga_defconfig`: `CONFIG_GAME_MYGAME=y`.
+- `configs/ogu_defconfig` и `oga_defconfig`: `CONFIG_GAME_MYGAME=y` для сборки без
+  Buildroot (`tools/oga.sh`). В образе игру включает опция пакета bare-app: строка
+  `CONFIG_GAME_MYGAME=$(call BARE_APP_YN,$(BR2_PACKAGE_BARE_APP_MYGAME))` в
+  `BARE_APP_KCONFIG` в `bare-app.mk`, тогда она включается в одном месте,
+  `APPS_CONFIG` прошивки;
+- если игре нужно знать что-то о плате, это строка `"mygame.ключ=значение"` в
+  `game_opts` платформы (`src/platforms/*.c`), игра читает её `platform_opt()`, как
+  Герои читают `homm3.keys`.
 
 Поля `struct game_def`, которые здесь не понадобились:
 
@@ -416,12 +421,17 @@ const struct game_def game_mygame = {
 
 ## Проверка на ПК
 
+Как устроена связь, проверяет `ctest` в `build-host`: тест `game_smoke` запускает
+`tests/fake_game.c` по его `game.ini` из меню, нажимает кнопки, сворачивает игру,
+возвращает её и проверяет оба выхода. Свою игру можно погонять так же.
+
 Без платы игру можно проверить в симуляторе. Нужен SDL2 2.32 с патчем SDK:
 
 ```sh
 tar xzf dl/sdl2/SDL2-2.32.10.tar.gz && cd SDL2-2.32.10
 patch -p1 < board/common/buildroot/package/bare-app/sdl2/0001-*.patch
-cp apps/bare_app/src/games/game_ipc.h apps/bare_app/src/core/input.h src/video/bareapp/
+cp apps/bare_app/src/games/game_ipc.h apps/bare_app/src/games/game_ipc_client.h \
+   apps/bare_app/src/core/input.h src/video/bareapp/
 mkdir build && cd build && ../configure --prefix=$HOME/sdl-bareapp --enable-bareapp
 make -j8 && make install
 ```

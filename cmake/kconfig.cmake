@@ -2,6 +2,8 @@
 #
 #   BARE_APP_DEFCONFIG  defconfig to start from: a path, or a name in configs/
 #                       (default pc_defconfig, oga_defconfig when cross-compiling)
+#   BARE_APP_CONFIG_EXTRA  lines over it, "CONFIG_X=y;CONFIG_Y=n": what the
+#                       SDK's package knows better (which games the image has)
 #
 # <build>/.config is created from the defconfig, and created again whenever
 # the defconfig file is newer or another one is chosen; changes made with
@@ -32,6 +34,33 @@ endif()
 get_filename_component(_defconfig "${_defconfig}" ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 if(NOT EXISTS "${_defconfig}")
 	message(FATAL_ERROR "bare_app: no defconfig ${_defconfig}")
+endif()
+set(_defconfig_src "${_defconfig}")
+
+# The defconfig with BARE_APP_CONFIG_EXTRA after it (later lines win), written
+# only when it changes, so that it is newer than .config just then
+set(BARE_APP_CONFIG_EXTRA "" CACHE STRING "Kconfig lines over the defconfig")
+if(BARE_APP_CONFIG_EXTRA)
+	file(READ "${_defconfig}" _text)
+	set(_extra "\n# BARE_APP_CONFIG_EXTRA\n")
+	foreach(_line ${BARE_APP_CONFIG_EXTRA})
+		# the defconfig's own line for that symbol goes
+		if(_line MATCHES "^(CONFIG_[A-Za-z0-9_]+)=")
+			string(REGEX REPLACE "(^|\n)(${CMAKE_MATCH_1}=[^\n]*|# ${CMAKE_MATCH_1} is not set)"
+			       "\\1" _text "${_text}")
+		endif()
+		string(APPEND _extra "${_line}\n")
+	endforeach()
+	string(APPEND _text "${_extra}")
+	set(_merged ${CMAKE_BINARY_DIR}/defconfig.extra)
+	set(_old "")
+	if(EXISTS ${_merged})
+		file(READ ${_merged} _old)
+	endif()
+	if(NOT _old STREQUAL _text)
+		file(WRITE ${_merged} "${_text}")
+	endif()
+	set(_defconfig ${_merged})
 endif()
 
 set(_kenv ${CMAKE_COMMAND} -E env KCONFIG_CONFIG=${KCONFIG_DOTCONFIG}
@@ -73,7 +102,7 @@ foreach(_line ${_lines})
 	endif()
 endforeach()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-	${KCONFIG_DOTCONFIG} ${KCONFIG_ROOT} ${_defconfig})
+	${KCONFIG_DOTCONFIG} ${KCONFIG_ROOT} ${_defconfig} ${_defconfig_src})
 
 add_custom_target(menuconfig
 	COMMAND ${_kenv} ${Python3_EXECUTABLE} ${KCONFIG_TOOLS}/menuconfig.py ${KCONFIG_ROOT}
@@ -81,8 +110,8 @@ add_custom_target(menuconfig
 	COMMENT "bare_app configuration (rebuild picks it up)")
 add_custom_target(update-defconfig
 	COMMAND ${_kenv} ${Python3_EXECUTABLE} ${KCONFIG_TOOLS}/savedefconfig.py
-		--kconfig ${KCONFIG_ROOT} --out ${_defconfig}
-	COMMENT "configuration saved back to ${_defconfig}")
+		--kconfig ${KCONFIG_ROOT} --out ${_defconfig_src}
+	COMMENT "configuration saved back to ${_defconfig_src}")
 add_custom_target(savedefconfig
 	COMMAND ${_kenv} ${Python3_EXECUTABLE} ${KCONFIG_TOOLS}/savedefconfig.py
 		--kconfig ${KCONFIG_ROOT} --out ${CMAKE_BINARY_DIR}/defconfig
