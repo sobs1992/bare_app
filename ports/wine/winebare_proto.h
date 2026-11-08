@@ -20,7 +20,7 @@
 #include <stdint.h>
 
 #define WINEBARE_SOCKET_ENV "WINEBARE_SOCKET"
-#define WB_PROTO_VERSION 1
+#define WB_PROTO_VERSION 2	/* 2: key flags */
 
 #define WB_MAX_MODES 16
 
@@ -60,6 +60,11 @@ enum wb_msg_type {
 struct wb_mode {
 	uint16_t width, height;
 };
+
+/* WB_INPUT_KEY flags. Without WB_KEY_EXTENDED a key of two places on the
+ * keyboard (the arrows, Insert, Delete, Home, End, Page Up and Down) is
+ * the one Wine's keyboard layout names first: the numeric keypad's. */
+#define WB_KEY_EXTENDED 1u	/* the cursor block's key: E0 scan code */
 
 struct wb_msg {
 	uint32_t type;
@@ -109,7 +114,8 @@ struct wb_msg {
 		} mouse;
 		struct {
 			uint16_t vk;
-			uint16_t pressed;
+			uint8_t pressed;
+			uint8_t flags;	/* WB_KEY_* */
 		} key;
 	};
 };

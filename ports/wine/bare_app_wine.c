@@ -78,7 +78,7 @@ struct action {
 	uint16_t vk[4];
 };
 
-enum stick_use { STICK_NONE, STICK_MOUSE, STICK_ARROWS, STICK_WHEEL, STICK_NUMPAD };
+enum stick_use { STICK_NONE, STICK_MOUSE, STICK_ARROWS, STICK_WHEEL, STICK_NUMPAD, STICK_TURN };
 
 static struct {
 	char dir[PATH_MAX];		/* game directory */
@@ -92,6 +92,7 @@ static struct {
 	char env[1024];			/* NAME=value, space separated */
 	char writable[512];		/* entries the game writes to, see make_tree() */
 	enum stick_use lstick, rstick, dpad;
+	bool cursor_keys;		/* arrows = cursor: the arrow keys are the cursor block's */
 	float cursor_speed;		/* screen widths a second at full deflection */
 	struct action button[GP_COUNT];
 } cfg;
@@ -126,6 +127,9 @@ static const char *const button_names[GP_COUNT] = {
  * reads its keys so: it maps the keypad's scan codes to VKs with
  * MapVirtualKey and looks at those (VK_NUMPAD8 never moves anything).
  */
+/* In an action's keys: the keypad's key of that VK whatever "arrows" says */
+#define VK_KEYPAD 0x100
+
 static const uint16_t keypad_vk[10] = {
 	0x2d, 0x23, 0x28, 0x22, 0x25, 0x0c, 0x27, 0x24, 0x26, 0x21,	/* Ins End Down PgDn Left Clear Right Home Up PgUp */
 };
@@ -140,9 +144,9 @@ static int key_vk(const char *name)
 	if ((name[0] == 'f' || name[0] == 'F') && (n = atoi(name + 1)) >= 1 && n <= 24)
 		return 0x70 + n - 1;
 	if (!strncmp(name, "kp", 2) && isdigit((unsigned char)name[2]) && !name[3])
-		return keypad_vk[name[2] - '0'];
+		return keypad_vk[name[2] - '0'] | VK_KEYPAD;
 	if (!strcmp(name, "kp."))
-		return 0x2e;	/* Del */
+		return 0x2e | VK_KEYPAD;	/* Del */
 	for (i = 0; i < sizeof(key_names) / sizeof(key_names[0]); i++)
 		if (!strcasecmp(name, key_names[i].name))
 			return key_names[i].vk;
@@ -205,7 +209,8 @@ static void add_mode(struct wb_mode m)
 static enum stick_use parse_stick(const char *v)
 {
 	return !strcmp(v, "mouse") ? STICK_MOUSE : !strcmp(v, "arrows") ? STICK_ARROWS :
-	       !strcmp(v, "wheel") ? STICK_WHEEL : !strcmp(v, "numpad") ? STICK_NUMPAD : STICK_NONE;
+	       !strcmp(v, "wheel") ? STICK_WHEEL : !strcmp(v, "numpad") ? STICK_NUMPAD :
+	       !strcmp(v, "turn") ? STICK_TURN : STICK_NONE;
 }
 
 static char *trim(char *s)
@@ -290,6 +295,8 @@ static int read_ini(const char *path)
 				cfg.dpad = parse_stick(value) == STICK_MOUSE ? STICK_MOUSE : STICK_ARROWS;
 			else if (!strcmp(key, "cursor_speed"))
 				cfg.cursor_speed = strtof(value, NULL);
+			else if (!strcmp(key, "arrows"))
+				cfg.cursor_keys = !strcmp(value, "cursor");
 			else {
 				for (b = 0; b < GP_COUNT; b++)
 					if (button_names[b] && !strcmp(button_names[b], key))
@@ -861,17 +868,27 @@ static void send_mouse(uint32_t flags, int wheel)
 	send_mouse_at((int)cur_x, (int)cur_y, flags, wheel);
 }
 
+/* A key of the cursor block, which the numeric keypad has too */
+static bool cursor_block(uint16_t vk)
+{
+	return (vk >= 0x21 && vk <= 0x28) || vk == 0x2d || vk == 0x2e;	/* PgUp..Down, Ins, Del */
+}
+
+/* vk may have VK_KEYPAD */
 static void send_key(uint16_t vk, bool pressed)
 {
 	struct client *c = input_client();
 	struct wb_msg m = { .type = WB_INPUT_KEY };
+	bool extended = !(vk & VK_KEYPAD) && cfg.cursor_keys && cursor_block(vk);
 
 	if (trace)
-		msg("key %#x %s%s", vk, pressed ? "down" : "up", c ? "" : " (no window)");
+		msg("key %#x%s %s%s", vk & 0xff, extended ? " (cursor block)" : "",
+		    pressed ? "down" : "up", c ? "" : " (no window)");
 	if (!c)
 		return;
-	m.key.vk = vk;
+	m.key.vk = vk & 0xff;
 	m.key.pressed = pressed;
+	m.key.flags = extended ? WB_KEY_EXTENDED : 0;
 	client_send(c, &m);
 }
 
@@ -1188,9 +1205,9 @@ static void numpad_set(int dir)
 	if (dir == numpad.dir)
 		return;
 	if (numpad.dir >= 0)
-		send_key(keypad_vk[digit[numpad.dir]], false);
+		send_key(keypad_vk[digit[numpad.dir]] | VK_KEYPAD, false);
 	if (dir >= 0) {
-		send_key(keypad_vk[digit[dir]], true);
+		send_key(keypad_vk[digit[dir]] | VK_KEYPAD, true);
 		clock_gettime(CLOCK_MONOTONIC, &numpad.since);
 	}
 	numpad.dir = dir;
@@ -1224,13 +1241,60 @@ static void numpad_update(void)
 	}
 }
 
+/*
+ * The right stick as a camera turned by the arrow keys and zoomed by the
+ * wheel (rstick = turn: Daemonica turns its camera with Left and Right).
+ * Left and right hold that key for a share of the time as big as the push
+ * (after curve()), so a light push turns slowly: the push is owed as key
+ * time, the key goes down once TURN_SLICE / 2 is owed and up once it has
+ * been down that much too long, so it stays down or up for about
+ * TURN_SLICE at least (a game looks at the key once a frame). Full out it
+ * stays down. Up and down are the wheel, as "wheel".
+ */
+#define TURN_SLICE 0.08f	/* seconds */
+
+static struct {
+	float owed;		/* seconds of the key down the push asks for */
+	uint16_t key;		/* down now, 0 none */
+} turn;
+
+static void turn_tick(float dt)
+{
+	float x = curve(axis[GP_AXIS_RX]);
+	uint16_t want = x < 0 ? 0x25 : x > 0 ? 0x27 : 0;	/* VK_LEFT, VK_RIGHT */
+
+	if (turn.key && turn.key != want) {
+		send_key(turn.key, false);
+		turn.key = 0;
+		turn.owed = 0;
+	}
+	if (!want) {
+		turn.owed = 0;
+		return;
+	}
+	turn.owed += fabsf(x) * dt;
+	if (turn.key) {
+		turn.owed -= dt;
+		if (turn.owed <= -TURN_SLICE / 2) {
+			send_key(turn.key, false);
+			turn.key = 0;
+			turn.owed = 0;
+		}
+	} else if (turn.owed >= TURN_SLICE / 2) {
+		send_key(want, true);
+		turn.key = want;
+		turn.owed = 0;
+	}
+}
+
 static bool moving(void)
 {
-	if (numpad.release)
+	if (numpad.release || turn.key)
 		return true;
 	return (cfg.lstick == STICK_MOUSE && (curve(axis[GP_AXIS_LX]) || curve(axis[GP_AXIS_LY]))) ||
 	       (cfg.rstick == STICK_MOUSE && (curve(axis[GP_AXIS_RX]) || curve(axis[GP_AXIS_RY]))) ||
-	       (cfg.rstick == STICK_WHEEL && curve(axis[GP_AXIS_RY])) ||
+	       ((cfg.rstick == STICK_WHEEL || cfg.rstick == STICK_TURN) && curve(axis[GP_AXIS_RY])) ||
+	       (cfg.rstick == STICK_TURN && curve(axis[GP_AXIS_RX])) ||
 	       dpad_dir[0] || dpad_dir[1] || dpad_dir[2] || dpad_dir[3];
 }
 
@@ -1287,7 +1351,9 @@ static void move_tick(void)
 		if (cursor_shown)
 			dirty = true;
 	}
-	if (cfg.rstick == STICK_WHEEL) {
+	if (cfg.rstick == STICK_TURN)
+		turn_tick(dt);
+	if (cfg.rstick == STICK_WHEEL || cfg.rstick == STICK_TURN) {
 		int steps;
 
 		wheel_acc -= curve(axis[GP_AXIS_RY]) * 8 * dt;	/* up = away = + */

@@ -53,3 +53,19 @@ int ini_read(const char *path,
 	fclose(f);
 	return 0;
 }
+
+void ini_copy_lines(char *dst, size_t size, const char *src)
+{
+	size_t n = 0;
+
+	if (!size)
+		return;
+	for (; *src && n + 1 < size; src++)
+		if (src[0] == '\\' && src[1] == 'n') {
+			dst[n++] = '\n';
+			src++;
+		} else {
+			dst[n++] = *src;
+		}
+	dst[n] = '\0';
+}

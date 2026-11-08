@@ -25,12 +25,13 @@ struct wine_game {
 	char dir[PATH_MAX];
 	char name[64];
 	char exe[256];
+	char hint[512], hint_ru[512];	/* the controls, "" the generic hint */
 };
 
 static struct wine_game found[WINE_MAX_GAMES];
 static int count;
 
-/* name and exe of wine.ini, before its first [section] */
+/* name, exe and hint of wine.ini, before its first [section] */
 static bool ini_value(const char *section, const char *key, const char *value, void *ud)
 {
 	struct wine_game *g = ud;
@@ -41,6 +42,10 @@ static bool ini_value(const char *section, const char *key, const char *value, v
 		snprintf(g->name, sizeof(g->name), "%s", value);
 	else if (!strcasecmp(key, "exe"))
 		snprintf(g->exe, sizeof(g->exe), "%s", value);
+	else if (!strcasecmp(key, "hint"))
+		ini_copy_lines(g->hint, sizeof(g->hint), value);
+	else if (!strcasecmp(key, "hint.ru"))
+		ini_copy_lines(g->hint_ru, sizeof(g->hint_ru), value);
 	return true;
 }
 
@@ -73,7 +78,7 @@ static int wine_scan(void)
 			continue;
 		if (snprintf(g->dir, sizeof(g->dir), "%s/%s", root, e->d_name) >= (int)sizeof(g->dir))
 			continue;
-		g->name[0] = g->exe[0] = '\0';
+		g->name[0] = g->exe[0] = g->hint[0] = g->hint_ru[0] = '\0';
 		if (!read_ini(g))
 			continue;
 		if (!g->name[0])
@@ -94,7 +99,12 @@ static int wine_entries(bool rescan)
 /* The "name" of wine.ini, else the directory's name */
 static void wine_info(int i, struct game_info *gi)
 {
-	gi->name = i >= 0 && i < count ? found[i].name : "";
+	const struct wine_game *g = i >= 0 && i < count ? &found[i] : NULL;
+
+	gi->name = g ? g->name : "";
+	if (g)
+		gi->hint = !strncmp(i18n_lang(), "ru", 2) && g->hint_ru[0] ? g->hint_ru
+			   : g->hint[0] ? g->hint : NULL;
 }
 
 static const char *wine_missing(int i)

@@ -53,21 +53,6 @@ static bool yes(const char *v)
 	return !strcasecmp(v, "yes") || !strcasecmp(v, "true") || !strcmp(v, "1");
 }
 
-/* A hint's "\n" as a new line */
-static void copy_lines(char *dst, size_t size, const char *src)
-{
-	size_t n = 0;
-
-	for (; *src && n + 1 < size; src++)
-		if (src[0] == '\\' && src[1] == 'n') {
-			dst[n++] = '\n';
-			src++;
-		} else {
-			dst[n++] = *src;
-		}
-	dst[n] = '\0';
-}
-
 static bool ini_value(const char *section, const char *key, const char *value, void *ud)
 {
 	struct native_game *g = ud;
@@ -90,9 +75,9 @@ static bool ini_value(const char *section, const char *key, const char *value, v
 	else if (!strcasecmp(key, "needs") && g->n_needs < MAX_NEEDS)
 		COPY(g->needs[g->n_needs++], value);
 	else if (!strcasecmp(key, "hint"))
-		copy_lines(g->hint, sizeof(g->hint), value);
+		ini_copy_lines(g->hint, sizeof(g->hint), value);
 	else if (!strcasecmp(key, "hint.ru"))
-		copy_lines(g->hint_ru, sizeof(g->hint_ru), value);
+		ini_copy_lines(g->hint_ru, sizeof(g->hint_ru), value);
 	else if (!strcasecmp(key, "volume_triggers"))
 		g->trigger_volume = yes(value);
 	else if (!strcasecmp(key, "keys"))
