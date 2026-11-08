@@ -11,7 +11,7 @@
 #include "core/input.h"
 #include "hal.h"
 
-#define PLATFORM_MAX_INPUTS 4
+#define PLATFORM_MAX_INPUTS 6
 #define PLATFORM_MAX_DISPLAYS 2
 
 struct hal_dev {

@@ -31,12 +31,18 @@ enum gp_button {
 enum gp_axis { GP_AXIS_LX, GP_AXIS_LY, GP_AXIS_RX, GP_AXIS_RY, GP_AXIS_COUNT };
 
 struct gp_event {
-	enum { GP_EV_BUTTON, GP_EV_AXIS } type;
-	int code;		/* enum gp_button or enum gp_axis */
-	bool pressed;		/* buttons */
+	enum {
+		GP_EV_BUTTON, GP_EV_AXIS,
+		/* a keyboard and a mouse as they are (input_report_key()) */
+		GP_EV_KEY, GP_EV_MOUSE_BUTTON, GP_EV_MOUSE_MOVE,
+	} type;
+	int code;		/* enum gp_button, enum gp_axis, a Linux KEY_* code, or the
+				 * mouse button: 0 left, 1 right, 2 middle */
+	bool pressed;		/* buttons, keys */
 	bool repeat;		/* auto-repeat of a held direction */
 	bool stick;		/* a direction made by the left stick, not the D-pad */
 	float value;		/* axes: -1..1 */
+	int dx, dy, wheel;	/* GP_EV_MOUSE_MOVE: counts, wheel clicks (up +) */
 };
 
 typedef void (*input_cb)(const struct gp_event *ev, void *ud);
@@ -59,6 +65,20 @@ void input_report_rest(enum gp_axis a, float value);	/* the axis at rest */
 /* Axes moved together (GP_BIT(axis) in mask; an evdev SYN_REPORT): a stick
  * is calibrated once with both of its new values, never half moved */
 void input_report_axes(const float value[GP_AXIS_COUNT], uint32_t mask);
+
+/*
+ * Keyboards and mice (drivers/input_hid.c). While raw() says so (a game in
+ * front that takes them, as Windows games do) keys and the mouse go to the
+ * listener as they are: GP_EV_KEY with Linux key codes, GP_EV_MOUSE_*.
+ * Otherwise the keys of input_key_button() press gamepad buttons (arrows,
+ * Enter A, Esc B...) and the mouse does nothing. A release goes where its
+ * press went.
+ */
+void input_set_raw_query(bool (*raw)(void));
+void input_report_key(unsigned code, bool pressed);
+void input_report_mouse_button(int button, bool pressed);
+void input_report_mouse_move(int dx, int dy, int wheel);
+enum gp_button input_key_button(unsigned code);	/* GP_NONE: no button */
 
 uint32_t input_buttons(void);		/* GP_BIT() mask of pressed buttons */
 float input_axis(enum gp_axis a);	/* calibrated, -1..1 */

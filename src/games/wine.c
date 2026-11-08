@@ -164,7 +164,7 @@ static struct game_proc *wine_start(int i, const struct game_env *ge)
 
 	char *const argv[] = { (char *)HOST, (char *)g->dir, NULL };
 	struct game_spawn s = { .path = host, .argv = argv, .env = env.v, .dir = g->dir,
-				.width = ge->width, .height = ge->height };
+				.width = ge->width, .height = ge->height, .hid = true };
 
 	LOGI(TAG, "%s: %s", g->name, g->dir);
 	return game_proc_start(&s);

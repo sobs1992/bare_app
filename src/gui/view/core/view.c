@@ -346,6 +346,15 @@ static void on_gamepad(const struct gp_event *ev, void *ud)
 	uint32_t combo = v.pf->quit_combo;
 
 	(void)ud;
+	if (ev->type == GP_EV_KEY || ev->type == GP_EV_MOUSE_BUTTON || ev->type == GP_EV_MOUSE_MOVE) {
+		/* a keyboard and a mouse as they are: only a game in front gets
+		 * them (core/input asked hid_game_in_front()); presses not while
+		 * the screen is off, releases always */
+		if ((v.screen_off || v.asleep) && (ev->type == GP_EV_MOUSE_MOVE || ev->pressed))
+			return;
+		view_video_input(ev);
+		return;
+	}
 	if (ev->type == GP_EV_BUTTON) {
 		LOGD(TAG, "%s %s%s", gp_button_name(ev->code), ev->pressed ? "down" : "up",
 		     ev->repeat ? " (repeat)" : "");
@@ -578,6 +587,16 @@ static bool game_in_front(void)
 {
 #ifdef HAVE_GAMES
 	return v.video_game && !v.video_minimized;
+#else
+	return false;
+#endif
+}
+
+/* core/input: keys and the mouse go to the game as they are */
+static bool hid_game_in_front(void)
+{
+#ifdef HAVE_GAMES
+	return game_in_front() && game_proc_hid(v.video_game);
 #else
 	return false;
 #endif
@@ -926,6 +945,7 @@ static void *view_thread(void *arg)
 		return NULL;
 	}
 	input_init(v.ml, NULL, on_gamepad, NULL);
+	input_set_raw_query(hid_game_in_front);
 	load_stick_calibration();
 	v.status = open_devices();
 	if (!v.status) {

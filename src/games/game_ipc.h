@@ -8,7 +8,10 @@
  *   GAME_IPC_SOCK  SOCK_SEQPACKET socket, one struct game_msg per packet:
  *                  game -> app: GAME_MSG_FRAME after publishing a frame;
  *                  app -> game: GAME_MSG_BUTTON, GAME_MSG_AXIS (the game
- *                  has its own controls). EOF means the other side is gone.
+ *                  has its own controls); a game started with a keyboard
+ *                  and a mouse also gets GAME_MSG_KEY and GAME_MSG_MOUSE_*
+ *                  of a USB keyboard and mouse (the others never see them).
+ *                  EOF means the other side is gone.
  *   GAME_IPC_SHM   memfd: struct game_shm, then three frames of
  *                  height * stride bytes each, XRGB8888, at game_shm_frame().
  *
@@ -64,7 +67,17 @@ enum game_msg_type {
 	GAME_MSG_FRAME,
 	GAME_MSG_BUTTON,	/* code: enum gp_button, pressed, flags */
 	GAME_MSG_AXIS,		/* code: enum gp_axis, value */
+	GAME_MSG_KEY,		/* value: Linux key code (KEY_*), pressed */
+	GAME_MSG_MOUSE_BUTTON,	/* code: GAME_MOUSE_LEFT..., pressed */
+	GAME_MSG_MOUSE_MOVE,	/* code: GAME_MOUSE_X/Y/WHEEL, value: counts (wheel: clicks, up +) */
 };
+
+#define GAME_MOUSE_LEFT 0
+#define GAME_MOUSE_RIGHT 1
+#define GAME_MOUSE_MIDDLE 2
+#define GAME_MOUSE_X 0
+#define GAME_MOUSE_Y 1
+#define GAME_MOUSE_WHEEL 2
 
 /* GAME_MSG_BUTTON flags */
 #define GAME_BTN_STICK 1u	/* a direction made by the left stick, not the D-pad */

@@ -37,6 +37,9 @@ struct game_proc {
 	bool paused;
 	uint32_t held;		/* GP_BIT()s sent as pressed */
 	uint32_t axes;		/* bits of the axes sent off centre */
+	bool hid;		/* takes keys and the mouse */
+	uint8_t keys[32];	/* key codes below 256 sent as pressed */
+	uint8_t mouse;		/* mouse buttons sent as pressed */
 };
 
 int game_proc_mkdir(const char *dir, char *buf, size_t size)
@@ -157,6 +160,7 @@ struct game_proc *game_proc_start(const struct game_spawn *s)
 	g = calloc(1, sizeof(*g));
 	if (!g)
 		return NULL;
+	g->hid = s->hid;
 	g->sock = -1;
 	g->shm = MAP_FAILED;
 	g->shm_size = game_shm_size(&hdr);
@@ -244,12 +248,62 @@ static void send_msg(struct game_proc *g, const struct game_msg *m)
 		g->axes = m->value ? g->axes | 1u << m->code : g->axes & ~(1u << m->code);
 }
 
+bool game_proc_hid(const struct game_proc *g)
+{
+	return g && g->hid;
+}
+
+static void hid_input(struct game_proc *g, const struct gp_event *ev)
+{
+	struct game_msg m = { .pressed = ev->pressed };
+	const int moves[3] = { ev->dx, ev->dy, ev->wheel };
+	int i;
+
+	switch (ev->type) {
+	case GP_EV_KEY:
+		if (ev->code < 0 || ev->code >= 256)
+			return;
+		m.type = GAME_MSG_KEY;
+		m.value = (int16_t)ev->code;
+		if (ev->pressed)
+			g->keys[ev->code / 8] |= 1u << (ev->code % 8);
+		else
+			g->keys[ev->code / 8] &= ~(1u << (ev->code % 8));
+		send_msg(g, &m);
+		break;
+	case GP_EV_MOUSE_BUTTON:
+		if (ev->code < 0 || ev->code > 7)
+			return;
+		m.type = GAME_MSG_MOUSE_BUTTON;
+		m.code = (uint8_t)ev->code;
+		g->mouse = ev->pressed ? g->mouse | 1u << ev->code : g->mouse & ~(1u << ev->code);
+		send_msg(g, &m);
+		break;
+	case GP_EV_MOUSE_MOVE:
+		m.type = GAME_MSG_MOUSE_MOVE;
+		for (i = 0; i < 3; i++)
+			if (moves[i]) {
+				m.code = (uint8_t)i;
+				m.value = (int16_t)(moves[i] < -32767 ? -32767 : moves[i] > 32767 ? 32767 : moves[i]);
+				send_msg(g, &m);
+			}
+		break;
+	default:
+		break;
+	}
+}
+
 void game_proc_input(struct game_proc *g, const struct gp_event *ev)
 {
 	struct game_msg m = { .code = (uint8_t)ev->code };
 
 	if (g->ended || g->paused)
 		return;
+	if (ev->type == GP_EV_KEY || ev->type == GP_EV_MOUSE_BUTTON || ev->type == GP_EV_MOUSE_MOVE) {
+		if (g->hid)
+			hid_input(g, ev);
+		return;
+	}
 	if (ev->type == GP_EV_BUTTON) {
 		if (ev->repeat)
 			return;
@@ -276,6 +330,14 @@ void game_proc_pause(struct game_proc *g)
 		if (g->axes & 1u << i)
 			send_msg(g, &(struct game_msg){ .type = GAME_MSG_AXIS, .code = i });
 	}
+	for (i = 0; i < 256; i++)
+		if (g->keys[i / 8] & 1u << (i % 8))
+			send_msg(g, &(struct game_msg){ .type = GAME_MSG_KEY, .value = (int16_t)i });
+	for (i = 0; i < 8; i++)
+		if (g->mouse & 1u << i)
+			send_msg(g, &(struct game_msg){ .type = GAME_MSG_MOUSE_BUTTON, .code = i });
+	memset(g->keys, 0, sizeof(g->keys));
+	g->mouse = 0;
 	kill(-g->pid, SIGSTOP);
 	g->paused = true;
 	LOGI(TAG, "paused (pid %d)", (int)g->pid);

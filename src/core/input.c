@@ -1,6 +1,7 @@
 #include "input.h"
 
 #include <errno.h>
+#include <linux/input-event-codes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,7 @@
 #include "util.h"
 
 #define TAG "input"
+#define KEY_SLOTS 256		/* key codes kept track of: a keyboard's are below */
 
 #define DIR_MASK (GP_BIT(GP_UP) | GP_BIT(GP_DOWN) | GP_BIT(GP_LEFT) | GP_BIT(GP_RIGHT))
 /* L2/R2 are volume keys in the UI and in Heroes III (games never get repeats) */
@@ -48,6 +50,9 @@ static struct {
 	int stick_x, stick_y;	/* -1/0/+1 */
 	struct ml_timer *repeat;
 	enum gp_button repeat_btn;
+	bool (*raw_query)(void);
+	uint8_t key_raw[KEY_SLOTS / 8], key_btn[KEY_SLOTS / 8];	/* where presses went */
+	uint8_t mouse_raw;	/* bit per mouse button pressed raw */
 } in;
 
 static void emit_button(enum gp_button b, bool pressed, bool repeat)
@@ -361,4 +366,94 @@ enum gp_button gp_button_from_name(const char *name)
 		if (!strcmp(names[b], name))
 			return b;
 	return GP_NONE;
+}
+
+/* ---- keyboards and mice ------------------------------------------------ */
+
+static const struct { uint16_t code; enum gp_button button; } key_buttons[] = {
+	{ KEY_UP, GP_UP }, { KEY_DOWN, GP_DOWN }, { KEY_LEFT, GP_LEFT }, { KEY_RIGHT, GP_RIGHT },
+	{ KEY_ENTER, GP_A }, { KEY_KPENTER, GP_A }, { KEY_ESC, GP_B }, { KEY_BACKSPACE, GP_B },
+	{ KEY_SPACE, GP_X }, { KEY_TAB, GP_Y },
+	{ KEY_PAGEUP, GP_L1 }, { KEY_PAGEDOWN, GP_R1 },
+	{ KEY_F1, GP_F1 }, { KEY_F2, GP_F2 }, { KEY_F3, GP_F3 },
+	{ KEY_F4, GP_F4 }, { KEY_F5, GP_F5 }, { KEY_F6, GP_F6 },
+	{ KEY_VOLUMEUP, GP_VOL_UP }, { KEY_VOLUMEDOWN, GP_VOL_DOWN },
+};
+
+enum gp_button input_key_button(unsigned code)
+{
+	for (size_t i = 0; i < sizeof(key_buttons) / sizeof(key_buttons[0]); i++)
+		if (key_buttons[i].code == code)
+			return key_buttons[i].button;
+	return GP_NONE;
+}
+
+void input_set_raw_query(bool (*raw)(void))
+{
+	in.raw_query = raw;
+}
+
+static bool raw_now(void)
+{
+	return in.raw_query && in.raw_query();
+}
+
+#define BIT_SET(a, i) ((a)[(i) / 8] |= 1u << ((i) % 8))
+#define BIT_CLR(a, i) ((a)[(i) / 8] &= ~(1u << ((i) % 8)))
+#define BIT_GET(a, i) ((a)[(i) / 8] >> ((i) % 8) & 1u)
+
+void input_report_key(unsigned code, bool pressed)
+{
+	struct gp_event ev = { .type = GP_EV_KEY, .code = (int)code, .pressed = pressed };
+	enum gp_button b = input_key_button(code);
+
+	if (code >= KEY_SLOTS)
+		return;
+	if (pressed) {
+		if (raw_now()) {
+			BIT_SET(in.key_raw, code);
+			if (in.cb)
+				in.cb(&ev, in.ud);
+		} else if (b != GP_NONE) {
+			BIT_SET(in.key_btn, code);
+			input_report_button(b, true);
+		}
+		return;
+	}
+	if (BIT_GET(in.key_raw, code)) {
+		BIT_CLR(in.key_raw, code);
+		if (in.cb)
+			in.cb(&ev, in.ud);
+	}
+	if (BIT_GET(in.key_btn, code)) {
+		BIT_CLR(in.key_btn, code);
+		input_report_button(b, false);
+	}
+}
+
+void input_report_mouse_button(int button, bool pressed)
+{
+	struct gp_event ev = { .type = GP_EV_MOUSE_BUTTON, .code = button, .pressed = pressed };
+
+	if (button < 0 || button > 7)
+		return;
+	if (pressed) {
+		if (!raw_now())
+			return;
+		in.mouse_raw |= 1u << button;
+	} else if (in.mouse_raw & 1u << button) {
+		in.mouse_raw &= ~(1u << button);
+	} else {
+		return;
+	}
+	if (in.cb)
+		in.cb(&ev, in.ud);
+}
+
+void input_report_mouse_move(int dx, int dy, int wheel)
+{
+	struct gp_event ev = { .type = GP_EV_MOUSE_MOVE, .dx = dx, .dy = dy, .wheel = wheel };
+
+	if ((dx || dy || wheel) && raw_now() && in.cb)
+		in.cb(&ev, in.ud);
 }

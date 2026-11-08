@@ -65,6 +65,9 @@ struct wb_mode {
  * keyboard (the arrows, Insert, Delete, Home, End, Page Up and Down) is
  * the one Wine's keyboard layout names first: the numeric keypad's. */
 #define WB_KEY_EXTENDED 1u	/* the cursor block's key: E0 scan code */
+/* vk is (virtual key << 8) | PC scan code (set 1, E0 by WB_KEY_EXTENDED):
+ * a real keyboard's key, nothing is looked up */
+#define WB_KEY_SCANCODE 2u
 
 struct wb_msg {
 	uint32_t type;

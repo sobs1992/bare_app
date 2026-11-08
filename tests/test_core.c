@@ -391,6 +391,71 @@ static void test_input(void)
 	mainloop_free(ml);
 }
 
+static struct {
+	int keys, key_code, key_pressed, buttons, button, button_pressed, moves, mbuttons;
+} hid_seen;
+static bool hid_raw;
+
+static void on_hid_input(const struct gp_event *ev, void *ud)
+{
+	(void)ud;
+	if (ev->type == GP_EV_KEY) {
+		hid_seen.keys++;
+		hid_seen.key_code = ev->code;
+		hid_seen.key_pressed = ev->pressed;
+	} else if (ev->type == GP_EV_BUTTON && !ev->repeat) {
+		hid_seen.buttons++;
+		hid_seen.button = ev->code;
+		hid_seen.button_pressed = ev->pressed;
+	} else if (ev->type == GP_EV_MOUSE_MOVE) {
+		hid_seen.moves++;
+	} else if (ev->type == GP_EV_MOUSE_BUTTON) {
+		hid_seen.mbuttons++;
+	}
+}
+
+static bool hid_raw_query(void)
+{
+	return hid_raw;
+}
+
+/* Keyboards and mice: gamepad buttons in the UI, as they are to a game */
+static void test_hid(void)
+{
+	struct mainloop *ml = mainloop_new("test");
+
+	input_init(ml, NULL, on_hid_input, NULL);
+	input_set_raw_query(hid_raw_query);
+	memset(&hid_seen, 0, sizeof(hid_seen));
+	hid_raw = false;
+	input_report_key(28 /* KEY_ENTER */, true);
+	CHECK(hid_seen.buttons == 1 && hid_seen.button == GP_A && hid_seen.button_pressed);
+	hid_raw = true;		/* a game comes to the front: the release still frees A */
+	input_report_key(28, false);
+	CHECK(hid_seen.buttons == 2 && hid_seen.button == GP_A && !hid_seen.button_pressed);
+	CHECK(hid_seen.keys == 0);
+	input_report_key(30 /* KEY_A */, true);
+	CHECK(hid_seen.keys == 1 && hid_seen.key_code == 30 && hid_seen.key_pressed);
+	hid_raw = false;	/* back to the menu: the game still gets the release */
+	input_report_key(30, false);
+	CHECK(hid_seen.keys == 2 && !hid_seen.key_pressed);
+	input_report_key(30, true);	/* a letter means nothing to the menu */
+	input_report_key(30, false);
+	CHECK(hid_seen.keys == 2 && hid_seen.buttons == 2);
+	input_report_mouse_move(5, 0, 0);
+	input_report_mouse_button(0, true);
+	CHECK(hid_seen.moves == 0 && hid_seen.mbuttons == 0);
+	hid_raw = true;
+	input_report_mouse_move(5, -3, 1);
+	input_report_mouse_button(0, true);
+	hid_raw = false;
+	input_report_mouse_button(0, false);
+	CHECK(hid_seen.moves == 1 && hid_seen.mbuttons == 2);
+	CHECK(input_key_button(1 /* KEY_ESC */) == GP_B && input_key_button(30) == GP_NONE);
+	input_deinit();
+	mainloop_free(ml);
+}
+
 static void test_volume(void)
 {
 	/* rk817 "Master Playback Volume": -95..0 dB in 0.01 dB */
@@ -684,6 +749,7 @@ int main(void)
 	test_blit();
 	test_damage();
 	test_frametimes();
+	test_hid();
 #ifdef CONFIG_SYSMON
 	test_sysmon();
 #endif

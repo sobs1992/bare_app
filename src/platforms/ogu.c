@@ -9,9 +9,11 @@
 #include "drivers/display_drm.h"
 #include "drivers/display_fbdev.h"
 #include "drivers/input_evdev.h"
+#include "drivers/input_hid.h"
 #include "drivers/mixer_alsa.h"
 #include "drivers/pcm_alsa.h"
 #include "drivers/sysfs.h"
+#include "drivers/wifi_wpa.h"
 #include "hal/platform.h"
 
 static const struct evdev_key_map ogu_keys[] = {
@@ -68,6 +70,10 @@ const struct platform platform_ogu = {
 		{ &input_evdev, &(const struct evdev_params){
 			.name = "adc-joystick-right", .axes = ogu_right_axes } },
 		{ &input_evdev, &(const struct evdev_params){ .name = "rk805 pwrkey", .keys = ogu_power_keys } },
+#ifdef CONFIG_INPUT_HID
+		/* the USB-A port */
+		{ &input_hid, NULL },
+#endif
 	},
 #ifdef CONFIG_POWER
 	/*
@@ -89,6 +95,11 @@ const struct platform platform_ogu = {
 #endif
 #ifdef CONFIG_SOUND_FEEDBACK
 	.pcm = { &pcm_alsa, &(const struct pcm_alsa_params){ .device = "/dev/snd/pcmC0D0p" } },
+#endif
+#ifdef CONFIG_WIFI
+	/* no Wi-Fi of its own: a USB adapter, whenever it is plugged in */
+	.wifi = { &wifi_wpa, &(const struct wifi_wpa_params){
+		.ctrl = "/var/run/wpa_supplicant/wlan0" } },
 #endif
 	.game_pcm = "/dev/snd/pcmC0D0p",
 	.game_opts = (const char *const[]){

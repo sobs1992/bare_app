@@ -9,6 +9,7 @@
 #include "drivers/display_drm.h"
 #include "drivers/display_fbdev.h"
 #include "drivers/input_evdev.h"
+#include "drivers/input_hid.h"
 #include "drivers/mixer_alsa.h"
 #include "drivers/pcm_alsa.h"
 #include "drivers/sysfs.h"
@@ -67,6 +68,9 @@ const struct platform platform_oga = {
 		{ &input_evdev, &(const struct evdev_params){
 			.name = "adc-joystick", .axes = oga_axes } },
 		{ &input_evdev, &(const struct evdev_params){ .name = "rk805 pwrkey", .keys = oga_power_keys } },
+#ifdef CONFIG_INPUT_HID
+		{ &input_hid, NULL },
+#endif
 	},
 #ifdef CONFIG_POWER
 	.power = { &power_sysfs, &(const struct power_sysfs_params){

@@ -71,6 +71,16 @@ config INPUT_HOTPLUG
 	depends on INPUT_EVDEV
 	default y
 
+config INPUT_HID
+	bool "USB keyboards and mice"
+	depends on INPUT_EVDEV
+	default y
+	help
+	  Any keyboard or mouse, also plugged in later (with INPUT_HOTPLUG).
+	  Windows games get the keys and the mouse as they are; elsewhere
+	  the arrows, Enter (A), Esc (B), Space (X), Tab (Y), Page Up/Down
+	  (L1/R1) and F1..F6 work as the gamepad's buttons.
+
 config INPUT_SCRIPT
 	bool "Scripted input from stdin"
 	help

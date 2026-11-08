@@ -94,6 +94,7 @@ static struct {
 	enum stick_use lstick, rstick, dpad;
 	bool cursor_keys;		/* arrows = cursor: the arrow keys are the cursor block's */
 	float cursor_speed;		/* screen widths a second at full deflection */
+	float mouse_speed;		/* desktop pixels a count of a real mouse */
 	struct action button[GP_COUNT];
 } cfg;
 
@@ -243,6 +244,7 @@ static void set_defaults(void)
 	cfg.rstick = STICK_WHEEL;
 	cfg.dpad = STICK_ARROWS;
 	cfg.cursor_speed = 0.8f;
+	cfg.mouse_speed = 1.0f;
 	for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++)
 		add_mode(modes[i]);
 	for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
@@ -295,6 +297,8 @@ static int read_ini(const char *path)
 				cfg.dpad = parse_stick(value) == STICK_MOUSE ? STICK_MOUSE : STICK_ARROWS;
 			else if (!strcmp(key, "cursor_speed"))
 				cfg.cursor_speed = strtof(value, NULL);
+			else if (!strcmp(key, "mouse_speed"))
+				cfg.mouse_speed = strtof(value, NULL);
 			else if (!strcmp(key, "arrows"))
 				cfg.cursor_keys = !strcmp(value, "cursor");
 			else {
@@ -1298,37 +1302,12 @@ static bool moving(void)
 	       dpad_dir[0] || dpad_dir[1] || dpad_dir[2] || dpad_dir[3];
 }
 
-/* The cursor and the wheel follow the sticks, once a tick */
-static void move_tick(void)
+/* The cursor to nx, ny (the sticks, a mouse): clamped to the screen */
+static void move_cursor(float nx, float ny)
 {
-	struct timespec now;
 	static float past_x, past_y;	/* pushed on past the screen's edge */
-	float dt, vx = 0, vy = 0, speed, nx, ny;
 	int ox = (int)cur_x, oy = (int)cur_y, px, py;
 
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	dt = (now.tv_sec - last_move.tv_sec) + (now.tv_nsec - last_move.tv_nsec) * 1e-9f;
-	last_move = now;
-	if (dt > 0.05f)
-		dt = 0.05f;	/* after a pause */
-	if (numpad.release && ms_since(&numpad.since) >= NUMPAD_MIN_MS &&
-	    ms_since(&numpad.rest) >= NUMPAD_REST_MS)
-		numpad_set(-1);
-	if (!moving())
-		return;
-	speed = cfg.cursor_speed * mode.width;
-	if (cfg.lstick == STICK_MOUSE) {
-		vx += curve(axis[GP_AXIS_LX]);
-		vy += curve(axis[GP_AXIS_LY]);
-	}
-	if (cfg.rstick == STICK_MOUSE) {
-		vx += curve(axis[GP_AXIS_RX]) * 0.3f;	/* the fine one */
-		vy += curve(axis[GP_AXIS_RY]) * 0.3f;
-	}
-	vx += (dpad_dir[GP_RIGHT] - dpad_dir[GP_LEFT]) * 0.25f;
-	vy += (dpad_dir[GP_DOWN] - dpad_dir[GP_UP]) * 0.25f;
-	nx = cur_x + vx * speed * dt;
-	ny = cur_y + vy * speed * dt;
 	cur_x = nx < 0 ? 0 : nx > mode.width - 1 ? mode.width - 1 : nx;
 	cur_y = ny < 0 ? 0 : ny > mode.height - 1 ? mode.height - 1 : ny;
 	/*
@@ -1351,6 +1330,128 @@ static void move_tick(void)
 		if (cursor_shown)
 			dirty = true;
 	}
+}
+
+/* ---- a USB keyboard and mouse (GAME_MSG_KEY, GAME_MSG_MOUSE_*) ---------- */
+
+/*
+ * Linux key code -> Windows virtual key and PC scan code (set 1) of a US
+ * keyboard. Below 89 the scan code is the key code itself; the rest are
+ * the E0 keys. Shift, Ctrl, Alt are the generic VKs, as Windows reports
+ * them, the scan code tells left from right.
+ */
+static const struct { uint8_t vk, scan; bool ext; } linux_keys[128] = {
+	[1] = { 0x1b, 1 }, [2] = { '1', 2 }, [3] = { '2', 3 }, [4] = { '3', 4 }, [5] = { '4', 5 },
+	[6] = { '5', 6 }, [7] = { '6', 7 }, [8] = { '7', 8 }, [9] = { '8', 9 }, [10] = { '9', 10 },
+	[11] = { '0', 11 }, [12] = { 0xbd, 12 }, [13] = { 0xbb, 13 }, [14] = { 0x08, 14 },
+	[15] = { 0x09, 15 }, [16] = { 'Q', 16 }, [17] = { 'W', 17 }, [18] = { 'E', 18 },
+	[19] = { 'R', 19 }, [20] = { 'T', 20 }, [21] = { 'Y', 21 }, [22] = { 'U', 22 },
+	[23] = { 'I', 23 }, [24] = { 'O', 24 }, [25] = { 'P', 25 }, [26] = { 0xdb, 26 },
+	[27] = { 0xdd, 27 }, [28] = { 0x0d, 28 }, [29] = { 0x11, 29 }, [30] = { 'A', 30 },
+	[31] = { 'S', 31 }, [32] = { 'D', 32 }, [33] = { 'F', 33 }, [34] = { 'G', 34 },
+	[35] = { 'H', 35 }, [36] = { 'J', 36 }, [37] = { 'K', 37 }, [38] = { 'L', 38 },
+	[39] = { 0xba, 39 }, [40] = { 0xde, 40 }, [41] = { 0xc0, 41 }, [42] = { 0x10, 42 },
+	[43] = { 0xdc, 43 }, [44] = { 'Z', 44 }, [45] = { 'X', 45 }, [46] = { 'C', 46 },
+	[47] = { 'V', 47 }, [48] = { 'B', 48 }, [49] = { 'N', 49 }, [50] = { 'M', 50 },
+	[51] = { 0xbc, 51 }, [52] = { 0xbe, 52 }, [53] = { 0xbf, 53 }, [54] = { 0x10, 54 },
+	[55] = { 0x6a, 55 }, [56] = { 0x12, 56 }, [57] = { 0x20, 57 }, [58] = { 0x14, 58 },
+	[59] = { 0x70, 59 }, [60] = { 0x71, 60 }, [61] = { 0x72, 61 }, [62] = { 0x73, 62 },
+	[63] = { 0x74, 63 }, [64] = { 0x75, 64 }, [65] = { 0x76, 65 }, [66] = { 0x77, 66 },
+	[67] = { 0x78, 67 }, [68] = { 0x79, 68 }, [69] = { 0x90, 69 }, [70] = { 0x91, 70 },
+	/* the keypad as with NumLock on */
+	[71] = { 0x67, 71 }, [72] = { 0x68, 72 }, [73] = { 0x69, 73 }, [74] = { 0x6d, 74 },
+	[75] = { 0x64, 75 }, [76] = { 0x65, 76 }, [77] = { 0x66, 77 }, [78] = { 0x6b, 78 },
+	[79] = { 0x61, 79 }, [80] = { 0x62, 80 }, [81] = { 0x63, 81 }, [82] = { 0x60, 82 },
+	[83] = { 0x6e, 83 }, [86] = { 0xe2, 86 }, [87] = { 0x7a, 87 }, [88] = { 0x7b, 88 },
+	[96] = { 0x0d, 0x1c, true }, [97] = { 0x11, 0x1d, true }, [98] = { 0x6f, 0x35, true },
+	[99] = { 0x2c, 0x37, true }, [100] = { 0x12, 0x38, true }, [102] = { 0x24, 0x47, true },
+	[103] = { 0x26, 0x48, true }, [104] = { 0x21, 0x49, true }, [105] = { 0x25, 0x4b, true },
+	[106] = { 0x27, 0x4d, true }, [107] = { 0x23, 0x4f, true }, [108] = { 0x28, 0x50, true },
+	[109] = { 0x22, 0x51, true }, [110] = { 0x2d, 0x52, true }, [111] = { 0x2e, 0x53, true },
+	[119] = { 0x13, 0x45 }, [125] = { 0x5b, 0x5b, true }, [126] = { 0x5c, 0x5c, true },
+	[127] = { 0x5d, 0x5d, true },
+};
+
+static void on_real_key(int code, bool pressed)
+{
+	struct client *c = input_client();
+	struct wb_msg m = { .type = WB_INPUT_KEY };
+
+	if (code <= 0 || code >= 128 || !linux_keys[code].vk) {
+		if (trace)
+			msg("keyboard: key %d not known", code);
+		return;
+	}
+	if (trace)
+		msg("keyboard: key %d -> vk %#x scan %#x%s %s", code, linux_keys[code].vk,
+		    linux_keys[code].scan, linux_keys[code].ext ? " E0" : "", pressed ? "down" : "up");
+	if (!c)
+		return;
+	m.key.vk = (uint16_t)(linux_keys[code].vk << 8 | linux_keys[code].scan);
+	m.key.pressed = pressed;
+	m.key.flags = WB_KEY_SCANCODE | (linux_keys[code].ext ? WB_KEY_EXTENDED : 0);
+	client_send(c, &m);
+}
+
+static void on_real_mouse_button(int button, bool pressed)
+{
+	static const uint32_t down[3] = { WB_MOUSE_LEFT_DOWN, WB_MOUSE_RIGHT_DOWN, WB_MOUSE_MIDDLE_DOWN };
+
+	if (button < 0 || button > 2)
+		return;
+	send_mouse(pressed ? down[button] : down[button] << 1, 0);	/* *_UP follows *_DOWN */
+}
+
+/* moves of a message batch, sent once it is read (read_app()) */
+static int mouse_dx, mouse_dy;
+
+static void on_real_mouse_move(int what, int value)
+{
+	if (what == GAME_MOUSE_X)
+		mouse_dx += value;
+	else if (what == GAME_MOUSE_Y)
+		mouse_dy += value;
+	else if (what == GAME_MOUSE_WHEEL && value)
+		send_mouse(0, value);
+}
+
+static void real_mouse_flush(void)
+{
+	if (!mouse_dx && !mouse_dy)
+		return;
+	move_cursor(cur_x + mouse_dx * cfg.mouse_speed, cur_y + mouse_dy * cfg.mouse_speed);
+	mouse_dx = mouse_dy = 0;
+}
+
+/* The cursor and the wheel follow the sticks, once a tick */
+static void move_tick(void)
+{
+	struct timespec now;
+	float dt, vx = 0, vy = 0, speed;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	dt = (now.tv_sec - last_move.tv_sec) + (now.tv_nsec - last_move.tv_nsec) * 1e-9f;
+	last_move = now;
+	if (dt > 0.05f)
+		dt = 0.05f;	/* after a pause */
+	if (numpad.release && ms_since(&numpad.since) >= NUMPAD_MIN_MS &&
+	    ms_since(&numpad.rest) >= NUMPAD_REST_MS)
+		numpad_set(-1);
+	if (!moving())
+		return;
+	speed = cfg.cursor_speed * mode.width;
+	if (cfg.lstick == STICK_MOUSE) {
+		vx += curve(axis[GP_AXIS_LX]);
+		vy += curve(axis[GP_AXIS_LY]);
+	}
+	if (cfg.rstick == STICK_MOUSE) {
+		vx += curve(axis[GP_AXIS_RX]) * 0.3f;	/* the fine one */
+		vy += curve(axis[GP_AXIS_RY]) * 0.3f;
+	}
+	vx += (dpad_dir[GP_RIGHT] - dpad_dir[GP_LEFT]) * 0.25f;
+	vy += (dpad_dir[GP_DOWN] - dpad_dir[GP_UP]) * 0.25f;
+	if (vx || vy)
+		move_cursor(cur_x + vx * speed * dt, cur_y + vy * speed * dt);
 	if (cfg.rstick == STICK_TURN)
 		turn_tick(dt);
 	if (cfg.rstick == STICK_WHEEL || cfg.rstick == STICK_TURN) {
@@ -1399,12 +1500,19 @@ static bool read_app(void)
 			return false;
 		if (n == 0) {
 			numpad_update();
+			real_mouse_flush();
 			return true;
 		}
 		if (m.type == GAME_MSG_BUTTON)
 			on_button(m.code, m.pressed, m.flags & GAME_BTN_STICK);
 		else if (m.type == GAME_MSG_AXIS)
 			on_axis(m.code, m.value);
+		else if (m.type == GAME_MSG_KEY)
+			on_real_key(m.value, m.pressed);
+		else if (m.type == GAME_MSG_MOUSE_BUTTON)
+			on_real_mouse_button(m.code, m.pressed);
+		else if (m.type == GAME_MSG_MOUSE_MOVE)
+			on_real_mouse_move(m.code, m.value);
 	}
 }
 
