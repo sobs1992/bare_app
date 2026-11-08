@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "core/frametimes.h"
 #include "core/input.h"
 #include "core/joystick.h"
 #include "core/mainloop.h"
@@ -122,6 +123,40 @@ static void test_joystick(void)
 	CHECK(joy_direction(0, 0.4f, 0.5f, 0.3f) == 0);
 	CHECK(joy_direction(1, -0.6f, 0.5f, 0.3f) == -1);	/* flick to the other side */
 	CHECK(joy_direction(-1, -0.4f, 0.5f, 0.3f) == -1);
+}
+
+static void test_frametimes(void)
+{
+	static struct frametimes f;
+	uint64_t t[FRAMETIMES_MAX];
+	struct frametimes_summary s;
+	unsigned n, i;
+	uint64_t us = 1000000;
+
+	frametimes_reset(&f);
+	CHECK(frametimes_last(&f, t, FRAMETIMES_MAX) == 0);
+	frametimes_summarize(t, 0, 0, &s);
+	CHECK(s.frames == 0 && s.fps_x10 == -1);
+	/* 2000 frames at 30 fps (33.333 ms), one 200 ms stall, the ring keeps the last 1024 */
+	for (i = 0; i < 2000; i++) {
+		us += i == 1990 ? 200000 : 33333;
+		frametimes_add(&f, us);
+	}
+	n = frametimes_last(&f, t, FRAMETIMES_MAX);
+	CHECK(n == FRAMETIMES_MAX);
+	CHECK(t[n - 1] == us);
+	for (i = 1; i < n; i++)
+		CHECK(t[i] > t[i - 1]);
+	frametimes_summarize(t, n, us - 1000000, &s);	/* the last second */
+	CHECK(s.frames >= 25 && s.frames <= 27);
+	CHECK(s.median_us == 33333);
+	CHECK(s.worst_us == 200000);
+	CHECK(s.hitches == 1);
+	CHECK(s.fps_x10 >= 240 && s.fps_x10 <= 270);
+	CHECK(frametimes_is_hitch(70000, 33333));
+	CHECK(!frametimes_is_hitch(20000, 5000));	/* short ones never are */
+	n = frametimes_last(&f, t, 10);
+	CHECK(n == 10 && t[9] == us);
 }
 
 static void test_msgq(void)
@@ -648,6 +683,7 @@ int main(void)
 	test_volume();
 	test_blit();
 	test_damage();
+	test_frametimes();
 #ifdef CONFIG_SYSMON
 	test_sysmon();
 #endif

@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "core/frametimes.h"
 #include "core/log.h"
 #include "core/mainloop.h"
 #include "core/util.h"
@@ -66,6 +67,13 @@ static struct {
 	struct game_ref game, game_sel;	/* in the layer; to start next */
 	bool video_minimized;		/* video_game is stopped in the background */
 	unsigned video_frames;
+	struct frametimes frame_times;	/* of video_frames, since it was set or came back */
+	struct {			/* hitches since the source was set */
+		uint64_t last_us;	/* the last frame, 0: none yet */
+		unsigned over50, over100;	/* frames later than that many ms */
+		uint32_t worst_us;
+		uint64_t log_us;	/* BARE_APP_FRAME_STATS: the last line, 0 off */
+	} frame_stats;
 	view_video_end_cb video_end;
 	void *video_end_ud;
 } v;
@@ -280,10 +288,19 @@ static void deliver(const struct gp_event *ev);
 #ifdef CONFIG_SYSMON
 static void on_f5_hold(void *ud)
 {
+	enum sysmon_mode mode;
+
 	(void)ud;
 	v.f5_hold = NULL;
 	v.f5_held = true;
-	gui_action_post(ACT_SYSMON, !v.snap.sysmon.shown);
+	/* hidden -> everything -> over a game only its frame times -> hidden */
+	if (!v.snap.sysmon.shown)
+		mode = SYSMON_FULL;
+	else if (!v.snap.sysmon.frames_only && view_video_shown() != VIDEO_NONE)
+		mode = SYSMON_FRAMES;
+	else
+		mode = SYSMON_HIDDEN;
+	gui_action_post(ACT_SYSMON, mode);
 }
 
 /*
@@ -421,6 +438,58 @@ bool view_video_available(void)
 #endif
 
 #ifdef HAVE_VIDEO_SOURCES
+#define FRAME_STATS_PERIOD_US 10000000
+
+/* Frame times start again: a new source, or one back from the background */
+static void frames_restart(bool new_source)
+{
+	frametimes_reset(&v.frame_times);
+	v.frame_stats.last_us = 0;
+	if (!new_source)
+		return;
+	v.frame_stats.over50 = v.frame_stats.over100 = 0;
+	v.frame_stats.worst_us = 0;
+	v.frame_stats.log_us = getenv("BARE_APP_FRAME_STATS") ? now_us() : 0;
+}
+
+/* BARE_APP_FRAME_STATS: the last stretch in the log */
+static void frames_log(uint64_t now)
+{
+	static uint64_t t[FRAMETIMES_MAX];
+	struct frametimes_summary s;
+	unsigned n = frametimes_last(&v.frame_times, t, FRAMETIMES_MAX);
+
+	frametimes_summarize(t, n, v.frame_stats.log_us, &s);
+	v.frame_stats.log_us = now;
+	if (!s.frames)
+		return;
+	LOGI(TAG, "frames: %u in %llu ms, %d.%d fps, median %u.%u ms, 99%% %u.%u ms, worst %u.%u ms, "
+	     "%u hitches", s.frames, (unsigned long long)(s.span_us / 1000), s.fps_x10 / 10,
+	     s.fps_x10 % 10, s.median_us / 1000, s.median_us / 100 % 10, s.p99_us / 1000,
+	     s.p99_us / 100 % 10, s.worst_us / 1000, s.worst_us / 100 % 10, s.hitches);
+}
+
+static void frame_shown(void)
+{
+	uint64_t now = now_us();
+	uint32_t d = v.frame_stats.last_us ? (uint32_t)MIN(now - v.frame_stats.last_us, UINT32_MAX) : 0;
+
+	frametimes_add(&v.frame_times, now);
+	v.frame_stats.last_us = now;
+	v.frame_stats.over50 += d > 50000;
+	v.frame_stats.over100 += d > 100000;
+	v.frame_stats.worst_us = MAX(v.frame_stats.worst_us, d);
+	if (v.frame_stats.log_us && now - v.frame_stats.log_us >= FRAME_STATS_PERIOD_US)
+		frames_log(now);
+}
+
+static void frames_end_log(const char *what)
+{
+	LOGI(TAG, "%s: %u frames shown, %u over 50 ms, %u over 100 ms, worst %u ms", what,
+	     v.video_frames, v.frame_stats.over50, v.frame_stats.over100,
+	     v.frame_stats.worst_us / 1000);
+}
+
 /* Copy a whole frame of a source into the video layer and show it */
 static void video_show(struct hal_layer *l, const struct hal_fb *src)
 {
@@ -436,6 +505,7 @@ static void video_show(struct hal_layer *l, const struct hal_fb *src)
 	hal_layer_damage(l, &all);
 	hal_layer_submit(l);
 	v.video_frames++;
+	frame_shown();
 }
 
 static void video_clear(struct hal_layer *l)
@@ -487,7 +557,7 @@ static void on_game(int fd, short revents, void *ud)
 	status = game_proc_stop(v.video_game);
 	v.video_game = NULL;
 	v.video_minimized = false;
-	LOGI(TAG, "%s: %u frames shown", v.game.def->id, v.video_frames);
+	frames_end_log(v.game.def->id);
 	v.game = (struct game_ref){ 0 };
 	if (l)
 		video_clear(l);
@@ -553,7 +623,7 @@ static void video_stop(struct hal_layer *l)
 		game_proc_stop(v.video_game);
 		v.video_game = NULL;
 		v.video_minimized = false;
-		LOGI(TAG, "%s: %u frames shown", v.game.def->id, v.video_frames);
+		frames_end_log(v.game.def->id);
 		v.game = (struct game_ref){ 0 };
 	}
 #endif
@@ -630,6 +700,11 @@ unsigned view_video_frames(void)
 	return v.video_frames;
 }
 
+unsigned view_video_frame_times(uint64_t *out, unsigned max)
+{
+	return frametimes_last(&v.frame_times, out, max);
+}
+
 void view_video_on_end(view_video_end_cb cb, void *ud)
 {
 	v.video_end = cb;
@@ -651,6 +726,7 @@ int view_video_set(enum video_source src)
 			/* its last frame is still in the layer, the count goes on */
 			game_proc_resume(v.video_game);
 			v.video_minimized = false;
+			frames_restart(false);	/* the time away is no hitch */
 			LOGI(TAG, "%s back", v.game.def->id);
 		}
 #endif
@@ -661,6 +737,9 @@ int view_video_set(enum video_source src)
 #endif
 	v.video_src = VIDEO_NONE;
 	v.video_frames = 0;
+#ifdef HAVE_VIDEO_SOURCES
+	frames_restart(true);
+#endif
 	switch (src) {
 	case VIDEO_NONE:
 		break;

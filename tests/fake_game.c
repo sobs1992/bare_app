@@ -2,12 +2,14 @@
  * A game for the tests (tests/game_smoke.cmake): speaks game_ipc_client.h,
  * draws a frame of one colour 60 times a second (another colour while A
  * is held), says on stderr what it gets, ends with status 0 on B and 3 on
- * X, and when bare_app goes away.
+ * X, and when bare_app goes away. Y makes one frame 150 ms late (a hitch
+ * for the frame time graph).
  */
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "core/input.h"
 #include "games/game_ipc_client.h"
@@ -54,6 +56,8 @@ int main(void)
 				return 0;
 			else if (m.code == GP_X && m.pressed)
 				return 3;
+			else if (m.code == GP_Y && m.pressed)
+				usleep(150000);
 		}
 		if (n < 0) {
 			fprintf(stderr, "fake: bare_app is gone\n");

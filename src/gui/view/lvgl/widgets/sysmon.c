@@ -4,13 +4,18 @@
  * GPU, memory, temperatures, the battery, each disk (a bar for the space
  * used on its partitions, reads and writes, free space under it),
  * bare_app with its game and, while a game is on the screen, its frames
- * a second. F5 held shows and hides it (view core), the game keeps running
- * under it. The rows are built when it is shown and again when what there
- * is changes (a game starts, a disk comes). Always in English, whatever
- * the UI language.
+ * a second with a graph of its frame times. F5 held shows it, held again
+ * over a game leaves only a small panel with the frame times, held once
+ * more hides it (view core); the game keeps running under it. The rows are
+ * built when it is shown and again when what there is changes (a game
+ * starts, a disk comes). Always in English, whatever the UI language.
  *
- * Frames a second are the view's own: frames of the game shown in the
- * video layer between two samples.
+ * Frame times are the view's own: when each frame of the game was shown
+ * in the video layer (view_video_frame_times()). The graph has a column
+ * per pixel over the last GRAPH_SPAN_US; a frame fills the columns from
+ * the frame before it to itself as high as it took, so a stall is a wide
+ * high block and the area is time. Hitches (core/frametimes.h) are drawn
+ * in the warning colour, the lines are 60 and 30 frames a second.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -18,6 +23,7 @@
 #include <string.h>
 
 #include "../widget.h"
+#include "core/frametimes.h"
 #include "core/util.h"
 
 #define PANEL_MAX_W 560
@@ -31,6 +37,12 @@
 #define HOT_MDEG 80000		/* the same for temperatures */
 #define HOT_DISK 90		/* percent of a disk's space used */
 #define MAX_ROWS (SYSMON_MAX_CLUSTERS + 5 + SYSMON_MAX_DISKS + SYSMON_MAX_PROCS)
+#define GRAPH_H 56
+#define GRAPH_SPAN_US 10000000ULL	/* the width of a graph */
+#define GRAPH_TOP_US 100000		/* frame time at the top of it; longer ones are cut */
+#define GRAPH_MAX_W 1024
+#define TICK_MS 250			/* the graphs move on */
+#define MINI_W 340
 
 #ifdef CONFIG_UI_FONT_CYRILLIC
 #define TIMES "\xc3\x97"	/* × */
@@ -54,6 +66,9 @@ struct layout {
 	bool mounts[SYSMON_MAX_DISKS];
 };
 
+struct sysmon_view;
+static lv_obj_t *graph_new(struct sysmon_view *m, lv_obj_t *parent, int32_t width);
+
 struct sysmon_view {
 	lv_obj_t *panel, *head_title, *head_up, *body;
 	bool built;
@@ -61,11 +76,15 @@ struct sysmon_view {
 	struct row fps, clusters[SYSMON_MAX_CLUSTERS], gpu, ram, temps, battery;
 	struct row disks[SYSMON_MAX_DISKS], procs[SYSMON_MAX_PROCS];
 	lv_obj_t *mounts[SYSMON_MAX_DISKS];
+	lv_obj_t *graph;	/* under the FPS row, NULL without it */
+	lv_obj_t *mini, *mini_text, *mini_graph;	/* SYSMON_FRAMES */
+	bool frames_only;	/* the mode shown */
 	unsigned seq;		/* the sample shown */
-	uint64_t frames_ms;	/* now_ms() at the last sample, 0 none */
-	unsigned game_frames;	/* view_video_frames() then */
-	enum video_source frames_src;	/* the game shown then */
-	int game_fps;	/* -1 unknown */
+	lv_timer_t *tick;	/* while a graph is there */
+	/* frame times at the last tick */
+	uint64_t t[FRAMETIMES_MAX], now;
+	unsigned nt;
+	struct frametimes_summary last_s, span;	/* over the last second, the graph */
 };
 
 /* ---- formatting ------------------------------------------------------- */
@@ -236,8 +255,11 @@ static void build(struct sysmon_view *m, const struct sysmon_info *in)
 	memset(m->mounts, 0, sizeof(m->mounts));
 	layout_of(&m->layout, in);
 	lv_label_set_text(m->head_title, "System monitor");
-	if (m->layout.fps)
+	m->graph = NULL;
+	if (m->layout.fps) {
 		row_new(m, &m->fps, "FPS", 0, false);
+		m->graph = graph_new(m, m->body, LV_PCT(100));
+	}
 	for (i = 0; i < in->nclusters; i++) {
 		const struct sysmon_cluster *c = &in->clusters[i];
 
@@ -406,38 +428,158 @@ static void show_disks(struct sysmon_view *m, const struct sysmon_info *in)
 	}
 }
 
-/* Frames a second from a counter: -1 without an earlier reading */
-static int rate(unsigned now, unsigned then, uint64_t ms)
+/* ---- frame times ----------------------------------------------------- */
+
+static void graph_draw(lv_event_t *e)
 {
-	if (!ms || now < then)
-		return -1;
-	return (int)(((now - then) * 1000ULL + ms / 2) / ms);
-}
+	static int32_t col[GRAPH_MAX_W];	/* frame time of each column, us */
+	static bool hot[GRAPH_MAX_W];
+	struct sysmon_view *m = lv_event_get_user_data(e);
+	lv_layer_t *layer = lv_event_get_layer(e);
+	lv_obj_t *obj = lv_event_get_current_target(e);
+	uint32_t median = m->span.median_us;
+	lv_draw_rect_dsc_t dsc;
+	lv_area_t c, a;
+	int32_t w, h, x, run;
+	uint64_t from;
+	unsigned i;
 
-/* Frames of the game in the video layer since the last sample */
-static void count_frames(struct sysmon_view *m)
-{
-	enum video_source src = view_video_shown();
-	unsigned game = view_video_frames();
-	uint64_t now = now_ms(), ms = m->frames_ms && now > m->frames_ms ? now - m->frames_ms : 0;
-
-	m->game_fps = src != VIDEO_NONE && src == m->frames_src ? rate(game, m->game_frames, ms) : -1;
-	m->frames_ms = now;
-	m->game_frames = game;
-	m->frames_src = src;
-}
-
-static void show_fps(struct sysmon_view *m)
-{
-	char buf[16];
-
-	if (!m->layout.fps)
+	lv_obj_get_content_coords(obj, &c);
+	w = LV_MIN(lv_area_get_width(&c), GRAPH_MAX_W);
+	h = lv_area_get_height(&c);
+	if (w <= 0 || h <= 0 || !m->now)
 		return;
-	if (m->game_fps >= 0)
-		snprintf(buf, sizeof(buf), "%d", m->game_fps);
+	from = m->now - GRAPH_SPAN_US;
+	memset(col, 0, sizeof(col[0]) * w);
+	memset(hot, 0, sizeof(hot[0]) * w);
+#define COL(t) ((t) <= from ? 0 : (int32_t)LV_MIN((int64_t)(((t) - from) * w / GRAPH_SPAN_US), w - 1))
+	for (i = 1; i <= m->nt; i++) {
+		uint64_t t0 = m->t[i - 1], t1 = i < m->nt ? m->t[i] : m->now;
+		uint32_t d = t1 > t0 ? (uint32_t)LV_MIN(t1 - t0, UINT32_MAX) : 0;
+		bool is_hot = frametimes_is_hitch(d, median);
+
+		if (t1 <= from)
+			continue;
+		/* the frame being waited for: only once it is late */
+		if (i == m->nt && !is_hot)
+			break;
+		for (x = COL(t0); x <= COL(t1); x++) {
+			if ((int32_t)d > col[x]) {
+				col[x] = d;
+				hot[x] = is_hot;
+			}
+		}
+	}
+#undef COL
+	lv_draw_rect_dsc_init(&dsc);
+	dsc.bg_opa = LV_OPA_COVER;
+	for (x = 0; x < w; x = run) {
+		int32_t bar = LV_MIN(col[x], GRAPH_TOP_US) * h / GRAPH_TOP_US;
+
+		for (run = x + 1; run < w; run++)
+			if (LV_MIN(col[run], GRAPH_TOP_US) * h / GRAPH_TOP_US != bar || hot[run] != hot[x])
+				break;
+		if (!bar)
+			continue;
+		a.x1 = c.x1 + x;
+		a.x2 = c.x1 + run - 1;
+		a.y1 = c.y2 - bar + 1;
+		a.y2 = c.y2;
+		dsc.bg_color = hot[x] ? UI_COLOR_WARN : UI_COLOR_ON;
+		lv_draw_rect(layer, &dsc, &a);
+	}
+	/* 60 and 30 frames a second */
+	dsc.bg_color = lv_color_white();
+	dsc.bg_opa = LV_OPA_40;
+	for (i = 1; i <= 2; i++) {
+		a.x1 = c.x1;
+		a.x2 = c.x1 + w - 1;
+		a.y1 = a.y2 = c.y2 - (int32_t)(16667 * i * h / GRAPH_TOP_US);
+		lv_draw_rect(layer, &dsc, &a);
+	}
+}
+
+static lv_obj_t *graph_new(struct sysmon_view *m, lv_obj_t *parent, int32_t width)
+{
+	lv_obj_t *g = lv_obj_create(parent);
+
+	lv_obj_remove_style_all(g);
+	lv_obj_set_size(g, width, GRAPH_H);
+	lv_obj_set_style_bg_color(g, lv_color_black(), 0);
+	lv_obj_set_style_bg_opa(g, LV_OPA_50, 0);
+	lv_obj_set_clickable(g, false);
+	lv_obj_set_scrollable(g, false);
+	lv_obj_add_event_cb(g, graph_draw, LV_EVENT_DRAW_MAIN_END, m);
+	return g;
+}
+
+static void ms_text(char *buf, size_t size, uint32_t us)
+{
+	if (us < 10000)
+		fmt_fixed(buf, size, (us + 50) / 100, 1);
 	else
-		snprintf(buf, sizeof(buf), "...");
-	set_text(m->fps.value, buf);
+		snprintf(buf, size, "%u", (us + 500) / 1000);
+}
+
+/* "31 fps  99% 45 ms  worst 120 ms  2 hitches" of the last second and the graph */
+static void frames_text(const struct sysmon_view *m, char *buf, size_t size, bool unit)
+{
+	char p99[16], worst[16];
+	int len;
+
+	if (m->last_s.fps_x10 < 0) {
+		snprintf(buf, size, "...");
+		return;
+	}
+	len = snprintf(buf, size, "%d%s", (m->last_s.fps_x10 + 5) / 10, unit ? " fps" : "");
+	if (!m->span.frames)
+		return;
+	ms_text(p99, sizeof(p99), m->span.p99_us);
+	ms_text(worst, sizeof(worst), m->span.worst_us);
+	snprintf(buf + len, size - len, "  99%% %s ms  worst %s ms  %u %s", p99, worst,
+		 m->span.hitches, m->span.hitches == 1 ? "hitch" : "hitches");
+}
+
+/* The frame times now: to the FPS row and the graphs */
+static void frames_take(struct sysmon_view *m)
+{
+	m->now = now_us();
+	m->nt = view_video_frame_times(m->t, FRAMETIMES_MAX);
+	frametimes_summarize(m->t, m->nt, m->now - 1000000, &m->last_s);
+	frametimes_summarize(m->t, m->nt, m->now - GRAPH_SPAN_US, &m->span);
+	/* nothing for a second: the frame rate is that, not the last stretch */
+	if (m->nt && m->now - m->t[m->nt - 1] > 1000000)
+		m->last_s.fps_x10 = 0;
+}
+
+static void show_frames(struct sysmon_view *m)
+{
+	char buf[96];
+	bool game = view_video_shown() != VIDEO_NONE;
+
+	frames_take(m);
+	if (m->graph && m->layout.fps) {
+		frames_text(m, buf, sizeof(buf), false);
+		set_text(m->fps.value, buf);
+		lv_obj_invalidate(m->graph);
+	}
+	if (!m->frames_only)
+		return;
+	if (game) {
+		frames_text(m, buf, sizeof(buf), true);
+		set_text(m->mini_text, buf);
+		lv_obj_invalidate(m->mini_graph);
+	}
+	if (lv_obj_is_hidden(m->mini) == game) {
+		lv_obj_set_hidden(m->mini, !game);
+		if (game)
+			lv_obj_move_foreground(m->mini);
+	}
+}
+
+static void on_tick(lv_timer_t *t)
+{
+	show_frames(lv_timer_get_user_data(t));
 }
 
 static void show_procs(struct sysmon_view *m, const struct sysmon_info *in)
@@ -470,31 +612,45 @@ static void show_uptime(struct sysmon_view *m, const struct sysmon_info *in)
 
 /* ---- widget ----------------------------------------------------------- */
 
+static lv_obj_t *panel_new(lv_obj_t *parent, int32_t width)
+{
+	lv_obj_t *p = lv_obj_create(parent);
+
+	lv_obj_remove_style_all(p);
+	lv_obj_set_size(p, width, LV_SIZE_CONTENT);
+	lv_obj_set_style_bg_color(p, lv_color_hex(0x101418), 0);
+	lv_obj_set_style_bg_opa(p, LV_OPA_90, 0);
+	lv_obj_set_style_radius(p, 8, 0);
+	lv_obj_set_style_pad_all(p, 10, 0);
+	lv_obj_set_style_pad_row(p, 4, 0);
+	lv_obj_set_style_text_color(p, lv_color_white(), 0);
+	lv_obj_set_style_text_font(p, UI_FONT_SMALL, 0);
+	lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_scrollable(p, false);
+	lv_obj_set_hidden(p, true);
+	return p;
+}
+
 static void *sysmon_init(lv_obj_t *parent, lv_obj_t **root)
 {
 	struct sysmon_view *m = calloc(1, sizeof(*m));
 	int32_t w = lv_display_get_horizontal_resolution(lv_display_get_default()) - 2 * MARGIN;
 	int32_t h = lv_display_get_vertical_resolution(lv_display_get_default()) - 2 * MARGIN;
-	lv_obj_t *head;
+	lv_obj_t *head, *box;
 
 	if (!m)
 		return NULL;
-	m->game_fps = -1;
-	m->panel = lv_obj_create(parent);
-	lv_obj_remove_style_all(m->panel);
-	lv_obj_set_size(m->panel, LV_MIN(w, PANEL_MAX_W), LV_SIZE_CONTENT);
+	m->last_s.fps_x10 = -1;
+	/* both panels in one see-through box over the whole screen */
+	box = lv_obj_create(parent);
+	lv_obj_remove_style_all(box);
+	lv_obj_set_size(box, LV_PCT(100), LV_PCT(100));
+	lv_obj_set_clickable(box, false);
+	lv_obj_set_scrollable(box, false);
+
+	m->panel = panel_new(box, LV_MIN(w, PANEL_MAX_W));
 	lv_obj_set_style_max_height(m->panel, h, 0);	/* what does not fit is cut off */
-	lv_obj_set_style_bg_color(m->panel, lv_color_hex(0x101418), 0);
-	lv_obj_set_style_bg_opa(m->panel, LV_OPA_90, 0);
-	lv_obj_set_style_radius(m->panel, 8, 0);
-	lv_obj_set_style_pad_all(m->panel, 10, 0);
-	lv_obj_set_style_pad_row(m->panel, 4, 0);
-	lv_obj_set_style_text_color(m->panel, lv_color_white(), 0);
-	lv_obj_set_style_text_font(m->panel, UI_FONT_SMALL, 0);
-	lv_obj_set_flex_flow(m->panel, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_scrollable(m->panel, false);
 	lv_obj_align(m->panel, LV_ALIGN_TOP_LEFT, MARGIN, MARGIN);
-	lv_obj_set_hidden(m->panel, true);
 
 	head = lv_obj_create(m->panel);
 	lv_obj_remove_style_all(head);
@@ -511,8 +667,30 @@ static void *sysmon_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_size(m->body, LV_PCT(100), LV_SIZE_CONTENT);
 	lv_obj_set_flex_flow(m->body, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_style_pad_row(m->body, 3, 0);
-	*root = m->panel;
+
+	m->mini = panel_new(box, LV_MIN(w, MINI_W));
+	lv_obj_set_style_pad_all(m->mini, 8, 0);
+	lv_obj_align(m->mini, LV_ALIGN_TOP_RIGHT, -MARGIN, MARGIN);
+	m->mini_text = label_new(m->mini, 0);
+	lv_obj_set_width(m->mini_text, LV_PCT(100));
+	lv_label_set_long_mode(m->mini_text, LV_LABEL_LONG_MODE_DOTS);
+	m->mini_graph = graph_new(m, m->mini, LV_PCT(100));
+
+	m->tick = lv_timer_create(on_tick, TICK_MS, m);
+	lv_timer_pause(m->tick);
+	*root = box;
 	return m;
+}
+
+static void hide_all(struct sysmon_view *m)
+{
+	if (!lv_obj_is_hidden(m->panel))
+		lv_obj_set_hidden(m->panel, true);
+	if (!lv_obj_is_hidden(m->mini))
+		lv_obj_set_hidden(m->mini, true);
+	lv_timer_pause(m->tick);
+	m->seq = 0;
+	m->now = 0;
 }
 
 static void sysmon_update(void *self, const struct gui_ctx *c, uint32_t changed)
@@ -522,11 +700,28 @@ static void sysmon_update(void *self, const struct gui_ctx *c, uint32_t changed)
 	struct layout now;
 
 	(void)changed;
-	if (!c->sysmon.shown || !c->sysmon.seq) {
-		if (!lv_obj_is_hidden(m->panel))
-			lv_obj_set_hidden(m->panel, true);
-		m->seq = 0;
-		m->frames_ms = 0;
+	if (!c->sysmon.shown) {
+		hide_all(m);
+		m->frames_only = false;
+		return;
+	}
+	if (c->sysmon.frames_only) {
+		/* the small panel: shown and hidden by the tick with the game */
+		if (!m->frames_only) {
+			hide_all(m);
+			m->frames_only = true;
+			lv_obj_move_foreground(lv_obj_get_parent(m->panel));
+			lv_timer_resume(m->tick);
+			show_frames(m);
+		}
+		return;
+	}
+	if (m->frames_only) {
+		hide_all(m);
+		m->frames_only = false;
+	}
+	if (!c->sysmon.seq) {
+		hide_all(m);
 		return;
 	}
 	if (c->sysmon.seq == m->seq)
@@ -534,9 +729,7 @@ static void sysmon_update(void *self, const struct gui_ctx *c, uint32_t changed)
 	layout_of(&now, in);
 	if (!m->built || memcmp(&now, &m->layout, sizeof(now)))
 		build(m, in);
-	count_frames(m);
 	m->seq = c->sysmon.seq;
-	show_fps(m);
 	show_clusters(m, in);
 	show_memory(m, in);
 	show_temps(m, in);
@@ -544,15 +737,23 @@ static void sysmon_update(void *self, const struct gui_ctx *c, uint32_t changed)
 	show_disks(m, in);
 	show_procs(m, in);
 	show_uptime(m, in);
+	show_frames(m);
+	if (m->layout.fps)
+		lv_timer_resume(m->tick);
+	else
+		lv_timer_pause(m->tick);
 	if (lv_obj_is_hidden(m->panel)) {
 		lv_obj_set_hidden(m->panel, false);
-		lv_obj_move_foreground(m->panel);	/* over toasts made before it */
+		lv_obj_move_foreground(lv_obj_get_parent(m->panel));	/* over toasts made before it */
 	}
 }
 
 static void sysmon_deinit(void *self)
 {
-	free(self);
+	struct sysmon_view *m = self;
+
+	lv_timer_delete(m->tick);
+	free(m);
 }
 
 const struct widget_ops sysmon_widget = {

@@ -6,7 +6,8 @@
 #include "core/log.h"
 #include "core/util.h"
 
-extern const struct platform platform_oga, platform_ogu, platform_pc, platform_pc_mem;
+extern const struct platform platform_oga, platform_ogu, platform_pc, platform_pc_mem,
+	platform_pc_wide;
 
 static const struct platform *const platforms[] = {
 #ifdef CONFIG_PLATFORM_OGA
@@ -18,6 +19,7 @@ static const struct platform *const platforms[] = {
 #ifdef CONFIG_PLATFORM_PC
 	&platform_pc,
 	&platform_pc_mem,
+	&platform_pc_wide,
 #endif
 };
 

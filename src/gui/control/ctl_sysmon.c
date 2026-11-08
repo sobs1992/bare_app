@@ -2,8 +2,12 @@
  * System monitor (CTX_SYSMON): while it is shown (ACT_SYSMON, F5 held)
  * the readings of services/sysmon.c are taken every second. The first
  * sample comes at once with the loads unknown, the second soon after
- * with them. Hidden, nothing is read.
+ * with them. Hidden, nothing is read. SYSMON_FRAMES shows only the game's
+ * frame times, which the view has itself: no readings then either.
  */
+#include <stdlib.h>
+#include <string.h>
+
 #include "control.h"
 #include "core/log.h"
 #include "core/mainloop.h"
@@ -20,6 +24,7 @@ static struct {
 	struct sysmon *mon;
 	struct ml_timer *timer;
 	unsigned seq;
+	bool shown;
 } sm;
 
 static void take(void *unused)
@@ -37,17 +42,18 @@ static void take(void *unused)
 	ctx_unlock(CTX_SYSMON);
 }
 
-static void set_shown(bool shown)
+static void set_shown(bool shown, bool frames_only)
 {
 	struct gui_ctx *c = ctx_lock();
 
 	c->sysmon.shown = shown;
-	if (!shown)
+	c->sysmon.frames_only = frames_only;
+	if (!shown || frames_only)
 		c->sysmon.seq = 0;
 	ctx_unlock(CTX_SYSMON);
 }
 
-static void hide(void)
+static void stop_readings(void)
 {
 	if (!sm.mon)
 		return;
@@ -55,7 +61,15 @@ static void hide(void)
 	sm.timer = NULL;
 	sysmon_close(sm.mon);
 	sm.mon = NULL;
-	set_shown(false);
+}
+
+static void hide(void)
+{
+	if (!sm.shown)
+		return;
+	stop_readings();
+	sm.shown = false;
+	set_shown(false, false);
 	LOGI(TAG, "hidden");
 }
 
@@ -67,20 +81,34 @@ static void show(void)
 	if (!sm.mon)
 		return;
 	sm.seq = 0;
-	set_shown(true);
+	sm.shown = true;
+	set_shown(true, false);
 	take(NULL);
 	sm.timer = mainloop_add_timer(sm.ml, FIRST_MS, PERIOD_MS, take, NULL);
 	LOGI(TAG, "shown");
 }
 
+static void show_frames(void)
+{
+	stop_readings();
+	sm.shown = true;
+	set_shown(true, true);
+	LOGI(TAG, "frame times only");
+}
+
 static int sysmon_init(const struct control_env *env)
 {
+	const char *at_start = getenv("BARE_APP_SYSMON");	/* full, frames */
 	struct gui_ctx *c;
 
 	sm.ml = env->ml;
 	c = ctx_lock();
 	c->sysmon.available = true;
 	ctx_unlock(CTX_SYSMON);
+	if (at_start && !strcmp(at_start, "full"))
+		show();
+	else if (at_start && !strcmp(at_start, "frames"))
+		show_frames();
 	return 0;
 }
 
@@ -88,10 +116,17 @@ static void sysmon_action(const struct gui_action *a)
 {
 	if (a->type != ACT_SYSMON)
 		return;
-	if (a->arg)
+	switch (a->arg) {
+	case SYSMON_FULL:
 		show();
-	else
+		break;
+	case SYSMON_FRAMES:
+		show_frames();
+		break;
+	default:
 		hide();
+		break;
+	}
 }
 
 const struct control_ops ctl_sysmon = {

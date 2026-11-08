@@ -67,6 +67,13 @@ struct wifi_net {
 	bool saved;		/* known: connects without asking */
 };
 
+/* ACT_SYSMON: what of the system monitor is over the screen */
+enum sysmon_mode {
+	SYSMON_HIDDEN,
+	SYSMON_FULL,		/* everything */
+	SYSMON_FRAMES,		/* only the frame time graph of the game shown */
+};
+
 struct gui_ctx {
 	struct {
 		bool available;		/* the platform has a battery driver */
@@ -115,6 +122,7 @@ struct gui_ctx {
 	struct {
 		bool available;		/* in this build */
 		bool shown;		/* the monitor is over the screen (F5 held) */
+		bool frames_only;	/* ...only the game's frame times of it */
 		unsigned seq;		/* samples since it was shown; 0: none yet */
 		uint64_t taken_ms;	/* now_ms() of the sample */
 		struct sysmon_info info;

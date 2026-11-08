@@ -34,6 +34,7 @@ endif()
 # ---- toolkit independent part: no LVGL include path here --------------------
 set(CORE_SOURCES
 	src/core/bus.c
+	src/core/frametimes.c
 	src/core/input.c
 	src/core/joystick.c
 	src/core/log.c

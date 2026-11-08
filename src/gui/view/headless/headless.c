@@ -38,7 +38,7 @@ static void on_ctx(void *self, const struct gui_ctx *c, uint32_t changed)
 		     c->wifi.ssid, c->wifi.ip, c->wifi.count, c->wifi.scanning ? ", scanning" : "");
 	if (changed & CTX_SYSMON)
 		LOGI(TAG, "sysmon: %s, sample %u, cpu %d%%, %d clusters, ram %u/%u MB, %d temps, "
-		     "%d disks, %d procs", c->sysmon.shown ? "shown" : "hidden", c->sysmon.seq,
+		     "%d disks, %d procs", !c->sysmon.shown ? "hidden" : c->sysmon.frames_only ? "frames" : "shown", c->sysmon.seq,
 		     c->sysmon.info.cpu_total, c->sysmon.info.nclusters, c->sysmon.info.mem_used_mb,
 		     c->sysmon.info.mem_total_mb, c->sysmon.info.ntemps, c->sysmon.info.ndisks,
 		     c->sysmon.info.nprocs);

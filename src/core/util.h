@@ -18,6 +18,15 @@ static inline uint64_t now_ms(void)
 	return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
+/* The same in microseconds */
+static inline uint64_t now_us(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
+}
+
 /* Read a whole small text file (sysfs attribute) into buf without the
  * trailing newline. Returns length or -1. */
 int read_text_file(const char *path, char *buf, int size);

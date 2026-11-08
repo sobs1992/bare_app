@@ -114,6 +114,10 @@ const struct platform *view_platform(void);
 
 /* Frames shown since the source was set (a game that is still loading: 0) */
 unsigned view_video_frames(void);
+/* When the latest of them were shown (now_us()), oldest first, up to max
+ * (core/frametimes.h); returns how many. Starts again when a minimised
+ * game comes back. */
+unsigned view_video_frame_times(uint64_t *out, unsigned max);
 
 /* Called when the running source ends by itself (the game quit), with its
  * waitpid() status; not when view_video_set() stops it. One listener. */

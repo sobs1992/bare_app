@@ -6,6 +6,7 @@
  *   pc-mem  always the display in memory, with a video layer under the UI
  *           like the OGA: tests and scripted screenshots without a window
  *           (BARE_APP_SHOT=file.ppm)
+ *   pc-wide pc-mem at the GO Ultra's 854x480
  */
 #include <stddef.h>
 
@@ -22,6 +23,9 @@ static const struct mem_display_params mem_params = { .width = 480, .height = 32
 /* like the OGA with DRM planes: video under a UI with alpha */
 static const struct mem_display_params mem_layers_params = {
 	.width = 480, .height = 320, .video_layer = true,
+};
+static const struct mem_display_params mem_wide_params = {
+	.width = 854, .height = 480, .video_layer = true,
 };
 static const struct script_params script_params = { .interval_ms = 150 };
 
@@ -54,6 +58,22 @@ const struct platform platform_pc_mem = {
 	.name = "pc-mem",
 	.compatible = NULL,
 	.displays = { { &display_mem, &mem_layers_params } },
+	.inputs = {
+		{ &input_script, &script_params },
+	},
+#ifdef CONFIG_AUDIO
+	.mixer = { &mixer_sim, NULL },
+#endif
+#ifdef CONFIG_WIFI
+	.wifi = { &wifi_sim, NULL },
+#endif
+	.quit_combo = GP_BIT(GP_F6),
+};
+
+const struct platform platform_pc_wide = {
+	.name = "pc-wide",
+	.compatible = NULL,
+	.displays = { { &display_mem, &mem_wide_params } },
 	.inputs = {
 		{ &input_script, &script_params },
 	},
