@@ -73,6 +73,7 @@ static struct {
 		unsigned over50, over100;	/* frames later than that many ms */
 		uint32_t worst_us;
 		uint64_t log_us;	/* BARE_APP_FRAME_STATS: the last line, 0 off */
+		bool log_late;		/* BARE_APP_FRAME_STATS=2: also each late frame */
 	} frame_stats;
 	view_video_end_cb video_end;
 	void *video_end_ud;
@@ -439,6 +440,7 @@ bool view_video_available(void)
 
 #ifdef HAVE_VIDEO_SOURCES
 #define FRAME_STATS_PERIOD_US 10000000
+#define FRAME_LATE_US 60000
 
 /* Frame times start again: a new source, or one back from the background */
 static void frames_restart(bool new_source)
@@ -450,6 +452,7 @@ static void frames_restart(bool new_source)
 	v.frame_stats.over50 = v.frame_stats.over100 = 0;
 	v.frame_stats.worst_us = 0;
 	v.frame_stats.log_us = getenv("BARE_APP_FRAME_STATS") ? now_us() : 0;
+	v.frame_stats.log_late = v.frame_stats.log_us && !strcmp(getenv("BARE_APP_FRAME_STATS"), "2");
 }
 
 /* BARE_APP_FRAME_STATS: the last stretch in the log */
@@ -479,6 +482,8 @@ static void frame_shown(void)
 	v.frame_stats.over50 += d > 50000;
 	v.frame_stats.over100 += d > 100000;
 	v.frame_stats.worst_us = MAX(v.frame_stats.worst_us, d);
+	if (v.frame_stats.log_late && d > FRAME_LATE_US)
+		LOGI(TAG, "frame late: %u ms, shown at %llu us", d / 1000, (unsigned long long)now);
 	if (v.frame_stats.log_us && now - v.frame_stats.log_us >= FRAME_STATS_PERIOD_US)
 		frames_log(now);
 }
