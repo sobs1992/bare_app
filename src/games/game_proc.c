@@ -125,7 +125,11 @@ static int spawn(struct game_proc *g, const struct game_spawn *s, int sock, int 
 	posix_spawnattr_init(&attr);
 	posix_spawnattr_setsigmask(&attr, &none);
 	posix_spawnattr_setsigdefault(&attr, &all);
-	posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
+	/* a process group of its own: what the game starts (Wine's processes)
+	 * pauses and ends with it */
+	posix_spawnattr_setpgroup(&attr, 0);
+	posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF |
+				 POSIX_SPAWN_SETPGROUP);
 	posix_spawn_file_actions_init(&fa);
 	posix_spawn_file_actions_adddup2(&fa, sock, GAME_IPC_SOCK);
 	posix_spawn_file_actions_adddup2(&fa, shm, GAME_IPC_SHM);
@@ -271,7 +275,7 @@ void game_proc_pause(struct game_proc *g)
 		if (g->axes & 1u << i)
 			send_msg(g, &(struct game_msg){ .type = GAME_MSG_AXIS, .code = i });
 	}
-	kill(g->pid, SIGSTOP);
+	kill(-g->pid, SIGSTOP);
 	g->paused = true;
 	LOGI(TAG, "paused (pid %d)", (int)g->pid);
 }
@@ -280,7 +284,7 @@ void game_proc_resume(struct game_proc *g)
 {
 	if (!g->paused)
 		return;
-	kill(g->pid, SIGCONT);
+	kill(-g->pid, SIGCONT);
 	g->paused = false;
 	LOGI(TAG, "resumed (pid %d)", (int)g->pid);
 }
@@ -307,14 +311,16 @@ int game_proc_stop(struct game_proc *g)
 	if (!g)
 		return 0;
 	if (!g->ended)
-		kill(g->pid, SIGTERM);
+		kill(-g->pid, SIGTERM);
 	if (g->paused)
-		kill(g->pid, SIGCONT);	/* a stopped process gets SIGTERM only then */
+		kill(-g->pid, SIGCONT);	/* a stopped process gets SIGTERM only then */
 	if (wait_for(g->pid, &status, STOP_WAIT_MS) == 0) {
 		LOGW(TAG, "the game does not stop, killing it");
-		kill(g->pid, SIGKILL);
+		kill(-g->pid, SIGKILL);
 		waitpid(g->pid, &status, 0);
 	}
+	/* whatever the game started and left behind */
+	kill(-g->pid, SIGKILL);
 	if (WIFEXITED(status))
 		LOGI(TAG, "game ended, exit status %d", WEXITSTATUS(status));
 	else if (WIFSIGNALED(status))

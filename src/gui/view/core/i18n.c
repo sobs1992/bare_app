@@ -66,6 +66,12 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 				RU("F1  меню    F2  пауза    F3  быстрое сохранение    F4  загрузка\n"
 				   "F5  свернуть    F6 (держать)  выйти\n"
 				   "F5 (держать)  монитор системы") },
+	[S_WINE_HINT]       = { "Stick  mouse    A  left click    B  right click    Start  Esc\n"
+				"F5  minimise    F6 (hold)  quit\n"
+				"F5 (hold)  system monitor"
+				RU("Стик  мышь    A  левая кнопка    B  правая    Start  Esc\n"
+				   "F5  свернуть    F6 (держать)  выйти\n"
+				   "F5 (держать)  монитор системы") },
 	[S_GAME_LOADING]    = { "Loading..." RU("Загрузка...") },
 	[S_GAME_MISSING_FMT] = { "Not found:\n%s\nB  back" RU("Не найдено:\n%s\nB  назад") },
 	[S_GAME_FAILED]     = { "The game did not start, see the log\nB  back"

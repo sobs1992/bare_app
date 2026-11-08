@@ -24,6 +24,7 @@ enum screen_id {
 	SCREEN_DOOM,
 	SCREEN_HOMM3,
 	SCREEN_HALFLIFE,
+	SCREEN_WINE,		/* the game of wine_selected() */
 	SCREEN_WIFI,
 	SCREEN_WIFI_KEY,	/* key for the network in wifi.asked */
 	SCREEN_USB_DISK,	/* the games partition as a USB disk for the computer */

@@ -1,5 +1,5 @@
 /*
- * Games (GAME_DOOM, GAME_HOMM3, GAME_HALFLIFE): the game draws into the video layer under
+ * Games (GAME_DOOM, GAME_HOMM3, GAME_HALFLIFE, GAME_WINE): the game draws into the video layer under
  * a transparent screen and gets the gamepad. "Loading..." stays until its
  * first frame, then a hint shows the controls. Games that do not need the
  * triggers leave them for the volume (L2 down, R2 up). F5 (Heroes III
@@ -17,6 +17,7 @@
 #include "games/doom.h"
 #include "games/halflife.h"
 #include "games/homm3.h"
+#include "games/wine.h"
 #include "gui/action.h"
 
 #define WAIT_MS 100
@@ -27,6 +28,8 @@ struct game_desc {
 	bool trigger_volume;	/* L2, R2: volume instead of the game */
 	/* Why the game cannot start (missing data) into buf; false if nothing is missing */
 	bool (*missing)(char *buf, size_t size);
+	/* The title when it is not one of ours (Windows games); may be NULL */
+	const char *(*title_text)(void);
 };
 
 struct game_screen {
@@ -52,7 +55,8 @@ static void show_message(struct game_screen *g, const char *text)
 
 	stop_waiting(g);
 	lv_obj_set_style_bg_opa(g->scr, LV_OPA_COVER, 0);
-	statusbar_create(g->scr, LV_SYMBOL_PLAY, tr(g->desc->title));
+	statusbar_create(g->scr, LV_SYMBOL_PLAY,
+			 g->desc->title_text ? g->desc->title_text() : tr(g->desc->title));
 	body = screen_body(g->scr);
 	label = lv_label_create(body);
 	lv_obj_set_width(label, LV_PCT(100));
@@ -166,7 +170,7 @@ static bool doom_missing(char *buf, size_t size)
 }
 
 static const struct game_desc doom_desc = { VIDEO_DOOM, S_DOOM, S_DOOM_HINT, true,
-					    doom_missing };
+					    doom_missing, NULL };
 
 static void *doom_init(lv_obj_t *parent, lv_obj_t **root)
 {
@@ -193,9 +197,9 @@ static bool homm3_missing_text(char *buf, size_t size)
 }
 
 static const struct game_desc homm3_desc = { VIDEO_HOMM3, S_HOMM3, S_HOMM3_HINT, true,
-					     homm3_missing_text };
+					     homm3_missing_text, NULL };
 static const struct game_desc homm3_ogu_desc = { VIDEO_HOMM3, S_HOMM3, S_HOMM3_HINT_OGU, true,
-						 homm3_missing_text };
+						 homm3_missing_text, NULL };
 
 static void *homm3_init(lv_obj_t *parent, lv_obj_t **root)
 {
@@ -223,7 +227,7 @@ static bool halflife_missing_text(char *buf, size_t size)
 
 /* L2 and R2 are the game's */
 static const struct game_desc halflife_desc = { VIDEO_HALFLIFE, S_HALFLIFE, S_HALFLIFE_HINT, false,
-						halflife_missing_text };
+						halflife_missing_text, NULL };
 
 static void *halflife_init(lv_obj_t *parent, lv_obj_t **root)
 {
@@ -234,6 +238,34 @@ static void *halflife_init(lv_obj_t *parent, lv_obj_t **root)
 const struct widget_ops halflife_screen = {
 	.name = "halflife",
 	.init = halflife_init,
+	.deinit = game_deinit,
+};
+#endif
+
+#ifdef CONFIG_GAME_WINE
+static bool wine_missing_text(char *buf, size_t size)
+{
+	const char *missing = wine_missing();
+
+	if (!missing)
+		return false;
+	snprintf(buf, size, tr(S_GAME_MISSING_FMT), missing);
+	return true;
+}
+
+/* L2 and R2 are the game's (wine.ini [keys]) */
+static const struct game_desc wine_desc = { VIDEO_WINE, S_GAME_FAILED, S_WINE_HINT, false,
+					    wine_missing_text, wine_selected_name };
+
+static void *wine_init(lv_obj_t *parent, lv_obj_t **root)
+{
+	(void)parent;
+	return game_init(&wine_desc, root);
+}
+
+const struct widget_ops wine_screen = {
+	.name = "wine",
+	.init = wine_init,
 	.deinit = game_deinit,
 };
 #endif

@@ -343,6 +343,46 @@ config GAME_HALFLIFE_DATA
 
 endif
 
+config GAME_WINE
+	bool "Windows games (Wine, separate program)"
+	depends on VIEW_LVGL
+	help
+	  Every <games>/<game>/wine.ini is an entry of the main menu: a
+	  Windows game run by Wine with the SDK's winebare.drv driver
+	  (packages wine-wow64 and wowbox64: 32-bit x86 games on arm64,
+	  APPS_CONFIG bare-app.WINE=y). bare_app_wine, built from
+	  ports/wine and installed next to bare_app, starts Wine for each
+	  game, composes its windows into the video layer and turns the
+	  gamepad into mouse and keyboard after the [keys] of wine.ini
+	  (ports/wine/wine.ini describes the file).
+
+if GAME_WINE
+
+config GAME_WINE_GAMES
+	string "Games directory"
+	default "/games"
+	help
+	  Each subdirectory with a wine.ini is a game; it is drive D: of
+	  Wine. BARE_APP_WINE_GAMES overrides it at run time.
+
+config GAME_WINE_PREFIX
+	string "Wine prefix"
+	default "/data/wine/prefix"
+	help
+	  One prefix shared by the games: Wine's registry and drive C:
+	  with the saved games of those that keep them in the user's
+	  documents. Made by wineboot on the first start (about a
+	  minute). BARE_APP_WINE_PREFIX overrides it at run time.
+
+config GAME_WINE_BIN
+	string "Directory of Wine's programs"
+	default "/usr/bin"
+	help
+	  Where wine and wineserver are. BARE_APP_WINE_BIN overrides it
+	  at run time.
+
+endif
+
 endmenu
 
 menu "Debugging"

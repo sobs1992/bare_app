@@ -13,6 +13,7 @@
 #include "games/doom.h"
 #include "games/halflife.h"
 #include "games/homm3.h"
+#include "games/wine.h"
 #include "gui/action.h"
 #include "hal/platform.h"
 #include "i18n.h"
@@ -64,7 +65,7 @@ static struct {
 	enum video_source video_src;
 	struct mailbox *video_mb;
 	struct testpattern *video_tp;
-	struct game_proc *video_game;	/* VIDEO_DOOM, VIDEO_HOMM3, VIDEO_HALFLIFE */
+	struct game_proc *video_game;	/* VIDEO_DOOM, VIDEO_HOMM3, VIDEO_HALFLIFE, VIDEO_WINE */
 	bool video_minimized;		/* video_game is stopped in the background */
 	unsigned video_frames;
 	view_video_end_cb video_end;
@@ -414,7 +415,8 @@ bool view_video_available(void)
 	return video_layer() != NULL;
 }
 
-#if defined(CONFIG_GAME_DOOM) || defined(CONFIG_GAME_HOMM3) || defined(CONFIG_GAME_HALFLIFE)
+#if defined(CONFIG_GAME_DOOM) || defined(CONFIG_GAME_HOMM3) || defined(CONFIG_GAME_HALFLIFE) || \
+    defined(CONFIG_GAME_WINE)
 #define HAVE_GAMES
 #endif
 #if defined(CONFIG_VIDEO_TESTPATTERN) || defined(HAVE_GAMES)
@@ -534,6 +536,9 @@ static void game_unminimize(void)
 		break;
 	case VIDEO_HALFLIFE:
 		gui_action_post(ACT_OPEN_SCREEN, SCREEN_HALFLIFE);
+		break;
+	case VIDEO_WINE:
+		gui_action_post(ACT_OPEN_SCREEN, SCREEN_WINE);
 		break;
 	default:
 		break;
@@ -687,6 +692,15 @@ int view_video_set(enum video_source src)
 		fb = hal_layer_acquire(l);
 		v.video_game = halflife_start(fb->width, fb->height, v.pf->game_pcm, i18n_lang(),
 						v.pf->halflife_soft);
+		if (!v.video_game)
+			return -1;
+		mainloop_add_fd(v.ml, game_proc_fd(v.video_game), POLLIN, on_game, NULL);
+		break;
+#endif
+#ifdef CONFIG_GAME_WINE
+	case VIDEO_WINE:
+		fb = hal_layer_acquire(l);
+		v.video_game = wine_start(fb->width, fb->height);
 		if (!v.video_game)
 			return -1;
 		mainloop_add_fd(v.ml, game_proc_fd(v.video_game), POLLIN, on_game, NULL);

@@ -30,6 +30,9 @@ static const struct widget_ops *const screen_ops[SCREEN_COUNT] = {
 #ifdef CONFIG_GAME_HALFLIFE
 	[SCREEN_HALFLIFE] = &halflife_screen,
 #endif
+#ifdef CONFIG_GAME_WINE
+	[SCREEN_WINE] = &wine_screen,
+#endif
 #ifdef CONFIG_SCREEN_USB_DISK
 	[SCREEN_USB_DISK] = &usb_disk_screen,
 #endif
