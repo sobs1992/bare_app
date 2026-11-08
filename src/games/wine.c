@@ -26,6 +26,7 @@ struct wine_game {
 	char name[64];
 	char exe[256];
 	char hint[512], hint_ru[512];	/* the controls, "" the generic hint */
+	char cover[PATH_MAX];		/* "cover" of wine.ini, relative to dir */
 };
 
 static struct wine_game found[WINE_MAX_GAMES];
@@ -46,6 +47,8 @@ static bool ini_value(const char *section, const char *key, const char *value, v
 		ini_copy_lines(g->hint, sizeof(g->hint), value);
 	else if (!strcasecmp(key, "hint.ru"))
 		ini_copy_lines(g->hint_ru, sizeof(g->hint_ru), value);
+	else if (!strcasecmp(key, "cover"))
+		snprintf(g->cover, sizeof(g->cover), "%s", value);
 	return true;
 }
 
@@ -78,9 +81,16 @@ static int wine_scan(void)
 			continue;
 		if (snprintf(g->dir, sizeof(g->dir), "%s/%s", root, e->d_name) >= (int)sizeof(g->dir))
 			continue;
-		g->name[0] = g->exe[0] = g->hint[0] = g->hint_ru[0] = '\0';
+		g->name[0] = g->exe[0] = g->hint[0] = g->hint_ru[0] = g->cover[0] = '\0';
 		if (!read_ini(g))
 			continue;
+		if (g->cover[0] != '/') {	/* relative to the game, cover.png by default */
+			char cover[PATH_MAX];
+
+			if (snprintf(cover, sizeof(cover), "%s/%s", g->dir,
+				     g->cover[0] ? g->cover : "cover.png") < (int)sizeof(cover))
+				snprintf(g->cover, sizeof(g->cover), "%s", cover);
+		}
 		if (!g->name[0])
 			snprintf(g->name, sizeof(g->name), "%.63s", e->d_name);
 		count++;
@@ -102,9 +112,11 @@ static void wine_info(int i, struct game_info *gi)
 	const struct wine_game *g = i >= 0 && i < count ? &found[i] : NULL;
 
 	gi->name = g ? g->name : "";
-	if (g)
+	if (g) {
 		gi->hint = !strncmp(i18n_lang(), "ru", 2) && g->hint_ru[0] ? g->hint_ru
 			   : g->hint[0] ? g->hint : NULL;
+		gi->cover = g->cover;
+	}
 }
 
 static const char *wine_missing(int i)

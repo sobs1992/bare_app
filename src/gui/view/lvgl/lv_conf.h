@@ -889,12 +889,12 @@
 /** Avoids repeatedly opening and decoding the same images, at the cost of RAM.
  *  Of little benefit with only the built-in image formats.
  */
-#define LV_CACHE_DEF_SIZE 0
+#define LV_CACHE_DEF_SIZE (4 * 1024 * 1024)	/* decoded game covers of the home screen */
 
 /** Avoids repeatedly reading image headers, at the cost of RAM.
  *  Of little benefit with only the built-in image formats.
  */
-#define LV_IMAGE_HEADER_CACHE_DEF_CNT 0
+#define LV_IMAGE_HEADER_CACHE_DEF_CNT 32
 
 /** Decoder for LVGL's run-length encoded binary image format. */
 #define LV_USE_RLE 0
@@ -912,7 +912,7 @@
 #define LV_BIN_DECODER_RAM_LOAD 0
 
 /** PNG decoder (LodePNG) */
-#define LV_USE_LODEPNG 0
+#define LV_USE_LODEPNG 1	/* game covers (cover.png) */
 
 /** PNG decoder (libpng) */
 #define LV_USE_LIBPNG 0
@@ -1954,11 +1954,11 @@
 #define LV_FS_DEFAULT_DRIVER_LETTER 0
 
 /** stdio */
-#define LV_USE_FS_STDIO 0
+#define LV_USE_FS_STDIO 1	/* "A:/games/x/cover.png" */
 
 #if LV_USE_FS_STDIO
 /** Drive letter for stdio (65 = 'A', 0 = disabled) */
-#define LV_FS_STDIO_LETTER 0
+#define LV_FS_STDIO_LETTER 'A'
 
 /** Working directory for stdio */
 #define LV_FS_STDIO_PATH ""

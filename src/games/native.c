@@ -36,6 +36,7 @@ struct native_game {
 	char needs[MAX_NEEDS][STR];
 	int n_needs;
 	char hint[512], hint_ru[512];
+	char cover[STR];		/* "cover", relative to dir; "" the default */
 	bool trigger_volume;
 	/* SDL_BAREAPP_*: keys, gamepad, scale, filter, fps */
 	char keys[STR], gamepad[STR], scale[16], filter[16], fps[8];
@@ -72,6 +73,8 @@ static bool ini_value(const char *section, const char *key, const char *value, v
 		COPY(g->args, value);
 	else if (!strcasecmp(key, "dir"))
 		COPY(g->cwd, value);
+	else if (!strcasecmp(key, "cover"))
+		COPY(g->cover, value);
 	else if (!strcasecmp(key, "needs") && g->n_needs < MAX_NEEDS)
 		COPY(g->needs[g->n_needs++], value);
 	else if (!strcasecmp(key, "hint"))
@@ -114,6 +117,22 @@ static void add(const char *path, const char *dir, const char *id)
 	}
 	if (!g->name[0])
 		COPY(g->name, id);
+	/* the cover: as the ini says (relative to its directory), else
+	 * <dir>/cover.png of a game in its directory, <root>/<id>.png */
+	{
+		char cover[STR];
+		const char *base = strrchr(path, '/');
+		bool own_dir = base && !strcmp(base, "/game.ini");
+
+		if (g->cover[0])
+			snprintf(cover, sizeof(cover), g->cover[0] == '/' ? "%s" : "%s/%s",
+				 g->cover[0] == '/' ? g->cover : dir, g->cover);
+		else if (own_dir)
+			snprintf(cover, sizeof(cover), "%s/cover.png", dir);
+		else
+			snprintf(cover, sizeof(cover), "%s/%s.png", dir, id);
+		COPY(g->cover, cover);
+	}
 	count++;
 }
 
@@ -184,6 +203,7 @@ static void native_info(int i, struct game_info *gi)
 	gi->name = g->name;
 	gi->hint = !strncmp(i18n_lang(), "ru", 2) && g->hint_ru[0] ? g->hint_ru : g->hint[0] ? g->hint : NULL;
 	gi->trigger_volume = g->trigger_volume;
+	gi->cover = g->cover[0] ? g->cover : NULL;
 }
 
 /* path of the game: as it is if absolute, else in the ini's directory */

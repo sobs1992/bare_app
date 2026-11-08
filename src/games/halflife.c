@@ -233,11 +233,21 @@ static struct game_proc *halflife_start(int entry, const struct game_env *ge)
 	return game_proc_start(&s);
 }
 
+/* <game directory>/cover.png */
+static void halflife_info(int entry, struct game_info *gi)
+{
+	static char cover[PATH_MAX];
+
+	(void)entry;
+	gi->cover = game_cover_in(cover, sizeof(cover), halflife_game());
+}
+
 /* L2 and R2 are the game's */
 const struct game_def game_halflife = {
 	.id = "halflife",
 	.title = S_HALFLIFE,
 	.hint = S_HALFLIFE_HINT,
+	.info = halflife_info,
 	.missing = halflife_missing,
 	.start = halflife_start,
 };

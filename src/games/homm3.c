@@ -131,11 +131,21 @@ static enum gp_button homm3_minimize(const struct platform *pf)
 	return opt_is(pf, "homm3.keys", "ogu") ? GP_F1 : GP_F5;
 }
 
+/* <game directory>/cover.png */
+static void homm3_info(int entry, struct game_info *gi)
+{
+	static char cover[PATH_MAX];
+
+	(void)entry;
+	gi->cover = game_cover_in(cover, sizeof(cover), homm3_game());
+}
+
 const struct game_def game_homm3 = {
 	.id = "homm3",
 	.title = S_HOMM3,
 	.hint = S_HOMM3_HINT,
 	.trigger_volume = true,
+	.info = homm3_info,
 	.missing = homm3_missing,
 	.start = homm3_start,
 	.hint_for = homm3_hint,

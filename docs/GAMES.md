@@ -98,6 +98,7 @@ hint.ru = A  прыжок    B  огонь    F1  меню\nF5  свернуть
 | `gamepad` | другая раскладка контроллера: `f3=guide, l2=none` |
 | `scale`, `filter` | `fit`, `stretch`, `integer`; `linear`, `nearest` |
 | `hint`, `hint.ru` | подсказка после первого кадра, `\n` — новая строка |
+| `cover` | картинка игры на главном экране (PNG); путь относительно ini. По умолчанию `cover.png` рядом с `game.ini`, а для `<id>.ini` — `<id>.png` |
 | `volume_triggers` | `yes`: L2/R2 меняют громкость и не идут в игру |
 | `[env]` | любые переменные окружения игры |
 

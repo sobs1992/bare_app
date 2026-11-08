@@ -14,6 +14,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #include "core/input.h"
 #include "game_proc.h"
@@ -33,6 +34,7 @@ struct game_env {
 struct game_info {
 	const char *name;	/* NULL: the game's title */
 	const char *hint;	/* NULL: the game's hint */
+	const char *cover;	/* picture of it for the home screen (PNG), NULL none */
 	bool trigger_volume;	/* as game_def.trigger_volume */
 };
 
@@ -49,7 +51,7 @@ struct game_def {
 	 * Entry numbers stay valid until the next rescan.
 	 */
 	int (*entries)(bool rescan);
-	/* The entry's own name, hint, triggers (starts from the game's); may be NULL */
+	/* The entry's own name, hint, cover, triggers (starts from the game's); may be NULL */
 	void (*info)(int entry, struct game_info *gi);
 	/* The first thing the entry needs that is missing (a path), NULL if none */
 	const char *(*missing)(int entry);
@@ -80,6 +82,10 @@ int game_entries(const struct game_def *g, bool rescan);
 const char *game_title(struct game_ref g);
 const char *game_hint(struct game_ref g, const struct platform *pf);
 bool game_trigger_volume(struct game_ref g);
+/* Its cover picture if the file is there, else NULL */
+const char *game_cover(struct game_ref g);
+/* "<dir>/cover.png" into buf (dir may be "" for none: NULL) */
+const char *game_cover_in(char *buf, size_t size, const char *dir);
 enum gp_button game_minimize_button(struct game_ref g, const struct platform *pf);
 /* Why it cannot start into buf; false if nothing is missing */
 bool game_missing_text(struct game_ref g, char *buf, size_t size);

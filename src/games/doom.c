@@ -74,12 +74,22 @@ static struct game_proc *doom_start(int entry, const struct game_env *ge)
 	return game_proc_start(&s);
 }
 
+/* <CONFIG_GAME_DOOM_GAME>/cover.png */
+static void doom_info(int entry, struct game_info *gi)
+{
+	static char cover[PATH_MAX];
+
+	(void)entry;
+	gi->cover = game_cover_in(cover, sizeof(cover), CONFIG_GAME_DOOM_GAME);
+}
+
 const struct game_def game_doom = {
 	.id = "doom",
 	.title = S_DOOM,
 	.hint = S_DOOM_HINT,
 	.missing_fmt = S_DOOM_NO_WAD_FMT,
 	.trigger_volume = true,
+	.info = doom_info,
 	.missing = doom_missing,
 	.start = doom_start,
 };

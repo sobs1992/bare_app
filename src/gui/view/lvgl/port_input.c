@@ -5,7 +5,8 @@
  * between to see a new press.
  *
  * Up/Down move the focus (PREV/NEXT), except in a button matrix (the
- * on-screen keyboard), which takes them like Left/Right; Left/Right go to
+ * on-screen keyboard) and in the group of port_input_set_2d() (the home
+ * screen's rows), which take them like Left/Right; Left/Right go to
  * the focused widget (sliders, rollers), Accept is ENTER, X is
  * UI_LV_KEY_ALT for screens that give the focused item a second action.
  */
@@ -24,6 +25,7 @@ static struct {
 	int head, count;
 	uint32_t last_key;
 	lv_indev_state_t last_state;
+	lv_group_t *nav2d;	/* its objects get Up/Down as keys */
 } pi;
 
 static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
@@ -52,7 +54,7 @@ static uint32_t to_lv_key(enum ui_key key)
 {
 	lv_group_t *g = lv_indev_get_group(pi.indev);
 	lv_obj_t *f = g ? lv_group_get_focused(g) : NULL;
-	bool grid = f && lv_obj_has_class(f, &lv_buttonmatrix_class);
+	bool grid = (f && lv_obj_has_class(f, &lv_buttonmatrix_class)) || (g && g == pi.nav2d);
 
 	switch (key) {
 	case UI_KEY_UP:     return grid ? LV_KEY_UP : LV_KEY_PREV;
@@ -86,6 +88,16 @@ bool port_input_key(enum ui_key key, bool pressed, bool repeat)
 void port_input_set_group(lv_group_t *g)
 {
 	lv_indev_set_group(pi.indev, g);
+}
+
+void port_input_set_2d(lv_group_t *g)
+{
+	pi.nav2d = g;
+}
+
+lv_group_t *port_input_2d(void)
+{
+	return pi.nav2d;
 }
 
 int port_input_init(void)

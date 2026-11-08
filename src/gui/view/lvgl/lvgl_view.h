@@ -35,6 +35,10 @@ int port_input_init(void);
 void port_input_deinit(void);
 bool port_input_key(enum ui_key key, bool pressed, bool repeat);
 void port_input_set_group(lv_group_t *g);
+/* The objects of g move the focus themselves: they get LV_KEY_UP/DOWN as
+ * LV_EVENT_KEY instead of the focus going to the previous/next (NULL: none) */
+void port_input_set_2d(lv_group_t *g);
+lv_group_t *port_input_2d(void);
 
 /* screens.c: shows the screen named by CTX_NAV */
 int screens_init(void);

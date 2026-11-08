@@ -1,13 +1,19 @@
 /*
- * Status bar: screen title on the left; volume (CTX_AUDIO), Wi-Fi (CTX_WIFI)
- * and battery (CTX_POWER) on the right.
+ * Status bar: screen title on the left; volume (CTX_AUDIO), Wi-Fi (CTX_WIFI),
+ * battery (CTX_POWER) and the time on the right. The time only once the
+ * clock has been set (a board without a set RTC starts in 1970 or 2000).
  */
 #include <stdlib.h>
+#include <time.h>
 
 #include "../widget.h"
 
+#define CLOCK_VALID 1704067200	/* 2024-01-01: earlier is a clock never set */
+
 struct statusbar {
-	lv_obj_t *title, *volume, *wifi, *battery;
+	lv_obj_t *title, *volume, *wifi, *battery, *clock;
+	lv_timer_t *tick;
+	int shown_minute;	/* minutes since the epoch, -1 none */
 	int shown_volume;	/* percent, -1 hidden, -2 nothing yet */
 	int shown_cap;
 	int shown_flags;	/* bit 0 charging, 1 online, 2 available, -1 nothing yet */
@@ -25,6 +31,25 @@ static const char *battery_symbol(int cap)
 	if (cap >= 15)
 		return LV_SYMBOL_BATTERY_1;
 	return LV_SYMBOL_BATTERY_EMPTY;
+}
+
+static void update_clock(struct statusbar *s)
+{
+	time_t now = time(NULL);
+	struct tm tm;
+	int minute = now >= CLOCK_VALID ? (int)(now / 60) : -1;
+
+	if (minute == s->shown_minute)
+		return;
+	s->shown_minute = minute;
+	lv_obj_set_hidden(s->clock, minute < 0);
+	if (minute >= 0 && localtime_r(&now, &tm))
+		lv_label_set_text_fmt(s->clock, "%d:%02d", tm.tm_hour, tm.tm_min);
+}
+
+static void on_tick(lv_timer_t *t)
+{
+	update_clock(lv_timer_get_user_data(t));
 }
 
 static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
@@ -68,6 +93,12 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 	s->battery = lv_label_create(right);
 	lv_obj_set_style_text_font(s->battery, UI_FONT_MID, 0);
 	lv_label_set_text(s->battery, "");
+	s->clock = lv_label_create(right);
+	lv_obj_set_style_text_font(s->clock, UI_FONT_MID, 0);
+	lv_label_set_text(s->clock, "");
+	s->shown_minute = -2;
+	update_clock(s);
+	s->tick = lv_timer_create(on_tick, 1000, s);
 
 	*root = bar;
 	return s;
@@ -127,7 +158,10 @@ static void statusbar_update(void *self, const struct gui_ctx *c, uint32_t chang
 
 static void statusbar_deinit(void *self)
 {
-	free(self);
+	struct statusbar *s = self;
+
+	lv_timer_delete(s->tick);
+	free(s);
 }
 
 const struct widget_ops statusbar_widget = {

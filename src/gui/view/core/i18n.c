@@ -162,6 +162,11 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_USB_DISK_HINT_RETRY]  = { "A  connect again    B  back"
 				     RU("A  подключить снова    B  назад") },
 	[S_USB_DISK_HINT_BACK]   = { "B  back" RU("B  назад") },
+	[S_HOME_START]      = { "Play" RU("Играть") },
+	[S_HOME_OPEN]       = { "Open" RU("Открыть") },
+	[S_HOME_RESUME]     = { "Resume" RU("Продолжить") },
+	[S_HOME_NO_GAMES]   = { "No games yet" RU("Игр пока нет") },
+	[S_HOME_NOT_INSTALLED] = { "not installed" RU("не установлена") },
 };
 
 static int lang = LANG_EN;

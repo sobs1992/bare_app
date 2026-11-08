@@ -2,6 +2,7 @@
 #include "game.h"
 
 #include <stdio.h>
+#include <unistd.h>
 
 extern const struct game_def game_homm3, game_halflife, game_doom, game_native, game_wine;
 
@@ -55,6 +56,20 @@ const char *game_hint(struct game_ref g, const struct platform *pf)
 	if (hint)
 		return hint;
 	return tr(g.def->hint_for ? g.def->hint_for(pf) : g.def->hint);
+}
+
+const char *game_cover(struct game_ref g)
+{
+	const char *cover = g.def ? info(g).cover : NULL;
+
+	return cover && *cover && access(cover, R_OK) == 0 ? cover : NULL;
+}
+
+const char *game_cover_in(char *buf, size_t size, const char *dir)
+{
+	if (!dir || !*dir || snprintf(buf, size, "%s/cover.png", dir) >= (int)size)
+		return NULL;
+	return buf;
 }
 
 bool game_trigger_volume(struct game_ref g)
