@@ -18,6 +18,7 @@
  */
 #define _GNU_SOURCE
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -30,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/mman.h>
 #include <sys/signalfd.h>
 #include <sys/socket.h>
@@ -88,6 +90,7 @@ static struct {
 	char dlls[512];			/* WINEDLLOVERRIDES */
 	char locale[32];
 	char env[1024];			/* NAME=value, space separated */
+	char writable[512];		/* entries the game writes to, see make_tree() */
 	enum stick_use lstick, rstick, dpad;
 	float cursor_speed;		/* screen widths a second at full deflection */
 	struct action button[GP_COUNT];
@@ -312,6 +315,8 @@ static int read_ini(const char *path)
 			snprintf(cfg.dlls, sizeof(cfg.dlls), "%s", value);
 		} else if (!strcmp(key, "env")) {
 			snprintf(cfg.env, sizeof(cfg.env), "%s", value);
+		} else if (!strcmp(key, "writable")) {
+			snprintf(cfg.writable, sizeof(cfg.writable), "%s", value);
 		} else if (!strcmp(key, "locale")) {
 			snprintf(cfg.locale, sizeof(cfg.locale), "%s", value);
 		} else if (strcmp(key, "name") && strcmp(key, "render")) {
@@ -457,6 +462,118 @@ static int prepare_prefix(void)
 	unlink(path);
 	if (symlink(games, path) < 0)
 		msg("%s: %s", path, strerror(errno));
+	return 0;
+}
+
+/* NAME is one of the "writable" entries (blank or comma separated, any case) */
+static bool writable(const char *name)
+{
+	char buf[sizeof(cfg.writable)], *p, *save = NULL;
+
+	snprintf(buf, sizeof(buf), "%s", cfg.writable);
+	for (p = strtok_r(buf, " \t,", &save); p; p = strtok_r(NULL, " \t,", &save))
+		if (!strcasecmp(p, name))
+			return true;
+	return false;
+}
+
+static int copy_tree(const char *src, const char *dst)
+{
+	struct stat st;
+
+	if (lstat(src, &st) < 0)
+		return -1;
+	if (S_ISDIR(st.st_mode)) {
+		DIR *d;
+		struct dirent *e;
+		int ret = 0;
+
+		if (mkdir(dst, 0755) < 0 && errno != EEXIST)
+			return -1;
+		if (!(d = opendir(src)))
+			return -1;
+		while ((e = readdir(d))) {
+			char s2[PATH_MAX], d2[PATH_MAX];
+
+			if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+				continue;
+			snprintf(s2, sizeof(s2), "%s/%s", src, e->d_name);
+			snprintf(d2, sizeof(d2), "%s/%s", dst, e->d_name);
+			if (copy_tree(s2, d2) < 0)
+				ret = -1;
+		}
+		closedir(d);
+		return ret;
+	}
+	if (S_ISREG(st.st_mode)) {
+		char buf[65536];
+		ssize_t n = 0;
+		int in = open(src, O_RDONLY | O_CLOEXEC), out;
+
+		if (in < 0)
+			return -1;
+		out = open(dst, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+		if (out < 0) {
+			close(in);
+			return -1;
+		}
+		while ((n = read(in, buf, sizeof(buf))) > 0)
+			if (write(out, buf, (size_t)n) != n) {
+				n = -1;
+				break;
+			}
+		close(in);
+		if (close(out) < 0 || n < 0)
+			return -1;
+	}
+	return 0;
+}
+
+/*
+ * Games that write into their own directory ("writable = Data" in wine.ini:
+ * saved games, settings, logs) are started from a tree next to the prefix,
+ * <prefix>/../games/<directory>: the writable entries are copies made on the
+ * first start (kept from then on), everything else links to the game's
+ * directory, which stays read-only on /games.
+ */
+static int make_tree(void)
+{
+	const char *prefix = getenv("WINEPREFIX"), *name = strrchr(cfg.dir, '/');
+	char tree[PATH_MAX], src[PATH_MAX], dst[PATH_MAX], *slash;
+	struct dirent *e;
+	struct stat st;
+	DIR *d;
+
+	if (!cfg.writable[0])
+		return 0;
+	snprintf(tree, sizeof(tree), "%s", prefix);
+	if ((slash = strrchr(tree, '/')))
+		*slash = '\0';
+	snprintf(tree + strlen(tree), sizeof(tree) - strlen(tree), "/games/%s", name ? name + 1 : cfg.dir);
+	if (mkdirs(tree) < 0 || !(d = opendir(cfg.dir))) {
+		msg("%s: %s", tree, strerror(errno));
+		return -1;
+	}
+	while ((e = readdir(d))) {
+		if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+			continue;
+		snprintf(src, sizeof(src), "%s/%s", cfg.dir, e->d_name);
+		snprintf(dst, sizeof(dst), "%s/%s", tree, e->d_name);
+		if (writable(e->d_name)) {
+			if (lstat(dst, &st) == 0 && !S_ISLNK(st.st_mode))
+				continue;	/* the game's own copy */
+			unlink(dst);
+			msg("copying %s to %s", src, dst);
+			if (copy_tree(src, dst) < 0)
+				msg("%s: %s", dst, strerror(errno));
+		} else {
+			unlink(dst);	/* follows the game's directory as it is now */
+			if (symlink(src, dst) < 0)
+				msg("%s: %s", dst, strerror(errno));
+		}
+	}
+	closedir(d);
+	snprintf(cfg.dir, sizeof(cfg.dir), "%s", tree);
 	return 0;
 }
 
@@ -719,7 +836,8 @@ static struct client *input_client(void)
 	return best;
 }
 
-static void send_mouse(uint32_t flags, int wheel)
+/* The cursor to x,y: may be past the screen's edge (see move_tick()) */
+static void send_mouse_at(int x, int y, uint32_t flags, int wheel)
 {
 	struct client *c = input_client();
 	struct wb_msg m = { .type = WB_INPUT_MOUSE };
@@ -727,15 +845,20 @@ static void send_mouse(uint32_t flags, int wheel)
 	if (!c)
 		return;
 	if (trace && (flags || wheel))
-		msg("mouse %d,%d flags %#x wheel %d", (int)cur_x, (int)cur_y, flags, wheel);
-	m.mouse.x = (int32_t)cur_x;
-	m.mouse.y = (int32_t)cur_y;
+		msg("mouse %d,%d flags %#x wheel %d", x, y, flags, wheel);
+	m.mouse.x = x;
+	m.mouse.y = y;
 	m.mouse.flags = flags | WB_MOUSE_MOVE;
 	if (wheel) {
 		m.mouse.flags |= WB_MOUSE_WHEEL;
 		m.mouse.wheel = wheel;
 	}
 	client_send(c, &m);
+}
+
+static void send_mouse(uint32_t flags, int wheel)
+{
+	send_mouse_at((int)cur_x, (int)cur_y, flags, wheel);
 }
 
 static void send_key(uint16_t vk, bool pressed)
@@ -1115,8 +1238,9 @@ static bool moving(void)
 static void move_tick(void)
 {
 	struct timespec now;
-	float dt, vx = 0, vy = 0, speed;
-	int ox = (int)cur_x, oy = (int)cur_y;
+	static float past_x, past_y;	/* pushed on past the screen's edge */
+	float dt, vx = 0, vy = 0, speed, nx, ny;
+	int ox = (int)cur_x, oy = (int)cur_y, px, py;
 
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	dt = (now.tv_sec - last_move.tv_sec) + (now.tv_nsec - last_move.tv_nsec) * 1e-9f;
@@ -1139,18 +1263,27 @@ static void move_tick(void)
 	}
 	vx += (dpad_dir[GP_RIGHT] - dpad_dir[GP_LEFT]) * 0.25f;
 	vy += (dpad_dir[GP_DOWN] - dpad_dir[GP_UP]) * 0.25f;
-	cur_x += vx * speed * dt;
-	cur_y += vy * speed * dt;
-	if (cur_x < 0)
-		cur_x = 0;
-	if (cur_y < 0)
-		cur_y = 0;
-	if (cur_x > mode.width - 1)
-		cur_x = mode.width - 1;
-	if (cur_y > mode.height - 1)
-		cur_y = mode.height - 1;
-	if ((int)cur_x != ox || (int)cur_y != oy) {
-		send_mouse(0, 0);
+	nx = cur_x + vx * speed * dt;
+	ny = cur_y + vy * speed * dt;
+	cur_x = nx < 0 ? 0 : nx > mode.width - 1 ? mode.width - 1 : nx;
+	cur_y = ny < 0 ? 0 : ny > mode.height - 1 ? mode.height - 1 : ny;
+	/*
+	 * Pushed on at the edge, the cursor goes to a point past it: Wine
+	 * keeps its own cursor in, but the move still reaches raw input. A
+	 * game reading the mouse by DirectInput moves its own cursor by those
+	 * moves only, and it is often not where this one is (Wine clips the
+	 * cursor of an exclusive DirectInput mouse to the window instead of
+	 * centring it): without this, its cursor stopped short of the
+	 * screen's edge once this one got there first.
+	 */
+	past_x = nx != cur_x ? past_x + (nx - cur_x) : 0;
+	past_y = ny != cur_y ? past_y + (ny - cur_y) : 0;
+	px = (int)past_x;
+	py = (int)past_y;
+	if ((int)cur_x != ox || (int)cur_y != oy || px || py) {
+		send_mouse_at((int)cur_x + px, (int)cur_y + py, 0, 0);
+		past_x -= px;
+		past_y -= py;
 		if (cursor_shown)
 			dirty = true;
 	}
@@ -1300,7 +1433,7 @@ int main(int argc, char **argv)
 
 	/* children get the signals back (posix_spawn keeps the mask) */
 	sigprocmask(SIG_UNBLOCK, &mask, NULL);
-	if (prepare_prefix() < 0) {
+	if (prepare_prefix() < 0 || make_tree() < 0) {
 		unlink(sock_path);
 		return 1;
 	}
