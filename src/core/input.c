@@ -1,11 +1,17 @@
 #include "input.h"
 
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "joystick.h"
 #include "log.h"
 #include "mainloop.h"
 #include "util.h"
+
+#define TAG "input"
 
 #define DIR_MASK (GP_BIT(GP_UP) | GP_BIT(GP_DOWN) | GP_BIT(GP_LEFT) | GP_BIT(GP_RIGHT))
 /* L2/R2 are volume keys in the UI and in Heroes III (games never get repeats) */
@@ -31,7 +37,13 @@ static struct {
 	uint32_t virt;		/* from the stick */
 	uint32_t state;		/* phys | virt, what listeners saw */
 	uint32_t from_stick;	/* of 'state': pressed by the stick alone */
-	float axes[GP_AXIS_COUNT];
+	float axes[GP_AXIS_COUNT];	/* calibrated */
+	float raw[GP_AXIS_COUNT], rest[GP_AXIS_COUNT];	/* joy_linear() units */
+	struct {
+		bool set;
+		struct joy_stick_cal cal;
+	} stick[INPUT_STICKS];
+	char cal_path[256];
 	uint32_t buttons_present, axes_present;
 	int stick_x, stick_y;	/* -1/0/+1 */
 	struct ml_timer *repeat;
@@ -102,6 +114,7 @@ void input_init(struct mainloop *ml, const struct input_config *cfg, input_cb cb
 		.repeat_period_ms = 120,
 		.stick_press = 0.5f,
 		.stick_release = 0.3f,
+		.stick_deadzone = 0.15f,
 	};
 
 	memset(&in, 0, sizeof(in));
@@ -142,17 +155,171 @@ static void stick_to_dpad(void)
 	sync_state();
 }
 
-void input_report_axis(enum gp_axis a, float value)
+static void set_axis(enum gp_axis a, float value)
 {
 	struct gp_event ev = { .type = GP_EV_AXIS, .code = a, .value = value };
 
-	if (a < 0 || a >= GP_AXIS_COUNT || in.axes[a] == value)
+	if (in.axes[a] == value)
 		return;
 	in.axes[a] = value;
 	if (in.cb)
 		in.cb(&ev, in.ud);
-	if (a == GP_AXIS_LX || a == GP_AXIS_LY)
+}
+
+static const struct joy_stick_cal *stick_cal(int s, struct joy_stick_cal *def)
+{
+	if (in.stick[s].set)
+		return &in.stick[s].cal;
+	joy_stick_default(def, in.rest[2 * s], in.rest[2 * s + 1]);
+	return def;
+}
+
+/* Both axes of a stick move together: the edge and the dead zone are round */
+static void update_stick(int s)
+{
+	struct joy_stick_cal def;
+	float x, y;
+
+	joy_stick_apply(stick_cal(s, &def), in.cfg.stick_deadzone, in.raw[2 * s], in.raw[2 * s + 1],
+			&x, &y);
+	set_axis(2 * s, x);
+	set_axis(2 * s + 1, y);
+	if (s == 0)
 		stick_to_dpad();
+}
+
+void input_report_axis(enum gp_axis a, float value)
+{
+	if (a < 0 || a >= GP_AXIS_COUNT || in.raw[a] == value)
+		return;
+	in.raw[a] = value;
+	update_stick(a / 2);
+}
+
+void input_report_axes(const float value[GP_AXIS_COUNT], uint32_t mask)
+{
+	uint32_t moved = 0;
+	int a, s;
+
+	for (a = 0; a < GP_AXIS_COUNT; a++)
+		if ((mask & GP_BIT(a)) && in.raw[a] != value[a]) {
+			in.raw[a] = value[a];
+			moved |= GP_BIT(a / 2);
+		}
+	for (s = 0; s < INPUT_STICKS; s++)
+		if (moved & GP_BIT(s))
+			update_stick(s);
+}
+
+void input_report_rest(enum gp_axis a, float value)
+{
+	if (a < 0 || a >= GP_AXIS_COUNT)
+		return;
+	in.rest[a] = in.raw[a] = value;
+	update_stick(a / 2);
+}
+
+void input_raw_stick(int stick, float *x, float *y)
+{
+	bool ok = stick >= 0 && stick < INPUT_STICKS;
+
+	*x = ok ? in.raw[2 * stick] : 0;
+	*y = ok ? in.raw[2 * stick + 1] : 0;
+}
+
+bool input_calibration(int stick, struct joy_stick_cal *c)
+{
+	if (stick < 0 || stick >= INPUT_STICKS)
+		return false;
+	*c = *stick_cal(stick, c);
+	return in.stick[stick].set;
+}
+
+void input_set_calibration(int stick, const struct joy_stick_cal *c)
+{
+	if (stick < 0 || stick >= INPUT_STICKS)
+		return;
+	in.stick[stick].set = c != NULL;
+	if (c)
+		in.stick[stick].cal = *c;
+	update_stick(stick);
+}
+
+static const char *const stick_names[INPUT_STICKS] = { "left", "right" };
+
+int input_load_calibration(const char *path)
+{
+	const char *home = getenv("HOME");
+	char line[512];
+	FILE *f;
+
+	in.cal_path[0] = '\0';
+	if (!path)
+		return 0;
+	if (!strncmp(path, "~/", 2)) {
+		if (!home)
+			return 0;
+		snprintf(in.cal_path, sizeof(in.cal_path), "%s/%s", home, path + 2);
+	} else {
+		snprintf(in.cal_path, sizeof(in.cal_path), "%s", path);
+	}
+	if (!(f = fopen(in.cal_path, "r"))) {
+		if (errno != ENOENT)
+			LOGW(TAG, "%s: %s", in.cal_path, strerror(errno));
+		return errno == ENOENT ? 0 : -1;
+	}
+	while (fgets(line, sizeof(line), f)) {
+		char *eq = strchr(line, '='), *key = line;
+		struct joy_stick_cal c;
+		int s;
+
+		if (*line == '#' || !eq)
+			continue;
+		*eq = '\0';
+		while (*key == ' ')
+			key++;
+		for (char *e = eq; e > key && e[-1] == ' '; )
+			*--e = '\0';
+		for (s = 0; s < INPUT_STICKS; s++)
+			if (!strcmp(key, stick_names[s]))
+				break;
+		if (s == INPUT_STICKS || !joy_stick_parse(eq + 1, &c)) {
+			LOGW(TAG, "%s: bad line \"%s\"", in.cal_path, key);
+			continue;
+		}
+		input_set_calibration(s, &c);
+		LOGI(TAG, "%s stick calibrated", stick_names[s]);
+	}
+	fclose(f);
+	return 0;
+}
+
+int input_save_calibration(void)
+{
+	char tmp[sizeof(in.cal_path) + 8], buf[400];
+	FILE *f;
+	int s, err = 0;
+
+	if (!in.cal_path[0])
+		return 0;
+	snprintf(tmp, sizeof(tmp), "%s.tmp", in.cal_path);
+	if (!(f = fopen(tmp, "w"))) {
+		LOGW(TAG, "%s: %s", tmp, strerror(errno));
+		return -1;
+	}
+	fputs("# bare_app stick calibration, written by the input test\n", f);
+	for (s = 0; s < INPUT_STICKS; s++)
+		if (in.stick[s].set && joy_stick_format(&in.stick[s].cal, buf, sizeof(buf)) > 0)
+			fprintf(f, "%s = %s\n", stick_names[s], buf);
+	if (fflush(f) || fsync(fileno(f)))
+		err = -1;
+	if (fclose(f) || err || rename(tmp, in.cal_path)) {
+		LOGW(TAG, "%s: %s", in.cal_path, strerror(errno));
+		unlink(tmp);
+		return -1;
+	}
+	LOGI(TAG, "saved %s", in.cal_path);
+	return 0;
 }
 
 uint32_t input_buttons(void)

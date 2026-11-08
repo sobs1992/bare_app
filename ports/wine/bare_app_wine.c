@@ -76,7 +76,7 @@ struct action {
 	uint16_t vk[4];
 };
 
-enum stick_use { STICK_NONE, STICK_MOUSE, STICK_ARROWS, STICK_WHEEL };
+enum stick_use { STICK_NONE, STICK_MOUSE, STICK_ARROWS, STICK_WHEEL, STICK_NUMPAD };
 
 static struct {
 	char dir[PATH_MAX];		/* game directory */
@@ -99,7 +99,7 @@ static const struct { const char *name; uint16_t vk; } key_names[] = {
 	{ "esc", 0x1b }, { "space", 0x20 }, { "pgup", 0x21 }, { "pgdn", 0x22 },
 	{ "end", 0x23 }, { "home", 0x24 }, { "left", 0x25 }, { "up", 0x26 },
 	{ "right", 0x27 }, { "down", 0x28 }, { "insert", 0x2d }, { "delete", 0x2e },
-	{ "kp*", 0x6a }, { "kp+", 0x6b }, { "kp-", 0x6d }, { "kp.", 0x6e }, { "kp/", 0x6f },
+	{ "kp*", 0x6a }, { "kp+", 0x6b }, { "kp-", 0x6d }, { "kp/", 0x6f },
 	{ "lshift", 0xa0 }, { "rshift", 0xa1 }, { "lctrl", 0xa2 }, { "rctrl", 0xa3 },
 	{ "lalt", 0xa4 }, { "ralt", 0xa5 }, { "-", 0xbd }, { "=", 0xbb }, { ",", 0xbc },
 	{ ".", 0xbe }, { "/", 0xbf }, { "`", 0xc0 }, { "[", 0xdb }, { "]", 0xdd },
@@ -116,6 +116,17 @@ static const char *const button_names[GP_COUNT] = {
 	[GP_VOL_UP] = "vol+", [GP_VOL_DOWN] = "vol-", [GP_POWER] = "power",
 };
 
+/*
+ * The keypad as a PC keyboard with NumLock off sends it, which is how
+ * Wine's desktop starts: kp8 is VK_UP with the keypad's scan code (0x48,
+ * not extended; winebare.drv takes the first scan code of a VK). Pirates!
+ * reads its keys so: it maps the keypad's scan codes to VKs with
+ * MapVirtualKey and looks at those (VK_NUMPAD8 never moves anything).
+ */
+static const uint16_t keypad_vk[10] = {
+	0x2d, 0x23, 0x28, 0x22, 0x25, 0x0c, 0x27, 0x24, 0x26, 0x21,	/* Ins End Down PgDn Left Clear Right Home Up PgUp */
+};
+
 static int key_vk(const char *name)
 {
 	size_t i;
@@ -126,7 +137,9 @@ static int key_vk(const char *name)
 	if ((name[0] == 'f' || name[0] == 'F') && (n = atoi(name + 1)) >= 1 && n <= 24)
 		return 0x70 + n - 1;
 	if (!strncmp(name, "kp", 2) && isdigit((unsigned char)name[2]) && !name[3])
-		return 0x60 + name[2] - '0';
+		return keypad_vk[name[2] - '0'];
+	if (!strcmp(name, "kp."))
+		return 0x2e;	/* Del */
 	for (i = 0; i < sizeof(key_names) / sizeof(key_names[0]); i++)
 		if (!strcasecmp(name, key_names[i].name))
 			return key_names[i].vk;
@@ -189,7 +202,7 @@ static void add_mode(struct wb_mode m)
 static enum stick_use parse_stick(const char *v)
 {
 	return !strcmp(v, "mouse") ? STICK_MOUSE : !strcmp(v, "arrows") ? STICK_ARROWS :
-	       !strcmp(v, "wheel") ? STICK_WHEEL : STICK_NONE;
+	       !strcmp(v, "wheel") ? STICK_WHEEL : !strcmp(v, "numpad") ? STICK_NUMPAD : STICK_NONE;
 }
 
 static char *trim(char *s)
@@ -737,6 +750,8 @@ static void send_key(uint16_t vk, bool pressed)
 	struct client *c = input_client();
 	struct wb_msg m = { .type = WB_INPUT_KEY };
 
+	if (trace)
+		msg("key %#x %s%s", vk, pressed ? "down" : "up", c ? "" : " (no window)");
 	if (!c)
 		return;
 	m.key.vk = vk;
@@ -1019,8 +1034,84 @@ static float curve(float v)
 	return copysignf(a * a, v);
 }
 
+/*
+ * The right stick as the numeric keypad: its 8 directions are the keys
+ * around 5 (up 8, up-right 9, right 6 ...), held while the stick is out.
+ * Pushed out beyond NUMPAD_PRESS a key goes down; it changes only once
+ * the stick turns clearly into another direction, and goes up once the
+ * stick has stayed below NUMPAD_RELEASE for NUMPAD_REST_MS (a lone ADC
+ * sample near the center is no release), but not before NUMPAD_MIN_MS:
+ * a quick flick lasts at least a frame of the game.
+ */
+#define NUMPAD_PRESS 0.5f
+#define NUMPAD_RELEASE 0.35f
+#define NUMPAD_TURN (0.3927f + 0.17f)	/* half a direction (22.5 degrees) + 10 */
+#define NUMPAD_MIN_MS 60
+#define NUMPAD_REST_MS 20
+
+static struct {
+	int dir;		/* 0 right, then clockwise on the screen; -1 none */
+	bool release;		/* back at rest, the key still down (move_tick() ends it) */
+	struct timespec since, rest;
+} numpad = { .dir = -1 };
+
+static long ms_since(const struct timespec *t)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (now.tv_sec - t->tv_sec) * 1000 + (now.tv_nsec - t->tv_nsec) / 1000000;
+}
+
+static void numpad_set(int dir)
+{
+	/* right, down-right, down, down-left, left, up-left, up, up-right */
+	static const uint8_t digit[8] = { 6, 3, 2, 1, 4, 7, 8, 9 };
+
+	numpad.release = false;
+	if (dir == numpad.dir)
+		return;
+	if (numpad.dir >= 0)
+		send_key(keypad_vk[digit[numpad.dir]], false);
+	if (dir >= 0) {
+		send_key(keypad_vk[digit[dir]], true);
+		clock_gettime(CLOCK_MONOTONIC, &numpad.since);
+	}
+	numpad.dir = dir;
+}
+
+/* After the messages from bare_app: both axes of a move are in */
+static void numpad_update(void)
+{
+	float x = axis[GP_AXIS_RX], y = axis[GP_AXIS_RY], r = hypotf(x, y), a = atan2f(y, x);
+	int dir = ((int)lrintf(a / 0.7854f) % 8 + 8) % 8;
+
+	if (cfg.rstick != STICK_NUMPAD)
+		return;
+	if (numpad.dir < 0) {
+		if (r > NUMPAD_PRESS)
+			numpad_set(dir);
+	} else if (r < NUMPAD_RELEASE) {
+		if (!numpad.release) {
+			numpad.release = true;
+			clock_gettime(CLOCK_MONOTONIC, &numpad.rest);
+		}
+	} else if (dir != numpad.dir) {
+		float d = fabsf(remainderf(a - (float)numpad.dir * 0.7854f, 6.2832f));
+
+		if (d > NUMPAD_TURN)
+			numpad_set(dir);
+		else
+			numpad.release = false;
+	} else {
+		numpad.release = false;
+	}
+}
+
 static bool moving(void)
 {
+	if (numpad.release)
+		return true;
 	return (cfg.lstick == STICK_MOUSE && (curve(axis[GP_AXIS_LX]) || curve(axis[GP_AXIS_LY]))) ||
 	       (cfg.rstick == STICK_MOUSE && (curve(axis[GP_AXIS_RX]) || curve(axis[GP_AXIS_RY]))) ||
 	       (cfg.rstick == STICK_WHEEL && curve(axis[GP_AXIS_RY])) ||
@@ -1039,6 +1130,9 @@ static void move_tick(void)
 	last_move = now;
 	if (dt > 0.05f)
 		dt = 0.05f;	/* after a pause */
+	if (numpad.release && ms_since(&numpad.since) >= NUMPAD_MIN_MS &&
+	    ms_since(&numpad.rest) >= NUMPAD_REST_MS)
+		numpad_set(-1);
 	if (!moving())
 		return;
 	speed = cfg.cursor_speed * mode.width;
@@ -1111,8 +1205,10 @@ static bool read_app(void)
 		n = recv(GAME_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT);
 		if (n == 0)
 			return false;
-		if (n < 0)
+		if (n < 0) {
+			numpad_update();
 			return errno == EAGAIN || errno == EINTR;
+		}
 		if (n != sizeof(m))
 			continue;
 		if (m.type == GAME_MSG_BUTTON)

@@ -64,9 +64,9 @@ const struct platform platform_ogu = {
 	.inputs = {
 		{ &input_evdev, &(const struct evdev_params){ .name = "gpio-keys", .keys = ogu_keys } },
 		{ &input_evdev, &(const struct evdev_params){
-			.name = "adc-joystick-left", .axes = ogu_left_axes, .deadzone = 0.15f } },
+			.name = "adc-joystick-left", .axes = ogu_left_axes } },
 		{ &input_evdev, &(const struct evdev_params){
-			.name = "adc-joystick-right", .axes = ogu_right_axes, .deadzone = 0.15f } },
+			.name = "adc-joystick-right", .axes = ogu_right_axes } },
 		{ &input_evdev, &(const struct evdev_params){ .name = "rk805 pwrkey", .keys = ogu_power_keys } },
 	},
 #ifdef CONFIG_POWER

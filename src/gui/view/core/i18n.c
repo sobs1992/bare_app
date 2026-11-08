@@ -21,6 +21,17 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_NOT_AVAILABLE]   = { "not available" RU("недоступна") },
 	[S_CHANGE_BACK]     = { "change    B  back" RU("изменить    B  назад") },
 	[S_TWICE_BACK]      = { "B twice: back" RU("B дважды: назад") },
+	[S_STICK_CAL_START] = { "A twice: calibrate the sticks" RU("A дважды: калибровка стиков") },
+	[S_STICK_CAL_REST]  = { "Let go of the sticks...\nB  cancel"
+				RU("Отпустите стики...\nB  отмена") },
+	[S_STICK_CAL_TURN]  = { "Turn the sticks along their edge, slowly, 2-3 times\n"
+				"A  save    Y  reset    B  cancel"
+				RU("Медленно обведите стиками край, 2-3 круга\n"
+				   "A  сохранить    Y  сброс    B  отмена") },
+	[S_STICK_CAL_SAVED] = { "Sticks calibrated" RU("Стики откалиброваны") },
+	[S_STICK_CAL_RESET] = { "Calibration reset" RU("Калибровка сброшена") },
+	[S_STICK_CAL_NOT_SAVED] = { "Could not save the calibration"
+				    RU("Не удалось сохранить калибровку") },
 	[S_LAYERS_VIDEO]    = { "Video layer: test pattern (hardware plane)\n"
 				"UI layer: LVGL with alpha on top\n"
 				"B  back"

@@ -37,20 +37,84 @@ static int failures;
 
 #define NEAR(a, b) (fabsf((a) - (b)) < 1e-3f)
 
+/* A stick with a square gate, off center, each half axis its own reach:
+ * the farthest point it reaches at angle a (radians) */
+static void square_stick(float a, float *x, float *y)
+{
+	float cx = cosf(a), cy = sinf(a), m = fmaxf(fabsf(cx), fabsf(cy));
+
+	cx /= m;
+	cy /= m;
+	*x = 0.1f + cx * (cx < 0 ? 0.6f : 0.8f);
+	*y = -0.05f + cy * (cy < 0 ? 0.9f : 0.7f);
+}
+
 static void test_joystick(void)
 {
-	/* OGA rev 1.1 X axis: 172..772, resting off-center */
-	struct joy_axis_cal c = { .min = 172, .max = 772, .center = 500, .deadzone = 0.1f };
+	/* OGA rev 1.1 X axis: 172..772 */
+	struct joy_axis_cal c = { .min = 172, .max = 772 };
+	struct joy_stick_cal sc, back;
+	struct joy_cal_rec rec;
+	char buf[400];
+	float x, y, a;
+	int i;
 
-	CHECK(NEAR(joy_normalize(&c, 500), 0));
-	CHECK(NEAR(joy_normalize(&c, 772), 1));
-	CHECK(NEAR(joy_normalize(&c, 172), -1));
-	CHECK(NEAR(joy_normalize(&c, 900), 1));		/* clamped */
-	CHECK(NEAR(joy_normalize(&c, 520), 0));		/* inside dead zone */
-	/* half way up (636) is 0.5 raw -> (0.5 - 0.1) / 0.9 after the dead zone */
-	CHECK(NEAR(joy_normalize(&c, 636), 0.4f / 0.9f));
+	CHECK(NEAR(joy_linear(&c, 472), 0));
+	CHECK(NEAR(joy_linear(&c, 772), 1));
+	CHECK(NEAR(joy_linear(&c, 172), -1));
+	CHECK(NEAR(joy_linear(&c, 900), 1));		/* clamped */
+	CHECK(NEAR(joy_linear(&c, 622), 0.5f));
 	c.invert = true;
-	CHECK(NEAR(joy_normalize(&c, 772), -1));
+	CHECK(NEAR(joy_linear(&c, 772), -1));
+
+	/* no calibration: from the rest position to the range's ends */
+	joy_stick_default(&sc, 0.2f, 0);
+	joy_stick_apply(&sc, 0.1f, 0.2f, 0, &x, &y);
+	CHECK(NEAR(x, 0) && NEAR(y, 0));
+	joy_stick_apply(&sc, 0.1f, 1, 0, &x, &y);
+	CHECK(NEAR(x, 1) && NEAR(y, 0));
+	joy_stick_apply(&sc, 0.1f, -1, 0, &x, &y);
+	CHECK(NEAR(x, -1));
+	joy_stick_apply(&sc, 0.1f, 0.25f, 0.05f, &x, &y);	/* round dead zone */
+	CHECK(NEAR(x, 0) && NEAR(y, 0));
+	joy_stick_apply(&sc, 0.1f, 0.2f, 0.5f, &x, &y);	/* half way down */
+	CHECK(NEAR(x, 0) && NEAR(y, 0.4f / 0.9f));
+
+	/* calibration: rest position, then turned along the edge twice */
+	joy_cal_begin(&rec, 0.1f, -0.05f);
+	CHECK(joy_cal_covered(&rec) == 0);
+	for (i = 0; i < 60; i++) {
+		square_stick((float)i * 0.07f, &x, &y);
+		joy_cal_add(&rec, x, y);
+	}
+	CHECK(joy_cal_covered(&rec) < JOY_SECTORS);	/* not all the way round yet */
+	CHECK(!joy_cal_finish(&rec, &sc));
+	for (; i < 200; i++) {
+		square_stick((float)i * 0.07f, &x, &y);
+		joy_cal_add(&rec, x, y);
+	}
+	CHECK(joy_cal_covered(&rec) == JOY_SECTORS);
+	CHECK(joy_cal_finish(&rec, &sc));
+	/* the edge is now the unit circle everywhere, the rest position 0 */
+	for (a = 0; a < 6.28f; a += 0.1f) {
+		square_stick(a, &x, &y);
+		joy_stick_apply(&sc, 0.15f, x, y, &x, &y);
+		CHECK(fabsf(hypotf(x, y) - 1) < 0.02f);
+	}
+	joy_stick_apply(&sc, 0.15f, 0.1f, -0.05f, &x, &y);
+	CHECK(NEAR(x, 0) && NEAR(y, 0));
+	/* straight right and straight up stay so */
+	joy_stick_apply(&sc, 0.15f, 0.9f, -0.05f, &x, &y);
+	CHECK(NEAR(x, 1) && NEAR(y, 0));
+	joy_stick_apply(&sc, 0.15f, 0.1f, -0.95f, &x, &y);
+	CHECK(NEAR(x, 0) && NEAR(y, -1));
+
+	/* settings file text */
+	CHECK(joy_stick_format(&sc, buf, sizeof(buf)) > 0);
+	CHECK(joy_stick_parse(buf, &back));
+	CHECK(NEAR(back.cx, sc.cx) && NEAR(back.yp, sc.yp) && NEAR(back.edge[5], sc.edge[5]));
+	CHECK(!joy_stick_parse("0 0 1 1 1", &back));
+	CHECK(!joy_stick_parse("", &back));
 
 	CHECK(joy_direction(0, 0.6f, 0.5f, 0.3f) == 1);
 	CHECK(joy_direction(1, 0.4f, 0.5f, 0.3f) == 1);		/* hysteresis holds */

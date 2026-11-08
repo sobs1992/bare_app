@@ -4,6 +4,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -829,6 +830,21 @@ static int open_devices(void)
 	return 0;
 }
 
+/* Next to the settings file: bare_app_sticks.conf (the input test writes it) */
+static void load_stick_calibration(void)
+{
+#ifdef CONFIG_SETTINGS_FILE
+	const char *slash = v.pf->config_path ? strrchr(v.pf->config_path, '/') : NULL;
+	char path[256];
+
+	if (!slash)
+		return;
+	snprintf(path, sizeof(path), "%.*s/bare_app_sticks.conf",
+		 (int)(slash - v.pf->config_path), v.pf->config_path);
+	input_load_calibration(path);
+#endif
+}
+
 static void *view_thread(void *arg)
 {
 	(void)arg;
@@ -839,6 +855,7 @@ static void *view_thread(void *arg)
 		return NULL;
 	}
 	input_init(v.ml, NULL, on_gamepad, NULL);
+	load_stick_calibration();
 	v.status = open_devices();
 	if (!v.status) {
 		ctx_snapshot(&v.snap);

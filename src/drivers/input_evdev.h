@@ -22,8 +22,7 @@ struct evdev_axis_map {
 struct evdev_params {
 	const char *name;	/* device name (EVIOCGNAME), e.g. "gpio-keys" */
 	const struct evdev_key_map *keys;	/* may be NULL */
-	const struct evdev_axis_map *axes;	/* may be NULL */
-	float deadzone;		/* for axes, 0..1 */
+	const struct evdev_axis_map *axes;	/* may be NULL; core/input calibrates them */
 };
 
 extern const struct hal_input_ops input_evdev;

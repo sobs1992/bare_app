@@ -65,7 +65,7 @@ const struct platform platform_oga = {
 	.inputs = {
 		{ &input_evdev, &(const struct evdev_params){ .name = "gpio-keys", .keys = oga_keys } },
 		{ &input_evdev, &(const struct evdev_params){
-			.name = "adc-joystick", .axes = oga_axes, .deadzone = 0.15f } },
+			.name = "adc-joystick", .axes = oga_axes } },
 		{ &input_evdev, &(const struct evdev_params){ .name = "rk805 pwrkey", .keys = oga_power_keys } },
 	},
 #ifdef CONFIG_POWER

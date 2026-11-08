@@ -1,8 +1,9 @@
 /*
  * evdev input: finds /dev/input/eventN by device name (the number depends
  * on driver probe order) and maps its keys and axes to the logical gamepad.
- * Axes are normalised with the range from EVIOCGABS; the value at open
- * time is taken as the stick center.
+ * Axes go to core/input over the range from EVIOCGABS (joy_linear()); the
+ * value at open time is reported as the axis' rest position, the core
+ * calibrates the sticks.
  *
  * Hotplug: a device that is missing at start or goes away is looked for
  * again on every "add" uevent of the input subsystem. Buttons held on a
@@ -39,8 +40,11 @@ struct evdev {
 		uint16_t code;
 		enum gp_axis axis;
 		struct joy_axis_cal cal;
+		float rest;
 	} axes[MAX_AXES];
 	int naxes;
+	float moved[GP_AXIS_COUNT];	/* until the SYN_REPORT */
+	uint32_t moved_mask;
 	uint32_t held;		/* GP_BIT() of buttons pressed on this device */
 	struct uevent_mon *mon;
 	struct ml_timer *retry;
@@ -78,14 +82,14 @@ static void setup_axes(struct evdev *ev)
 		ev->axes[ev->naxes].code = m->code;
 		ev->axes[ev->naxes].axis = m->axis;
 		ev->axes[ev->naxes].cal = (struct joy_axis_cal){
-			.min = ai.minimum, .max = ai.maximum, .center = ai.value,
-			.deadzone = ev->p->deadzone, .invert = m->invert,
+			.min = ai.minimum, .max = ai.maximum, .invert = m->invert,
 		};
-		/* a stick pushed at start would make a bad center */
-		if (ai.value <= ai.minimum || ai.value >= ai.maximum)
-			ev->axes[ev->naxes].cal.center = (ai.minimum + ai.maximum) / 2;
-		LOGI(TAG, "%s: axis %u: %d..%d, center %d, flat %d", ev->p->name, m->code,
-		     ai.minimum, ai.maximum, ev->axes[ev->naxes].cal.center, ai.flat);
+		/* a stick pushed at start would make a bad rest position */
+		ev->axes[ev->naxes].rest = ai.value <= ai.minimum || ai.value >= ai.maximum ? 0 :
+					   joy_linear(&ev->axes[ev->naxes].cal, ai.value);
+		input_report_rest(m->axis, ev->axes[ev->naxes].rest);
+		LOGI(TAG, "%s: axis %u: %d..%d, at rest %d, flat %d", ev->p->name, m->code,
+		     ai.minimum, ai.maximum, ai.value, ai.flat);
 		ev->naxes++;
 	}
 }
@@ -110,9 +114,14 @@ static void handle(struct evdev *ev, const struct input_event *e)
 	} else if (e->type == EV_ABS) {
 		for (i = 0; i < ev->naxes; i++)
 			if (ev->axes[i].code == e->code) {
-				input_report_axis(ev->axes[i].axis, joy_normalize(&ev->axes[i].cal, e->value));
+				ev->moved[ev->axes[i].axis] = joy_linear(&ev->axes[i].cal, e->value);
+				ev->moved_mask |= GP_BIT(ev->axes[i].axis);
 				return;
 			}
+	} else if (e->type == EV_SYN && e->code == SYN_REPORT && ev->moved_mask) {
+		/* both axes of a stick at once: no half-moved diagonal */
+		input_report_axes(ev->moved, ev->moved_mask);
+		ev->moved_mask = 0;
 	}
 }
 
@@ -130,8 +139,9 @@ static void detach(struct evdev *ev)
 		if (ev->held & GP_BIT(b))
 			input_report_button(b, false);
 	ev->held = 0;
+	ev->moved_mask = 0;
 	for (i = 0; i < ev->naxes; i++)
-		input_report_axis(ev->axes[i].axis, 0);
+		input_report_axis(ev->axes[i].axis, ev->axes[i].rest);
 }
 
 static void on_readable(int fd, short revents, void *ud)

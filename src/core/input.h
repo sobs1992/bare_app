@@ -1,8 +1,10 @@
 /*
  * Logical gamepad (view thread). Drivers report physical buttons and
- * normalised axes; this module keeps the state, turns the left stick into
- * a virtual D-pad, adds auto-repeat to directions and hands every change
- * to one listener (the view core).
+ * axes over their whole range (joy_linear()); this module calibrates the
+ * sticks (joystick.h: rest position, reach of each half axis, the edge
+ * made round, a round dead zone), keeps the state, turns the left stick
+ * into a virtual D-pad, adds auto-repeat to directions and hands every
+ * change to one listener (the view core).
  */
 #pragma once
 
@@ -10,6 +12,7 @@
 #include <stdint.h>
 
 struct mainloop;
+struct joy_stick_cal;
 
 /* Named as printed on the device */
 enum gp_button {
@@ -43,6 +46,7 @@ struct input_config {
 	uint32_t repeat_period_ms;
 	float stick_press;	/* stick deflection that presses a direction */
 	float stick_release;	/* ...and releases it (hysteresis) */
+	float stick_deadzone;	/* round, 0..1 of the calibrated reach */
 };
 
 void input_init(struct mainloop *ml, const struct input_config *cfg, input_cb cb, void *ud);
@@ -50,10 +54,26 @@ void input_deinit(void);
 
 /* From drivers */
 void input_report_button(enum gp_button b, bool pressed);
-void input_report_axis(enum gp_axis a, float value);
+void input_report_axis(enum gp_axis a, float value);	/* joy_linear() units */
+void input_report_rest(enum gp_axis a, float value);	/* the axis at rest */
+/* Axes moved together (GP_BIT(axis) in mask; an evdev SYN_REPORT): a stick
+ * is calibrated once with both of its new values, never half moved */
+void input_report_axes(const float value[GP_AXIS_COUNT], uint32_t mask);
 
 uint32_t input_buttons(void);		/* GP_BIT() mask of pressed buttons */
-float input_axis(enum gp_axis a);
+float input_axis(enum gp_axis a);	/* calibrated, -1..1 */
+
+/*
+ * Stick calibration: stick 0 is the left one (LX/LY), 1 the right one.
+ * Without one (NULL) the stick's rest position and the driver's range are
+ * used. The file has a line per calibrated stick: "left = <joy_stick_format()>".
+ */
+#define INPUT_STICKS 2
+void input_raw_stick(int stick, float *x, float *y);	/* before calibration */
+bool input_calibration(int stick, struct joy_stick_cal *c);	/* false: none, c the default */
+void input_set_calibration(int stick, const struct joy_stick_cal *c);
+int input_load_calibration(const char *path);	/* "~/" is $HOME; NULL: memory only */
+int input_save_calibration(void);		/* to the file loaded from */
 
 /* What the hardware has: drivers declare it when a device appears */
 void input_declare(uint32_t buttons, uint32_t axes);	/* GP_BIT() masks, added up */
