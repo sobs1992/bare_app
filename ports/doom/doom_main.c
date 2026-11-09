@@ -3,7 +3,10 @@
  * doomgeneric it is linked with). Started by bare_app's src/games/doom.c
  * with the socket and the frame memory of game_ipc.h; draws frames scaled
  * to the video layer (4:3, centred) and turns gamepad buttons into Doom
- * keys (axes are not used: the stick comes as a D-pad too). Arguments are Doom's own
+ * keys (axes are not used: the stick comes as a D-pad too). A USB mouse
+ * turns (sideways moves only: up and down would walk), its buttons are
+ * Doom's (fire, strafe, forward), the wheel picks the next weapon as Y.
+ * Arguments are Doom's own
  * (bare_app passes -iwad). Config and saved games go to the
  * current directory.
  */
@@ -16,6 +19,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "d_event.h"
 #include "doomgeneric.h"
 #include "doomkeys.h"
 #include "doomstat.h"
@@ -48,6 +52,9 @@ static unsigned q_head, q_tail;
 static unsigned char down_key[GP_COUNT];	/* key sent for a held button, 0 none */
 static unsigned char weapon_key;
 static uint32_t weapon_release;
+static int mouse_buttons;	/* a USB mouse's, bit per GAME_MOUSE_* */
+static int mouse_dx;		/* its moves not yet posted */
+static bool mouse_changed;
 
 static void push(int pressed, unsigned char key)
 {
@@ -153,11 +160,32 @@ static void pump(void)
 
 	if (stop)
 		I_Quit();	/* SIGTERM from bare_app: leave saving the config */
-	while ((n = game_link_recv(&m)) > 0)
-		if (m.type == GAME_MSG_BUTTON)
+	while ((n = game_link_recv(&m)) > 0) {
+		if (m.type == GAME_MSG_BUTTON) {
 			on_button(m.code, m.pressed);
+		} else if (m.type == GAME_MSG_MOUSE_BUTTON && m.code <= GAME_MOUSE_MIDDLE) {
+			if (m.pressed)
+				mouse_buttons |= 1 << m.code;
+			else
+				mouse_buttons &= ~(1 << m.code);
+			mouse_changed = true;
+		} else if (m.type == GAME_MSG_MOUSE_MOVE && m.code == GAME_MOUSE_X) {
+			mouse_dx += m.value;
+			mouse_changed = true;
+		} else if (m.type == GAME_MSG_MOUSE_MOVE && m.code == GAME_MOUSE_WHEEL && m.value) {
+			on_button(GP_Y, true);	/* the next weapon */
+		}
+	}
 	if (n < 0)
 		I_Quit();	/* bare_app is gone */
+	if (mouse_changed) {
+		/* Doom's mouse buttons are its bits 0..2: fire, strafe, forward */
+		event_t ev = { .type = ev_mouse, .data1 = mouse_buttons, .data2 = mouse_dx };
+
+		D_PostEvent(&ev);
+		mouse_dx = 0;
+		mouse_changed = false;
+	}
 	if (weapon_key && (int32_t)(DG_GetTicksMs() - weapon_release) >= 0) {
 		push(0, weapon_key);
 		weapon_key = 0;

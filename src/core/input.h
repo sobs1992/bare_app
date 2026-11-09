@@ -67,14 +67,15 @@ void input_report_rest(enum gp_axis a, float value);	/* the axis at rest */
 void input_report_axes(const float value[GP_AXIS_COUNT], uint32_t mask);
 
 /*
- * Keyboards and mice (drivers/input_hid.c). While raw() says so (a game in
- * front that takes them, as Windows games do) keys and the mouse go to the
- * listener as they are: GP_EV_KEY with Linux key codes, GP_EV_MOUSE_*.
- * Otherwise the keys of input_key_button() press gamepad buttons (arrows,
- * Enter A, Esc B...) and the mouse does nothing. A release goes where its
- * press went.
+ * Keyboards and mice (drivers/input_hid.c). While raw(false) says so (a
+ * game in front that takes a keyboard, as Windows games and Heroes III do)
+ * keys go to the listener as they are: GP_EV_KEY with Linux key codes;
+ * otherwise the keys of input_key_button() press gamepad buttons (arrows,
+ * Enter A, Esc B...). While raw(true) says so (a game that takes a mouse)
+ * the mouse goes to the listener as GP_EV_MOUSE_*, otherwise it does
+ * nothing. A release goes where its press went.
  */
-void input_set_raw_query(bool (*raw)(void));
+void input_set_raw_query(bool (*raw)(bool mouse));
 void input_report_key(unsigned code, bool pressed);
 void input_report_mouse_button(int button, bool pressed);
 void input_report_mouse_move(int dx, int dy, int wheel);

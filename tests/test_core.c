@@ -395,6 +395,7 @@ static struct {
 	int keys, key_code, key_pressed, buttons, button, button_pressed, moves, mbuttons;
 } hid_seen;
 static bool hid_raw;
+static bool hid_mouse_only;	/* a game that takes the mouse but not the keys (Doom) */
 
 static void on_hid_input(const struct gp_event *ev, void *ud)
 {
@@ -414,9 +415,9 @@ static void on_hid_input(const struct gp_event *ev, void *ud)
 	}
 }
 
-static bool hid_raw_query(void)
+static bool hid_raw_query(bool mouse)
 {
-	return hid_raw;
+	return hid_raw || (mouse && hid_mouse_only);
 }
 
 /* Keyboards and mice: gamepad buttons in the UI, as they are to a game */
@@ -451,6 +452,12 @@ static void test_hid(void)
 	hid_raw = false;
 	input_report_mouse_button(0, false);
 	CHECK(hid_seen.moves == 1 && hid_seen.mbuttons == 2);
+	hid_mouse_only = true;	/* the mouse as it is, keys as buttons */
+	input_report_mouse_move(1, 1, 0);
+	input_report_key(28, true);
+	input_report_key(28, false);
+	CHECK(hid_seen.moves == 2 && hid_seen.keys == 2 && hid_seen.buttons == 4 && hid_seen.button == GP_A);
+	hid_mouse_only = false;
 	CHECK(input_key_button(1 /* KEY_ESC */) == GP_B && input_key_button(30) == GP_NONE);
 	input_deinit();
 	mainloop_free(ml);

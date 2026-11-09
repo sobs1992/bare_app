@@ -113,7 +113,9 @@ static struct game_proc *homm3_start(int entry, const struct game_env *ge)
 	if (opt_is(ge->pf, "homm3.keys", "ogu"))
 		game_vars_add(&env, "BARE_APP_VCMI_KEYS=ogu");
 	struct game_spawn s = { .path = CONFIG_GAME_HOMM3_PROGRAM, .argv = argv, .env = env.v,
-				.dir = homm3_data(), .width = ge->width, .height = ge->height };
+				.dir = homm3_data(), .width = ge->width, .height = ge->height,
+				/* a USB keyboard and mouse as they are (VCMI patch 0012) */
+				.keyboard = true, .mouse = true };
 
 	LOGI(TAG, "game %s, data %s, sound %s, language %s", homm3_game(), homm3_data(),
 	     alsa[0] ? alsa : "off", ge->lang);

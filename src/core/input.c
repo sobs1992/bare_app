@@ -50,7 +50,7 @@ static struct {
 	int stick_x, stick_y;	/* -1/0/+1 */
 	struct ml_timer *repeat;
 	enum gp_button repeat_btn;
-	bool (*raw_query)(void);
+	bool (*raw_query)(bool mouse);
 	uint8_t key_raw[KEY_SLOTS / 8], key_btn[KEY_SLOTS / 8];	/* where presses went */
 	uint8_t mouse_raw;	/* bit per mouse button pressed raw */
 } in;
@@ -388,14 +388,14 @@ enum gp_button input_key_button(unsigned code)
 	return GP_NONE;
 }
 
-void input_set_raw_query(bool (*raw)(void))
+void input_set_raw_query(bool (*raw)(bool mouse))
 {
 	in.raw_query = raw;
 }
 
-static bool raw_now(void)
+static bool raw_now(bool mouse)
 {
-	return in.raw_query && in.raw_query();
+	return in.raw_query && in.raw_query(mouse);
 }
 
 #define BIT_SET(a, i) ((a)[(i) / 8] |= 1u << ((i) % 8))
@@ -410,7 +410,7 @@ void input_report_key(unsigned code, bool pressed)
 	if (code >= KEY_SLOTS)
 		return;
 	if (pressed) {
-		if (raw_now()) {
+		if (raw_now(false)) {
 			BIT_SET(in.key_raw, code);
 			if (in.cb)
 				in.cb(&ev, in.ud);
@@ -438,7 +438,7 @@ void input_report_mouse_button(int button, bool pressed)
 	if (button < 0 || button > 7)
 		return;
 	if (pressed) {
-		if (!raw_now())
+		if (!raw_now(true))
 			return;
 		in.mouse_raw |= 1u << button;
 	} else if (in.mouse_raw & 1u << button) {
@@ -454,6 +454,6 @@ void input_report_mouse_move(int dx, int dy, int wheel)
 {
 	struct gp_event ev = { .type = GP_EV_MOUSE_MOVE, .dx = dx, .dy = dy, .wheel = wheel };
 
-	if ((dx || dy || wheel) && raw_now() && in.cb)
+	if ((dx || dy || wheel) && raw_now(true) && in.cb)
 		in.cb(&ev, in.ud);
 }

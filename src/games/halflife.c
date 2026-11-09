@@ -226,7 +226,9 @@ static struct game_proc *halflife_start(int entry, const struct game_env *ge)
 	}
 	argv[n] = NULL;
 	struct game_spawn s = { .path = program, .argv = argv, .env = env.v, .dir = data,
-				.width = ge->width, .height = ge->height };
+				.width = ge->width, .height = ge->height,
+				/* a USB keyboard and mouse as they are (Xash patch 0010) */
+				.keyboard = true, .mouse = true };
 
 	LOGI(TAG, "game %s, data %s, renderer %s, language %s, sound %s", halflife_game(), data,
 	     ref ? ref : "of the game's menu", language(lang), alsa[0] ? alsa : "off");

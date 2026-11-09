@@ -358,7 +358,8 @@ static struct game_proc *native_start(int i, const struct game_env *ge)
 	}
 
 	struct game_spawn s = { .path = exe, .argv = argv, .env = env.v, .dir = cwd,
-				.width = ge->width, .height = ge->height };
+				.width = ge->width, .height = ge->height,
+				.mouse = true };	/* SDL's bareapp driver */
 
 	LOGI(TAG, "%s: %s, data %s, sound %s", g->name, exe, data, alsa[0] ? alsa : "off");
 	return game_proc_start(&s);

@@ -402,9 +402,14 @@ USB-клавиатура и мышь (символ `INPUT_HID`, драйвер `
 подключённые в любой момент; устройства захватываются (`EVIOCGRAB`), иначе клавиши
 попадали бы и в текстовую консоль (Alt+F2 увёл бы экран). В меню и в играх без своей
 клавиатуры стрелки — крестовина, Enter — A, Esc и Backspace — B, Space — X, Tab — Y,
-Page Up/Down — L1/R1, F1…F6 — те же кнопки. Windows-играм (`bare_app_wine`)
-клавиши и мышь идут как есть: `GAME_MSG_KEY` с кодом клавиши Linux,
-`GAME_MSG_MOUSE_BUTTON`, `GAME_MSG_MOUSE_MOVE` (`game_ipc.h`); их получает только
-игра, запущенная с `game_spawn.hid`. Отпускание всегда идёт туда же, куда нажатие.
+Page Up/Down — L1/R1, F1…F6 — те же кнопки. Windows-играм (`bare_app_wine`),
+Heroes III и Half-Life клавиши идут как есть: `GAME_MSG_KEY` с кодом клавиши Linux
+(горячие клавиши, назначение клавиш, ввод текста), их получает только игра, запущенная
+с `game_spawn.keyboard`.
+Мышь (`GAME_MSG_MOUSE_BUTTON`, `GAME_MSG_MOUSE_MOVE`, `game_ipc.h`) получают игры с
+`game_spawn.mouse`: Windows-игры, Heroes III, Half-Life (обзор в игре, курсор в меню),
+Doom (поворот, кнопки — огонь, стрейф, вперёд, колесо — следующее оружие) и
+SDL-игры из game.ini (драйвер SDL bareapp, относительный режим тоже). Отпускание
+всегда идёт туда же, куда нажатие.
 
 В симуляторе SDL: стрелки, X = A, Z/Esc = B, S = X, A = Y, Q/W = L1/R1, 1…6 = F1…F6.

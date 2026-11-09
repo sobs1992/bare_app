@@ -24,7 +24,8 @@ struct game_spawn {
 	const char *const *env;		/* "NAME=value" added to ours, NULL-terminated; may be NULL */
 	const char *dir;		/* working directory */
 	int width, height;		/* frame size: the video layer */
-	bool hid;			/* takes a keyboard and a mouse (GAME_MSG_KEY...) */
+	bool keyboard;			/* takes a keyboard's keys as they are (GAME_MSG_KEY) */
+	bool mouse;			/* takes a mouse (GAME_MSG_MOUSE_*) */
 };
 
 /* NULL with errno set */
@@ -37,7 +38,8 @@ const struct hal_fb *game_proc_frame(struct game_proc *g, bool *ended);
 /* Buttons (auto-repeats are not sent) and axes; keys and the mouse to a
  * game that takes them */
 void game_proc_input(struct game_proc *g, const struct gp_event *ev);
-bool game_proc_hid(const struct game_proc *g);
+/* The game takes a keyboard's keys as they are (false) or a mouse (true) */
+bool game_proc_hid(const struct game_proc *g, bool mouse);
 /* The game stops in the background (SIGSTOP) after letting go of the
  * buttons and axes it was sent as held; resume continues it */
 void game_proc_pause(struct game_proc *g);

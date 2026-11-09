@@ -592,12 +592,13 @@ static bool game_in_front(void)
 #endif
 }
 
-/* core/input: keys and the mouse go to the game as they are */
-static bool hid_game_in_front(void)
+/* core/input: keys or the mouse go to the game as they are */
+static bool hid_game_in_front(bool mouse)
 {
 #ifdef HAVE_GAMES
-	return game_in_front() && game_proc_hid(v.video_game);
+	return game_in_front() && game_proc_hid(v.video_game, mouse);
 #else
+	(void)mouse;
 	return false;
 #endif
 }

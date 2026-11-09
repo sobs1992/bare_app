@@ -37,7 +37,7 @@ struct game_proc {
 	bool paused;
 	uint32_t held;		/* GP_BIT()s sent as pressed */
 	uint32_t axes;		/* bits of the axes sent off centre */
-	bool hid;		/* takes keys and the mouse */
+	bool takes_keys, takes_mouse;	/* a keyboard's keys as they are, a mouse */
 	uint8_t keys[32];	/* key codes below 256 sent as pressed */
 	uint8_t mouse;		/* mouse buttons sent as pressed */
 };
@@ -160,7 +160,8 @@ struct game_proc *game_proc_start(const struct game_spawn *s)
 	g = calloc(1, sizeof(*g));
 	if (!g)
 		return NULL;
-	g->hid = s->hid;
+	g->takes_keys = s->keyboard;
+	g->takes_mouse = s->mouse;
 	g->sock = -1;
 	g->shm = MAP_FAILED;
 	g->shm_size = game_shm_size(&hdr);
@@ -248,9 +249,9 @@ static void send_msg(struct game_proc *g, const struct game_msg *m)
 		g->axes = m->value ? g->axes | 1u << m->code : g->axes & ~(1u << m->code);
 }
 
-bool game_proc_hid(const struct game_proc *g)
+bool game_proc_hid(const struct game_proc *g, bool mouse)
 {
-	return g && g->hid;
+	return g && (mouse ? g->takes_mouse : g->takes_keys);
 }
 
 static void hid_input(struct game_proc *g, const struct gp_event *ev)
@@ -300,7 +301,7 @@ void game_proc_input(struct game_proc *g, const struct gp_event *ev)
 	if (g->ended || g->paused)
 		return;
 	if (ev->type == GP_EV_KEY || ev->type == GP_EV_MOUSE_BUTTON || ev->type == GP_EV_MOUSE_MOVE) {
-		if (g->hid)
+		if (game_proc_hid(g, ev->type != GP_EV_KEY))
 			hid_input(g, ev);
 		return;
 	}

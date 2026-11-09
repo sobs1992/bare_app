@@ -52,7 +52,7 @@ static struct game_proc *doom_start(int entry, const struct game_env *ge)
 	char *const argv[] = { (char *)GAME, (char *)"-iwad", (char *)doom_wad(),
 			       (char *)(pcm ? "-pcm" : "-nosound"), (char *)pcm, NULL };
 	struct game_spawn s = { .path = game, .argv = argv, .dir = dir,
-				.width = ge->width, .height = ge->height };
+				.width = ge->width, .height = ge->height, .mouse = true };
 
 	(void)entry;
 	if (access(doom_wad(), R_OK) < 0) {
