@@ -71,7 +71,7 @@ enum act_kind { ACT_NONE, ACT_KEYS, ACT_MOUSE, ACT_WHEEL, ACT_MAGNIFY };
 
 /* What a button does: up to 4 keys pressed together (ctrl+s), a mouse
  * button (the WB_MOUSE_*_DOWN flag), a wheel step (+1 / -1) or the
- * magnifier while it is held */
+ * magnifier on and off */
 struct action {
 	uint8_t kind, count;
 	int16_t wheel;
@@ -79,7 +79,7 @@ struct action {
 	uint16_t vk[4];
 };
 
-enum stick_use { STICK_NONE, STICK_MOUSE, STICK_ARROWS, STICK_WHEEL, STICK_NUMPAD, STICK_TURN };
+enum stick_use { STICK_NONE, STICK_MOUSE, STICK_ARROWS, STICK_WHEEL, STICK_NUMPAD, STICK_TURN, STICK_SCROLL };
 
 static struct {
 	char dir[PATH_MAX];		/* game directory */
@@ -217,7 +217,7 @@ static enum stick_use parse_stick(const char *v)
 {
 	return !strcmp(v, "mouse") ? STICK_MOUSE : !strcmp(v, "arrows") ? STICK_ARROWS :
 	       !strcmp(v, "wheel") ? STICK_WHEEL : !strcmp(v, "numpad") ? STICK_NUMPAD :
-	       !strcmp(v, "turn") ? STICK_TURN : STICK_NONE;
+	       !strcmp(v, "turn") ? STICK_TURN : !strcmp(v, "scroll") ? STICK_SCROLL : STICK_NONE;
 }
 
 static char *trim(char *s)
@@ -1110,9 +1110,37 @@ static void send_mouse_at(int x, int y, uint32_t flags, int wheel)
 	client_send(c, &m);
 }
 
+/*
+ * rstick = scroll, for a map scrolled by the mouse at the screen's edge
+ * (Heroes III): pushed, the Windows pointer goes to that edge (a corner for
+ * a diagonal) while the cursor drawn stays where it is; back at rest, the
+ * pointer comes back to the cursor. -1, 0, 1 across and down: what the
+ * pointer does and what the stick asks for (scroll_update()).
+ */
+static int scroll_dir[2], scroll_want[2];
+
+static bool scrolling(void)
+{
+	return scroll_dir[0] || scroll_dir[1];
+}
+
+/* The pointer where the stick's scrolling wants it */
+static void scroll_send(void)
+{
+	int x = scroll_dir[0] < 0 ? 0 : scroll_dir[0] > 0 ? (int)mode.width - 1 : (int)cur_x;
+	int y = scroll_dir[1] < 0 ? 0 : scroll_dir[1] > 0 ? (int)mode.height - 1 : (int)cur_y;
+
+	if (trace)
+		msg("scroll %d,%d: pointer at %d,%d", scroll_dir[0], scroll_dir[1], x, y);
+	send_mouse_at(x, y, 0, 0);
+}
+
 static void send_mouse(uint32_t flags, int wheel)
 {
 	send_mouse_at((int)cur_x, (int)cur_y, flags, wheel);
+	/* a click while scrolling: where the cursor is, then back to the edge */
+	if (scrolling())
+		scroll_send();
 }
 
 /* A key of the cursor block, which the numeric keypad has too */
@@ -1398,9 +1426,11 @@ static void do_action(const struct action *a, bool pressed)
 			send_mouse(0, a->wheel);
 		break;
 	case ACT_MAGNIFY:
-		if (pressed && !magnify)
+		if (!pressed)
+			break;
+		magnify = !magnify;
+		if (magnify)
 			follow_cursor(true);
-		magnify = pressed;
 		dirty = true;
 		break;
 	}
@@ -1563,9 +1593,42 @@ static void turn_tick(float dt)
 	}
 }
 
+/*
+ * The pointer to where the right stick asks (rstick = scroll): out to an
+ * edge at once, back from one only once the stick has stayed back for
+ * SCROLL_REST_MS (a lone ADC sample near the center is no release);
+ * SETTLE from move_tick() to end such a wait.
+ */
+#define SCROLL_REST_MS 60
+
+static bool scroll_waiting;		/* back from an edge, after the rest */
+static struct timespec scroll_since;
+
+static void scroll_update(bool settle)
+{
+	bool back = (scroll_dir[0] && !scroll_want[0]) || (scroll_dir[1] && !scroll_want[1]);
+
+	if (scroll_want[0] == scroll_dir[0] && scroll_want[1] == scroll_dir[1]) {
+		scroll_waiting = false;
+		return;
+	}
+	if (back) {
+		if (!scroll_waiting) {
+			scroll_waiting = true;
+			clock_gettime(CLOCK_MONOTONIC, &scroll_since);
+		}
+		if (!settle || ms_since(&scroll_since) < SCROLL_REST_MS)
+			return;
+	}
+	scroll_waiting = false;
+	scroll_dir[0] = scroll_want[0];
+	scroll_dir[1] = scroll_want[1];
+	scroll_send();
+}
+
 static bool moving(void)
 {
-	if (numpad.release || turn.key)
+	if (numpad.release || turn.key || scroll_waiting)
 		return true;
 	return (cfg.lstick == STICK_MOUSE && (curve(axis[GP_AXIS_LX]) || curve(axis[GP_AXIS_LY]))) ||
 	       (cfg.rstick == STICK_MOUSE && (curve(axis[GP_AXIS_RX]) || curve(axis[GP_AXIS_RY]))) ||
@@ -1591,6 +1654,13 @@ static void move_cursor(float nx, float ny)
 	 * centring it): without this, its cursor stopped short of the
 	 * screen's edge once this one got there first.
 	 */
+	if (scrolling()) {
+		/* the pointer stays at the edge; the cursor drawn moves */
+		past_x = past_y = 0;
+		if ((int)cur_x != ox || (int)cur_y != oy)
+			dirty = true;
+		return;
+	}
 	past_x = nx != cur_x ? past_x + (nx - cur_x) : 0;
 	past_y = ny != cur_y ? past_y + (ny - cur_y) : 0;
 	px = (int)past_x;
@@ -1709,6 +1779,8 @@ static void move_tick(void)
 	if (numpad.release && ms_since(&numpad.since) >= NUMPAD_MIN_MS &&
 	    ms_since(&numpad.rest) >= NUMPAD_REST_MS)
 		numpad_set(-1);
+	if (scroll_waiting)
+		scroll_update(true);
 	if (!moving())
 		return;
 	speed = cfg.cursor_speed * mode.width;
@@ -1745,6 +1817,16 @@ static void on_axis(enum gp_axis a, int value)
 	if (!moving())
 		clock_gettime(CLOCK_MONOTONIC, &last_move);
 	axis[a] = (float)value / GAME_AXIS_MAX;
+	if (cfg.rstick == STICK_SCROLL && (a == GP_AXIS_RX || a == GP_AXIS_RY)) {
+		int i = a == GP_AXIS_RX ? 0 : 1, d = scroll_want[i];
+		float v = axis[a];
+
+		/* out past half way, back in below 0.35 */
+		if (!d || d * v < 0.35f)
+			d = v < -0.5f ? -1 : v > 0.5f ? 1 : 0;
+		scroll_want[i] = d;
+		scroll_update(false);
+	}
 	if (cfg.rstick == STICK_ARROWS && (a == GP_AXIS_RX || a == GP_AXIS_RY)) {
 		/* a direction held while the stick is out */
 		static bool out[4];
