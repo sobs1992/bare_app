@@ -27,6 +27,8 @@ struct wine_game {
 	char exe[256];
 	char hint[512], hint_ru[512];	/* the controls, "" the generic hint */
 	char cover[PATH_MAX];		/* "cover" of wine.ini, relative to dir */
+	int minimize;			/* "minimize": f1..f6, -1 F5 (games' own) */
+	bool trigger_volume;		/* "volume = triggers": L2, R2 */
 };
 
 static struct wine_game found[WINE_MAX_GAMES];
@@ -49,6 +51,15 @@ static bool ini_value(const char *section, const char *key, const char *value, v
 		ini_copy_lines(g->hint_ru, sizeof(g->hint_ru), value);
 	else if (!strcasecmp(key, "cover"))
 		snprintf(g->cover, sizeof(g->cover), "%s", value);
+	else if (!strcasecmp(key, "minimize")) {
+		static const enum gp_button f[] = { GP_F1, GP_F2, GP_F3, GP_F4, GP_F5, GP_F6 };
+
+		if ((value[0] == 'f' || value[0] == 'F') && value[1] >= '1' && value[1] <= '6' && !value[2])
+			g->minimize = f[value[1] - '1'];
+		else
+			LOGW(TAG, "%s: minimize = %s?", g->dir, value);
+	} else if (!strcasecmp(key, "volume"))
+		g->trigger_volume = !strcasecmp(value, "triggers");
 	return true;
 }
 
@@ -82,6 +93,8 @@ static int wine_scan(void)
 		if (snprintf(g->dir, sizeof(g->dir), "%s/%s", root, e->d_name) >= (int)sizeof(g->dir))
 			continue;
 		g->name[0] = g->exe[0] = g->hint[0] = g->hint_ru[0] = g->cover[0] = '\0';
+		g->minimize = -1;
+		g->trigger_volume = false;
 		if (!read_ini(g))
 			continue;
 		if (g->cover[0] != '/') {	/* relative to the game, cover.png by default */
@@ -116,6 +129,8 @@ static void wine_info(int i, struct game_info *gi)
 		gi->hint = !strncmp(i18n_lang(), "ru", 2) && g->hint_ru[0] ? g->hint_ru
 			   : g->hint[0] ? g->hint : NULL;
 		gi->cover = g->cover;
+		gi->minimize = g->minimize;
+		gi->trigger_volume = g->trigger_volume;
 	}
 }
 
@@ -171,7 +186,8 @@ static struct game_proc *wine_start(int i, const struct game_env *ge)
 	return game_proc_start(&s);
 }
 
-/* L2 and R2 are the game's (wine.ini [keys]) */
+/* L2 and R2 are the game's (wine.ini [keys]) unless "volume = triggers"; F5
+ * minimises unless "minimize" names another F key */
 const struct game_def game_wine = {
 	.id = "wine",
 	.hint = S_WINE_HINT,

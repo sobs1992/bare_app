@@ -33,7 +33,7 @@ int game_entries(const struct game_def *g, bool rescan)
 
 static struct game_info info(struct game_ref g)
 {
-	struct game_info gi = { .trigger_volume = g.def->trigger_volume };
+	struct game_info gi = { .trigger_volume = g.def->trigger_volume, .minimize = -1 };
 
 	if (g.def->info)
 		g.def->info(g.entry, &gi);
@@ -97,6 +97,10 @@ bool game_trigger_volume(struct game_ref g)
 
 enum gp_button game_minimize_button(struct game_ref g, const struct platform *pf)
 {
+	int own = g.def ? info(g).minimize : -1;
+
+	if (own >= 0)
+		return own;
 	return g.def && g.def->minimize_for ? g.def->minimize_for(pf) : GP_F5;
 }
 

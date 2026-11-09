@@ -96,6 +96,8 @@ static struct {
 	bool cursor_keys;		/* arrows = cursor: the arrow keys are the cursor block's */
 	float cursor_speed;		/* screen widths a second at full deflection */
 	float mouse_speed;		/* desktop pixels a count of a real mouse */
+	int edge_zone;			/* edge_zone: pixels of the screen's edge the pointer keeps
+					 * out of unless the stick pushes it there */
 	bool fill;			/* scale = fill: the whole frame, the aspect not kept */
 	struct action button[GP_COUNT];
 } cfg;
@@ -300,11 +302,14 @@ static int read_ini(const char *path)
 			else if (!strcmp(key, "rstick"))
 				cfg.rstick = parse_stick(value);
 			else if (!strcmp(key, "dpad"))
-				cfg.dpad = parse_stick(value) == STICK_MOUSE ? STICK_MOUSE : STICK_ARROWS;
+				cfg.dpad = parse_stick(value) == STICK_MOUSE ? STICK_MOUSE :
+					   parse_stick(value) == STICK_SCROLL ? STICK_SCROLL : STICK_ARROWS;
 			else if (!strcmp(key, "cursor_speed"))
 				cfg.cursor_speed = strtof(value, NULL);
 			else if (!strcmp(key, "mouse_speed"))
 				cfg.mouse_speed = strtof(value, NULL);
+			else if (!strcmp(key, "edge_zone"))
+				cfg.edge_zone = atoi(value);
 			else if (!strcmp(key, "arrows"))
 				cfg.cursor_keys = !strcmp(value, "cursor");
 			else {
@@ -341,7 +346,8 @@ static int read_ini(const char *path)
 				msg("%s:%d: scale %s?", path, lineno, value);
 			cfg.fill = !strcmp(value, "fill");
 		} else if (strcmp(key, "name") && strcmp(key, "render") && strcmp(key, "cover") &&
-			   strncmp(key, "hint", 4)) {	/* bare_app's: the menu entry */
+			   strcmp(key, "minimize") && strcmp(key, "volume") &&
+			   strncmp(key, "hint", 4)) {	/* bare_app's: the menu entry, its buttons */
 			msg("%s:%d: %s?", path, lineno, key);
 		}
 	}
@@ -1092,6 +1098,41 @@ static struct client *input_client(void)
 }
 
 /* The cursor to x,y: may be past the screen's edge (see move_tick()) */
+/*
+ * edge_zone, for a game scrolling its map while the mouse is at the
+ * screen's edge (Heroes III): the stick's cursor may go to the edge, but
+ * the game's pointer stays edge_zone pixels in from it unless the stick
+ * pushes that way, so the map scrolls only while the stick is pushed (a
+ * real mouse goes to the edge as it is).
+ */
+static float axis[GP_AXIS_COUNT];
+static bool dpad_dir[4];		/* dpad = mouse, scroll: held */
+static bool real_mouse_used;		/* the cursor last moved by a real mouse */
+static int pointer_x = -1, pointer_y = -1;	/* where the pointer was sent last */
+
+static int edge_keep(int v, int size, float push)
+{
+	int z = cfg.edge_zone;
+
+	if (v < z && !(push < -STICK_DEAD))
+		return z;
+	if (v > size - 1 - z && !(push > STICK_DEAD))
+		return size - 1 - z;
+	return v;
+}
+
+/* The pointer for the cursor: the cursor, edge_zone aside */
+static void pointer_at(int *x, int *y)
+{
+	*x = (int)cur_x;
+	*y = (int)cur_y;
+	if (cfg.edge_zone <= 0 || real_mouse_used || (int)mode.width <= 2 * cfg.edge_zone ||
+	    (int)mode.height <= 2 * cfg.edge_zone)
+		return;
+	*x = edge_keep(*x, mode.width, cfg.lstick == STICK_MOUSE ? axis[GP_AXIS_LX] : 0);
+	*y = edge_keep(*y, mode.height, cfg.lstick == STICK_MOUSE ? axis[GP_AXIS_LY] : 0);
+}
+
 static void send_mouse_at(int x, int y, uint32_t flags, int wheel)
 {
 	struct client *c = input_client();
@@ -1101,8 +1142,8 @@ static void send_mouse_at(int x, int y, uint32_t flags, int wheel)
 		return;
 	if (trace && (flags || wheel))
 		msg("mouse %d,%d flags %#x wheel %d", x, y, flags, wheel);
-	m.mouse.x = x;
-	m.mouse.y = y;
+	m.mouse.x = pointer_x = x;
+	m.mouse.y = pointer_y = y;
 	m.mouse.flags = flags | WB_MOUSE_MOVE;
 	if (wheel) {
 		m.mouse.flags |= WB_MOUSE_WHEEL;
@@ -1119,9 +1160,11 @@ static void send_mouse_at(int x, int y, uint32_t flags, int wheel)
  * pointer does and what the stick asks for (scroll_update()).
  */
 static int scroll_dir[2], scroll_want[2];
-static int scroll_push[2];		/* where the stick is pushed: -1, 0, 1 (hysteresis) */
+static int scroll_push[2];		/* where the stick or D-pad pushes: -1, 0, 1 */
+static int stick_push[2];		/* where the right stick is pushed (hysteresis) */
 
 static void scroll_update(bool settle);
+static void scroll_input(void);
 
 static bool scrolling(void)
 {
@@ -1131,8 +1174,11 @@ static bool scrolling(void)
 /* The pointer where the stick's scrolling wants it */
 static void scroll_send(void)
 {
-	int x = scroll_dir[0] < 0 ? 0 : scroll_dir[0] > 0 ? (int)mode.width - 1 : (int)cur_x;
-	int y = scroll_dir[1] < 0 ? 0 : scroll_dir[1] > 0 ? (int)mode.height - 1 : (int)cur_y;
+	int x, y;
+
+	pointer_at(&x, &y);
+	x = scroll_dir[0] < 0 ? 0 : scroll_dir[0] > 0 ? (int)mode.width - 1 : x;
+	y = scroll_dir[1] < 0 ? 0 : scroll_dir[1] > 0 ? (int)mode.height - 1 : y;
 
 	if (trace)
 		msg("scroll %d,%d: pointer at %d,%d", scroll_dir[0], scroll_dir[1], x, y);
@@ -1141,7 +1187,10 @@ static void scroll_send(void)
 
 static void send_mouse(uint32_t flags, int wheel)
 {
-	send_mouse_at((int)cur_x, (int)cur_y, flags, wheel);
+	int x, y;
+
+	pointer_at(&x, &y);
+	send_mouse_at(x, y, flags, wheel);
 	/* a click while scrolling: where the cursor is, then back to the edge */
 	if (scrolling())
 		scroll_send();
@@ -1404,8 +1453,6 @@ static void accept_client(int listen_fd)
 /* ---- gamepad -> mouse and keyboard ----------------------------------------- */
 
 static struct action held[GP_COUNT];	/* what a held button did */
-static float axis[GP_AXIS_COUNT];
-static bool dpad_dir[4];		/* dpad = mouse */
 static float wheel_acc;
 static struct timespec last_move;
 
@@ -1459,8 +1506,10 @@ static void on_button(enum gp_button b, bool pressed, bool stick)
 			send_key(arrows[b], pressed);
 		return;
 	}
-	if (b <= GP_RIGHT && cfg.dpad == STICK_MOUSE) {
+	if (b <= GP_RIGHT && (cfg.dpad == STICK_MOUSE || cfg.dpad == STICK_SCROLL)) {
 		dpad_dir[b] = pressed;
+		if (cfg.dpad == STICK_SCROLL)
+			scroll_input();
 		return;
 	}
 	if (pressed) {
@@ -1637,22 +1686,57 @@ static void scroll_update(bool settle)
 	scroll_send();
 }
 
+/* Where the right stick (rstick = scroll) or the D-pad (dpad = scroll) push:
+ * the map scrolls, or with the magnifier on the magnifier moves (and the
+ * map scrolls once it is at the screen's edge: magnifier_tick()) */
+static void scroll_input(void)
+{
+	int d[2] = { 0, 0 }, i;
+
+	if (cfg.dpad == STICK_SCROLL) {
+		d[0] = dpad_dir[GP_RIGHT] - dpad_dir[GP_LEFT];
+		d[1] = dpad_dir[GP_DOWN] - dpad_dir[GP_UP];
+	}
+	for (i = 0; i < 2; i++)
+		scroll_push[i] = stick_push[i] ? stick_push[i] : d[i];
+	if (!magnify) {
+		scroll_want[0] = scroll_push[0];
+		scroll_want[1] = scroll_push[1];
+		scroll_update(false);
+	} else if (!scroll_push[0] && !scroll_push[1]) {
+		/* back at rest with the magnifier: no more scrolling either */
+		scroll_want[0] = scroll_want[1] = 0;
+		scroll_update(false);
+	}
+}
+
 /*
- * The right stick with the magnifier on (rstick = scroll), as VCMI's
+ * The right stick (or the D-pad) with the magnifier on (scroll), as VCMI's
  * magnifier: it moves the magnifier over the screen and leaves the cursor
  * where it is; pushed on (past half way) where the magnifier is at the
  * screen's edge, the map scrolls that way. Once the cursor moves it comes
  * into the magnifier at the edge it was beyond (move_cursor()).
  */
 #define MAGNIFIER_SPEED 900.0f	/* screen pixels a second, full out */
+#define DPAD_MAGNIFIER 0.6f	/* the D-pad's share of it */
 
 static float view_fx, view_fy;		/* the detached magnifier, to the sub-pixel */
 
 static void magnifier_tick(float dt)
 {
-	float v[2] = { curve(axis[GP_AXIS_RX]), curve(axis[GP_AXIS_RY]) }, *f[2] = { &view_fx, &view_fy };
+	float v[2] = { 0, 0 }, *f[2] = { &view_fx, &view_fy };
 	int *view[2] = { &view_x, &view_y }, max[2], w, h, i;
 
+	if (cfg.rstick == STICK_SCROLL) {
+		v[0] = curve(axis[GP_AXIS_RX]);
+		v[1] = curve(axis[GP_AXIS_RY]);
+	}
+	if (cfg.dpad == STICK_SCROLL) {
+		if (!v[0])
+			v[0] = (dpad_dir[GP_RIGHT] - dpad_dir[GP_LEFT]) * DPAD_MAGNIFIER;
+		if (!v[1])
+			v[1] = (dpad_dir[GP_DOWN] - dpad_dir[GP_UP]) * DPAD_MAGNIFIER;
+	}
 	magnifier_size(&w, &h);
 	max[0] = (int)mode.width - w;
 	max[1] = (int)mode.height - h;
@@ -1683,11 +1767,13 @@ static bool moving(void)
 		return true;
 	if (cfg.rstick == STICK_SCROLL && magnify && (curve(axis[GP_AXIS_RX]) || curve(axis[GP_AXIS_RY])))
 		return true;
+	if (cfg.dpad == STICK_SCROLL && magnify && (dpad_dir[0] || dpad_dir[1] || dpad_dir[2] || dpad_dir[3]))
+		return true;
 	return (cfg.lstick == STICK_MOUSE && (curve(axis[GP_AXIS_LX]) || curve(axis[GP_AXIS_LY]))) ||
 	       (cfg.rstick == STICK_MOUSE && (curve(axis[GP_AXIS_RX]) || curve(axis[GP_AXIS_RY]))) ||
 	       ((cfg.rstick == STICK_WHEEL || cfg.rstick == STICK_TURN) && curve(axis[GP_AXIS_RY])) ||
 	       (cfg.rstick == STICK_TURN && curve(axis[GP_AXIS_RX])) ||
-	       dpad_dir[0] || dpad_dir[1] || dpad_dir[2] || dpad_dir[3];
+	       (cfg.dpad == STICK_MOUSE && (dpad_dir[0] || dpad_dir[1] || dpad_dir[2] || dpad_dir[3]));
 }
 
 /* The cursor to nx, ny (the sticks, a mouse): clamped to the screen */
@@ -1710,8 +1796,12 @@ static void move_cursor(float nx, float ny)
 		cur_x = cx;
 		cur_y = cy;
 		view_detached = false;
-		if (!scrolling())
-			send_mouse_at((int)cur_x, (int)cur_y, 0, 0);
+		if (!scrolling()) {
+			int x, y;
+
+			pointer_at(&x, &y);
+			send_mouse_at(x, y, 0, 0);
+		}
 		dirty = true;
 	}
 	ox = (int)cur_x;
@@ -1740,7 +1830,14 @@ static void move_cursor(float nx, float ny)
 	px = (int)past_x;
 	py = (int)past_y;
 	if ((int)cur_x != ox || (int)cur_y != oy || px || py) {
-		send_mouse_at((int)cur_x + px, (int)cur_y + py, 0, 0);
+		if (cfg.edge_zone > 0) {
+			int x, y;
+
+			pointer_at(&x, &y);
+			send_mouse_at(x, y, 0, 0);
+		} else {
+			send_mouse_at((int)cur_x + px, (int)cur_y + py, 0, 0);
+		}
 		past_x -= px;
 		past_y -= py;
 		if (cursor_shown || magnify)
@@ -1823,6 +1920,7 @@ static int mouse_dx, mouse_dy;
 
 static void on_real_mouse_move(int what, int value)
 {
+	real_mouse_used = true;
 	if (what == GAME_MOUSE_X)
 		mouse_dx += value;
 	else if (what == GAME_MOUSE_Y)
@@ -1853,7 +1951,7 @@ static void move_tick(void)
 	if (numpad.release && ms_since(&numpad.since) >= NUMPAD_MIN_MS &&
 	    ms_since(&numpad.rest) >= NUMPAD_REST_MS)
 		numpad_set(-1);
-	if (cfg.rstick == STICK_SCROLL && magnify)
+	if (magnify && (cfg.rstick == STICK_SCROLL || cfg.dpad == STICK_SCROLL))
 		magnifier_tick(dt);
 	else if (scroll_waiting)
 		scroll_update(true);
@@ -1868,8 +1966,10 @@ static void move_tick(void)
 		vx += curve(axis[GP_AXIS_RX]) * 0.3f;	/* the fine one */
 		vy += curve(axis[GP_AXIS_RY]) * 0.3f;
 	}
-	vx += (dpad_dir[GP_RIGHT] - dpad_dir[GP_LEFT]) * 0.25f;
-	vy += (dpad_dir[GP_DOWN] - dpad_dir[GP_UP]) * 0.25f;
+	if (cfg.dpad == STICK_MOUSE) {
+		vx += (dpad_dir[GP_RIGHT] - dpad_dir[GP_LEFT]) * 0.25f;
+		vy += (dpad_dir[GP_DOWN] - dpad_dir[GP_UP]) * 0.25f;
+	}
 	if (vx || vy)
 		move_cursor(cur_x + vx * speed * dt, cur_y + vy * speed * dt);
 	if (cfg.rstick == STICK_TURN)
@@ -1894,21 +1994,24 @@ static void on_axis(enum gp_axis a, int value)
 		clock_gettime(CLOCK_MONOTONIC, &last_move);
 	axis[a] = (float)value / GAME_AXIS_MAX;
 	if (cfg.rstick == STICK_SCROLL && (a == GP_AXIS_RX || a == GP_AXIS_RY)) {
-		int i = a == GP_AXIS_RX ? 0 : 1, d = scroll_push[i];
+		int i = a == GP_AXIS_RX ? 0 : 1, d = stick_push[i];
 		float v = axis[a];
 
 		/* out past half way, back in below 0.35 */
 		if (!d || d * v < 0.35f)
 			d = v < -0.5f ? -1 : v > 0.5f ? 1 : 0;
-		scroll_push[i] = d;
-		if (!magnify) {
-			scroll_want[i] = d;
-			scroll_update(false);
-		} else if (!scroll_push[0] && !scroll_push[1]) {
-			/* the magnifier's stick back at rest: no more scrolling either */
-			scroll_want[0] = scroll_want[1] = 0;
-			scroll_update(false);
-		}
+		stick_push[i] = d;
+		scroll_input();
+	}
+	if (cfg.edge_zone > 0 && (a == GP_AXIS_LX || a == GP_AXIS_LY)) {
+		int x, y;
+
+		if (fabsf(axis[a]) > STICK_DEAD)
+			real_mouse_used = false;
+		/* pushed to the edge or let go there: the pointer to it or off it */
+		pointer_at(&x, &y);
+		if (!scrolling() && (x != pointer_x || y != pointer_y))
+			send_mouse_at(x, y, 0, 0);
 	}
 	if (cfg.rstick == STICK_ARROWS && (a == GP_AXIS_RX || a == GP_AXIS_RY)) {
 		/* a direction held while the stick is out */

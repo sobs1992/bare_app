@@ -36,6 +36,7 @@ struct game_info {
 	const char *hint;	/* NULL: the game's hint */
 	const char *cover;	/* picture of it for the home screen (PNG), NULL none */
 	bool trigger_volume;	/* as game_def.trigger_volume */
+	int minimize;		/* its own minimise button (enum gp_button), -1: the game's */
 };
 
 struct game_def {
