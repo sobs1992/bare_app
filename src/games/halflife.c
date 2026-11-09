@@ -249,6 +249,7 @@ const struct game_def game_halflife = {
 	.id = "halflife",
 	.title = S_HALFLIFE,
 	.hint = S_HALFLIFE_HINT,
+	.every_frame = true,
 	.info = halflife_info,
 	.missing = halflife_missing,
 	.start = halflife_start,

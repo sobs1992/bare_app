@@ -6,7 +6,10 @@
  * game inherits two descriptors:
  *
  *   GAME_IPC_SOCK  SOCK_SEQPACKET socket, one struct game_msg per packet:
- *                  game -> app: GAME_MSG_FRAME after publishing a frame;
+ *                  game -> app: GAME_MSG_FRAME after publishing a frame,
+ *                  or with GAME_FRAME_SAME for a frame the game made but
+ *                  did not publish because it did not change (so a still
+ *                  picture is not taken for a game that stopped);
  *                  app -> game: GAME_MSG_BUTTON, GAME_MSG_AXIS (the game
  *                  has its own controls); a game started with a keyboard
  *                  and a mouse also gets GAME_MSG_KEY and GAME_MSG_MOUSE_*
@@ -78,6 +81,9 @@ enum game_msg_type {
 #define GAME_MOUSE_X 0
 #define GAME_MOUSE_Y 1
 #define GAME_MOUSE_WHEEL 2
+
+/* GAME_MSG_FRAME flags */
+#define GAME_FRAME_SAME 1u	/* nothing published: the frame is the one before */
 
 /* GAME_MSG_BUTTON flags */
 #define GAME_BTN_STICK 1u	/* a direction made by the left stick, not the D-pad */

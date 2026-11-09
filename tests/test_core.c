@@ -135,7 +135,7 @@ static void test_frametimes(void)
 
 	frametimes_reset(&f);
 	CHECK(frametimes_last(&f, t, FRAMETIMES_MAX) == 0);
-	frametimes_summarize(t, 0, 0, &s);
+	frametimes_summarize(t, 0, 0, 0, &s);
 	CHECK(s.frames == 0 && s.fps_x10 == -1);
 	/* 2000 frames at 30 fps (33.333 ms), one 200 ms stall, the ring keeps the last 1024 */
 	for (i = 0; i < 2000; i++) {
@@ -147,12 +147,17 @@ static void test_frametimes(void)
 	CHECK(t[n - 1] == us);
 	for (i = 1; i < n; i++)
 		CHECK(t[i] > t[i - 1]);
-	frametimes_summarize(t, n, us - 1000000, &s);	/* the last second */
+	frametimes_summarize(t, n, us - 1000000, 0, &s);	/* the last second */
 	CHECK(s.frames >= 25 && s.frames <= 27);
 	CHECK(s.median_us == 33333);
 	CHECK(s.worst_us == 200000);
 	CHECK(s.hitches == 1);
 	CHECK(s.fps_x10 >= 240 && s.fps_x10 <= 270);
+	/* the same with 200 ms as a pause (a still picture): no hitch, 30 fps */
+	frametimes_summarize(t, n, us - 1000000, 150000, &s);
+	CHECK(s.idle_us == 200000);
+	CHECK(s.hitches == 0 && s.worst_us == 33333);
+	CHECK(s.fps_x10 >= 299 && s.fps_x10 <= 301);
 	CHECK(frametimes_is_hitch(70000, 33333));
 	CHECK(!frametimes_is_hitch(20000, 5000));	/* short ones never are */
 	n = frametimes_last(&f, t, 10);

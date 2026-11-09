@@ -103,7 +103,8 @@ static inline uint8_t *game_link_frame(const struct game_link *l)
 /*
  * Hands the frame drawn to bare_app and moves on to another one (its
  * contents are not the frame just published). Frames that did not change
- * are better not published at all. -1 once bare_app is gone.
+ * are better not published at all: game_link_same() says one was made.
+ * -1 once bare_app is gone.
  */
 static inline int game_link_publish(struct game_link *l)
 {
@@ -115,6 +116,22 @@ static inline int game_link_publish(struct game_link *l)
 	l->back = atomic_exchange(&l->shm->middle, l->back | GAME_SHM_FRESH) & ~GAME_SHM_FRESH;
 #endif
 	/* a full socket already holds a "frame" message: nothing to add */
+	if (send(GAME_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT | MSG_NOSIGNAL) < 0 && errno == EPIPE)
+		return -1;
+	return 0;
+}
+
+/*
+ * A frame was made, but it is the one before: nothing is published. The
+ * frame rate bare_app shows then stays the game's own over a still
+ * picture, and a long gap means the game really stopped. Once per frame
+ * the game would have shown. -1 once bare_app is gone.
+ */
+static inline int game_link_same(struct game_link *l)
+{
+	struct game_msg m = { GAME_MSG_FRAME, 0, 0, GAME_FRAME_SAME, 0 };
+
+	(void)l;
 	if (send(GAME_IPC_SOCK, &m, sizeof(m), MSG_DONTWAIT | MSG_NOSIGNAL) < 0 && errno == EPIPE)
 		return -1;
 	return 0;

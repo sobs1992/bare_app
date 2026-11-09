@@ -118,6 +118,10 @@ unsigned view_video_frames(void);
  * (core/frametimes.h); returns how many. Starts again when a minimised
  * game comes back. */
 unsigned view_video_frame_times(uint64_t *out, unsigned max);
+/* Whether a gap in those frames means the source stalled: the source says
+ * when a frame did not change (GAME_FRAME_SAME). Otherwise a long gap may
+ * just be a still picture. */
+bool view_video_paced(void);
 
 /* Called when the running source ends by itself (the game quit), with its
  * waitpid() status; not when view_video_set() stops it. One listener. */

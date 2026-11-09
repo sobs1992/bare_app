@@ -6,6 +6,10 @@
  * A hitch is a frame that came much later than the game's usual pace:
  * at least twice the median frame time of the stretch and over
  * FRAMETIMES_HITCH_MIN_US.
+ *
+ * A game that does not say when a frame did not change (GAME_FRAME_SAME)
+ * sends nothing over a still picture: for it a gap over idle_us is a
+ * pause, not a hitch, and stays out of the numbers.
  */
 #pragma once
 
@@ -14,6 +18,7 @@
 
 #define FRAMETIMES_MAX 1024		/* > 10 s at 60 fps, a power of two */
 #define FRAMETIMES_HITCH_MIN_US 25000
+#define FRAMETIMES_IDLE_US 250000	/* a gap a still picture may explain */
 
 struct frametimes {
 	uint64_t us[FRAMETIMES_MAX];
@@ -25,7 +30,8 @@ struct frametimes_summary {
 	uint64_t span_us;		/* from the first frame of it to the last */
 	uint32_t median_us, p99_us, worst_us;
 	unsigned hitches;
-	int fps_x10;			/* frames a second * 10, -1 unknown */
+	uint64_t idle_us;		/* in pauses: gaps over idle_us */
+	int fps_x10;			/* frames a second * 10 out of the pauses, -1 unknown */
 };
 
 void frametimes_reset(struct frametimes *f);
@@ -34,8 +40,9 @@ void frametimes_add(struct frametimes *f, uint64_t us);
 /* Up to max of the latest times, oldest first; returns how many */
 unsigned frametimes_last(const struct frametimes *f, uint64_t *out, unsigned max);
 
-/* What the frames shown at from_us or later say (times as from frametimes_last()) */
-void frametimes_summarize(const uint64_t *t, unsigned n, uint64_t from_us,
+/* What the frames shown at from_us or later say (times as from
+ * frametimes_last()); idle_us 0: every gap counts */
+void frametimes_summarize(const uint64_t *t, unsigned n, uint64_t from_us, uint32_t idle_us,
 			  struct frametimes_summary *s);
 
 /* Is an interval of us a hitch for a game with this median? */

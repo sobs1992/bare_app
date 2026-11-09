@@ -31,7 +31,7 @@ static int cmp_u32(const void *a, const void *b)
 	return x < y ? -1 : x > y;
 }
 
-void frametimes_summarize(const uint64_t *t, unsigned n, uint64_t from_us,
+void frametimes_summarize(const uint64_t *t, unsigned n, uint64_t from_us, uint32_t idle_us,
 			  struct frametimes_summary *s)
 {
 	static uint32_t d[FRAMETIMES_MAX];	/* view thread only */
@@ -43,8 +43,14 @@ void frametimes_summarize(const uint64_t *t, unsigned n, uint64_t from_us,
 		first++;
 	if (first)
 		first--;	/* the interval into the stretch counts */
-	for (i = first + 1, k = 0; i < n && k < FRAMETIMES_MAX; i++)
-		d[k++] = t[i] > t[i - 1] ? (uint32_t)(t[i] - t[i - 1]) : 0;
+	for (i = first + 1, k = 0; i < n && k < FRAMETIMES_MAX; i++) {
+		uint32_t us = t[i] > t[i - 1] ? (uint32_t)(t[i] - t[i - 1]) : 0;
+
+		if (idle_us && us > idle_us)
+			s->idle_us += us;	/* a pause */
+		else
+			d[k++] = us;
+	}
 	if (!k)
 		return;
 	s->frames = k;
@@ -56,6 +62,7 @@ void frametimes_summarize(const uint64_t *t, unsigned n, uint64_t from_us,
 	s->p99_us = d[k - 1 - k / 100];
 	for (i = 0; i < k; i++)
 		s->hitches += frametimes_is_hitch(d[i], s->median_us);
-	if (s->span_us)
-		s->fps_x10 = (int)((k * 10000000ULL + s->span_us / 2) / s->span_us);
+	if (s->span_us > s->idle_us)
+		s->fps_x10 = (int)((k * 10000000ULL + (s->span_us - s->idle_us) / 2) /
+				   (s->span_us - s->idle_us));
 }

@@ -33,8 +33,11 @@ struct game_proc *game_proc_start(const struct game_spawn *s);
 /* Readable when a frame is published or the game has ended */
 int game_proc_fd(struct game_proc *g);
 /* After game_proc_fd() was readable: the newest frame or NULL; *ended is
- * set once the game process is gone */
-const struct hal_fb *game_proc_frame(struct game_proc *g, bool *ended);
+ * set once the game process is gone, *same when the game made frames that
+ * did not change (GAME_FRAME_SAME) */
+const struct hal_fb *game_proc_frame(struct game_proc *g, bool *ended, bool *same);
+/* The game has said a frame did not change: a gap in its frames is a stall */
+bool game_proc_paced(const struct game_proc *g);
 /* Buttons (auto-repeats are not sent) and axes; keys and the mouse to a
  * game that takes them */
 void game_proc_input(struct game_proc *g, const struct gp_event *ev);

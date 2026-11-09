@@ -11,11 +11,17 @@
  * starts, a disk comes). Always in English, whatever the UI language.
  *
  * Frame times are the view's own: when each frame of the game was shown
- * in the video layer (view_video_frame_times()). The graph has a column
- * per pixel over the last GRAPH_SPAN_US; a frame fills the columns from
- * the frame before it to itself as high as it took, so a stall is a wide
- * high block and the area is time. Hitches (core/frametimes.h) are drawn
- * in the warning colour, the lines are 60 and 30 frames a second.
+ * in the video layer, or made unchanged (view_video_frame_times()). The
+ * graph is a line over the last GRAPH_SPAN_US, a point per pixel column:
+ * a frame holds the columns from the frame before it to itself at the
+ * height of the time it took, so a stall is a wide plateau. The scale
+ * grows from 50 ms to 100 or 200 ms when frames take that long; longer
+ * ones stay at the top. Hitches (core/frametimes.h) are in the warning
+ * colour, the dashed lines are 60 and 30 frames a second. A game that
+ * does not say when its frame did not change (view_video_paced()) sends
+ * nothing over a still picture: a gap over FRAMETIMES_IDLE_US is a pause
+ * for it, a dim stretch at the bottom, out of the numbers, and "still"
+ * for the rate.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -39,7 +45,7 @@
 #define MAX_ROWS (SYSMON_MAX_CLUSTERS + 5 + SYSMON_MAX_DISKS + SYSMON_MAX_PROCS)
 #define GRAPH_H 56
 #define GRAPH_SPAN_US 10000000ULL	/* the width of a graph */
-#define GRAPH_TOP_US 100000		/* frame time at the top of it; longer ones are cut */
+#define GRAPH_TOPS_US { 50000, 100000, 200000 }	/* the scales; longer frames are cut */
 #define GRAPH_MAX_W 1024
 #define TICK_MS 250			/* the graphs move on */
 #define MINI_W 340
@@ -85,6 +91,8 @@ struct sysmon_view {
 	uint64_t t[FRAMETIMES_MAX], now;
 	unsigned nt;
 	struct frametimes_summary last_s, span;	/* over the last second, the graph */
+	bool paced;		/* view_video_paced() */
+	bool still;		/* no frame for a while from a game that is not paced */
 };
 
 /* ---- formatting ------------------------------------------------------- */
@@ -430,72 +438,169 @@ static void show_disks(struct sysmon_view *m, const struct sysmon_info *in)
 
 /* ---- frame times ----------------------------------------------------- */
 
+#define COL_NONE (-1)		/* no frame there yet */
+#define COL_IDLE (-2)		/* a pause of a game with a still picture */
+
+/* The scale for frames up to worst_us */
+static uint32_t graph_top(uint32_t worst_us)
+{
+	static const uint32_t tops[] = GRAPH_TOPS_US;
+	unsigned i;
+
+	for (i = 0; i + 1 < sizeof(tops) / sizeof(tops[0]); i++)
+		if (worst_us <= tops[i] - tops[i] / 10)
+			break;
+	return tops[i];
+}
+
+/* y of a frame time in the content area c, cut at the top */
+static int32_t graph_y(const lv_area_t *c, int32_t us, uint32_t top)
+{
+	int32_t h = lv_area_get_height(c) - 2;	/* the line is 2 px: inside */
+
+	return c->y2 - 1 - (int32_t)((int64_t)LV_MIN((uint32_t)us, top) * h / top);
+}
+
+static void graph_line(lv_layer_t *layer, lv_point_precise_t *p, int n, lv_color_t color)
+{
+	lv_draw_line_dsc_t dsc;
+
+	if (n < 2)
+		return;
+	lv_draw_line_dsc_init(&dsc);
+	dsc.points = p;
+	dsc.point_cnt = n;
+	dsc.width = 2;
+	dsc.color = color;
+	dsc.opa = LV_OPA_COVER;
+	lv_draw_line(layer, &dsc);
+}
+
+/* A dim straight line: the 60 and 30 fps marks (dashed), a pause */
+static void graph_flat(lv_layer_t *layer, int32_t x1, int32_t x2, int32_t y, bool dashed)
+{
+	lv_draw_line_dsc_t dsc;
+
+	lv_draw_line_dsc_init(&dsc);
+	dsc.p1.x = x1;
+	dsc.p2.x = x2;
+	dsc.p1.y = dsc.p2.y = y;
+	if (dashed) {
+		dsc.color = lv_color_white();
+		dsc.opa = LV_OPA_30;
+		dsc.width = 1;
+		dsc.dash_width = dsc.dash_gap = 4;
+	} else {
+		dsc.color = UI_COLOR_DIM;
+		dsc.opa = LV_OPA_60;
+		dsc.width = 2;
+	}
+	lv_draw_line(layer, &dsc);
+}
+
 static void graph_draw(lv_event_t *e)
 {
-	static int32_t col[GRAPH_MAX_W];	/* frame time of each column, us */
+	static int32_t col[GRAPH_MAX_W];	/* frame time of each column (us), COL_* */
 	static bool hot[GRAPH_MAX_W];
+	static lv_point_precise_t pts[GRAPH_MAX_W + 1];
 	struct sysmon_view *m = lv_event_get_user_data(e);
 	lv_layer_t *layer = lv_event_get_layer(e);
 	lv_obj_t *obj = lv_event_get_current_target(e);
-	uint32_t median = m->span.median_us;
-	lv_draw_rect_dsc_t dsc;
-	lv_area_t c, a;
-	int32_t w, h, x, run;
+	uint32_t median = m->span.median_us, idle = m->paced ? 0 : FRAMETIMES_IDLE_US;
+	uint32_t top = graph_top(m->span.worst_us);
+	lv_area_t c;
+	int32_t w, x, n;
 	uint64_t from;
 	unsigned i;
 
 	lv_obj_get_content_coords(obj, &c);
 	w = LV_MIN(lv_area_get_width(&c), GRAPH_MAX_W);
-	h = lv_area_get_height(&c);
-	if (w <= 0 || h <= 0 || !m->now)
+	if (w <= 1 || lv_area_get_height(&c) <= 4 || !m->now)
 		return;
+	for (i = 1; i <= 2; i++)
+		graph_flat(layer, c.x1, c.x1 + w - 1, graph_y(&c, 16667 * (int32_t)i, top), true);
+	{	/* the scale at the top right */
+		lv_draw_label_dsc_t ld;
+		lv_area_t a = { c.x1, c.y1 + 1, c.x1 + w - 4, c.y1 + 1 + lv_font_get_line_height(UI_FONT_SMALL) };
+		char text[16];
+
+		snprintf(text, sizeof(text), "%u ms", (unsigned)(top / 1000));
+		lv_draw_label_dsc_init(&ld);
+		ld.text = text;
+		ld.text_local = 1;
+		ld.font = UI_FONT_SMALL;
+		ld.color = lv_color_white();
+		ld.opa = LV_OPA_50;
+		ld.align = LV_TEXT_ALIGN_RIGHT;
+		lv_draw_label(layer, &ld, &a);
+	}
+
 	from = m->now - GRAPH_SPAN_US;
-	memset(col, 0, sizeof(col[0]) * w);
-	memset(hot, 0, sizeof(hot[0]) * w);
+	for (x = 0; x < w; x++) {
+		col[x] = COL_NONE;
+		hot[x] = false;
+	}
 #define COL(t) ((t) <= from ? 0 : (int32_t)LV_MIN((int64_t)(((t) - from) * w / GRAPH_SPAN_US), w - 1))
 	for (i = 1; i <= m->nt; i++) {
 		uint64_t t0 = m->t[i - 1], t1 = i < m->nt ? m->t[i] : m->now;
 		uint32_t d = t1 > t0 ? (uint32_t)LV_MIN(t1 - t0, UINT32_MAX) : 0;
-		bool is_hot = frametimes_is_hitch(d, median);
+		bool pause = idle && d > idle, is_hot = !pause && frametimes_is_hitch(d, median);
 
 		if (t1 <= from)
 			continue;
-		/* the frame being waited for: only once it is late */
-		if (i == m->nt && !is_hot)
+		/* the frame being waited for: only once it is late or a pause */
+		if (i == m->nt && !is_hot && !pause)
 			break;
 		for (x = COL(t0); x <= COL(t1); x++) {
-			if ((int32_t)d > col[x]) {
-				col[x] = d;
+			if (pause) {
+				if (col[x] == COL_NONE)
+					col[x] = COL_IDLE;
+			} else if ((int32_t)d > col[x]) {
+				col[x] = (int32_t)d;
 				hot[x] = is_hot;
 			}
 		}
 	}
 #undef COL
-	lv_draw_rect_dsc_init(&dsc);
-	dsc.bg_opa = LV_OPA_COVER;
-	for (x = 0; x < w; x = run) {
-		int32_t bar = LV_MIN(col[x], GRAPH_TOP_US) * h / GRAPH_TOP_US;
+	/* a polyline per stretch of one colour; pauses break it */
+	for (x = 0; x < w;) {
+		bool h = hot[x];
 
-		for (run = x + 1; run < w; run++)
-			if (LV_MIN(col[run], GRAPH_TOP_US) * h / GRAPH_TOP_US != bar || hot[run] != hot[x])
-				break;
-		if (!bar)
+		if (col[x] == COL_NONE) {
+			x++;
 			continue;
-		a.x1 = c.x1 + x;
-		a.x2 = c.x1 + run - 1;
-		a.y1 = c.y2 - bar + 1;
-		a.y2 = c.y2;
-		dsc.bg_color = hot[x] ? UI_COLOR_WARN : UI_COLOR_ON;
-		lv_draw_rect(layer, &dsc, &a);
-	}
-	/* 60 and 30 frames a second */
-	dsc.bg_color = lv_color_white();
-	dsc.bg_opa = LV_OPA_40;
-	for (i = 1; i <= 2; i++) {
-		a.x1 = c.x1;
-		a.x2 = c.x1 + w - 1;
-		a.y1 = a.y2 = c.y2 - (int32_t)(16667 * i * h / GRAPH_TOP_US);
-		lv_draw_rect(layer, &dsc, &a);
+		}
+		if (col[x] == COL_IDLE) {
+			int32_t x0 = x;
+
+			while (x < w && col[x] == COL_IDLE)
+				x++;
+			graph_flat(layer, c.x1 + x0, c.x1 + x - 1, c.y2 - 1, false);
+			continue;
+		}
+		n = 0;
+		/* from the last point of the stretch before: no gap in the line */
+		if (x > 0 && col[x - 1] >= 0) {
+			pts[n].x = c.x1 + x - 1;
+			pts[n++].y = graph_y(&c, col[x - 1], top);
+		}
+		for (; x < w && col[x] >= 0 && hot[x] == h; x++) {
+			int32_t y = graph_y(&c, col[x], top);
+
+			/* a run of one height: one segment */
+			if (n >= 2 && pts[n - 1].y == y && pts[n - 2].y == y) {
+				pts[n - 1].x = c.x1 + x;
+				continue;
+			}
+			pts[n].x = c.x1 + x;
+			pts[n++].y = y;
+		}
+		if (n == 1) {	/* a single column */
+			pts[1] = pts[0];
+			pts[1].x++;
+			n = 2;
+		}
+		graph_line(layer, pts, n, h ? UI_COLOR_WARN : UI_COLOR_ON);
 	}
 }
 
@@ -527,11 +632,14 @@ static void frames_text(const struct sysmon_view *m, char *buf, size_t size, boo
 	char p99[16], worst[16];
 	int len;
 
-	if (m->last_s.fps_x10 < 0) {
+	if (m->still) {
+		len = snprintf(buf, size, "%s", "still");
+	} else if (m->last_s.fps_x10 < 0) {
 		snprintf(buf, size, "...");
 		return;
+	} else {
+		len = snprintf(buf, size, "%d%s", (m->last_s.fps_x10 + 5) / 10, unit ? " fps" : "");
 	}
-	len = snprintf(buf, size, "%d%s", (m->last_s.fps_x10 + 5) / 10, unit ? " fps" : "");
 	if (!m->span.frames)
 		return;
 	ms_text(p99, sizeof(p99), m->span.p99_us);
@@ -543,10 +651,16 @@ static void frames_text(const struct sysmon_view *m, char *buf, size_t size, boo
 /* The frame times now: to the FPS row and the graphs */
 static void frames_take(struct sysmon_view *m)
 {
+	uint32_t idle;
+
 	m->now = now_us();
 	m->nt = view_video_frame_times(m->t, FRAMETIMES_MAX);
-	frametimes_summarize(m->t, m->nt, m->now - 1000000, &m->last_s);
-	frametimes_summarize(m->t, m->nt, m->now - GRAPH_SPAN_US, &m->span);
+	m->paced = view_video_paced();
+	idle = m->paced ? 0 : FRAMETIMES_IDLE_US;
+	frametimes_summarize(m->t, m->nt, m->now - 1000000, idle, &m->last_s);
+	frametimes_summarize(m->t, m->nt, m->now - GRAPH_SPAN_US, idle, &m->span);
+	/* a still picture of a game that would not say so */
+	m->still = !m->paced && m->nt && m->now - m->t[m->nt - 1] > FRAMETIMES_IDLE_US;
 	/* nothing for a second: the frame rate is that, not the last stretch */
 	if (m->nt && m->now - m->t[m->nt - 1] > 1000000)
 		m->last_s.fps_x10 = 0;

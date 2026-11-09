@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "d_event.h"
+#include "d_loop.h"
 #include "doomgeneric.h"
 #include "doomkeys.h"
 #include "doomstat.h"
@@ -44,6 +45,7 @@ static int *xmap, *ymap;
 static volatile sig_atomic_t stop;
 static uint32_t last[SRC_W * SRC_H];	/* the frame published last */
 static bool have_last;
+static int last_tic = -1;	/* gametic of the frame shown or told unchanged */
 
 static struct {
 	unsigned char pressed, key;
@@ -225,12 +227,20 @@ void DG_DrawFrame(void)
 	/*
 	 * TryRunTics() returns at a tic boundary even when no tic ran, so about
 	 * every second frame repeats the previous one: not worth a copy and a
-	 * page flip in the app.
+	 * page flip in the app. A tic that left the picture as it was (a menu,
+	 * the player standing) is still a frame of the game: the app is told,
+	 * so its frame rate stays 35 over a still picture.
 	 */
 	if (have_last && !memcmp(last, DG_ScreenBuffer, sizeof(last))) {
+		if (gametic != last_tic) {
+			last_tic = gametic;
+			if (game_link_same(&app) < 0)
+				I_Quit();	/* bare_app is gone */
+		}
 		pump();
 		return;
 	}
+	last_tic = gametic;
 	memcpy(last, DG_ScreenBuffer, sizeof(last));
 	have_last = true;
 	for (y = 0; y < dst_h; y++) {

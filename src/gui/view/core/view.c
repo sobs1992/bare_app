@@ -471,7 +471,7 @@ static void frames_log(uint64_t now)
 	struct frametimes_summary s;
 	unsigned n = frametimes_last(&v.frame_times, t, FRAMETIMES_MAX);
 
-	frametimes_summarize(t, n, v.frame_stats.log_us, &s);
+	frametimes_summarize(t, n, v.frame_stats.log_us, 0, &s);
 	v.frame_stats.log_us = now;
 	if (!s.frames)
 		return;
@@ -557,14 +557,16 @@ static void on_game(int fd, short revents, void *ud)
 {
 	struct hal_layer *l = video_layer();
 	const struct hal_fb *fb;
-	bool ended, minimized = v.video_minimized;
+	bool ended, same, minimized = v.video_minimized;
 	int status;
 
 	(void)revents;
 	(void)ud;
-	fb = game_proc_frame(v.video_game, &ended);
+	fb = game_proc_frame(v.video_game, &ended, &same);
 	if (fb && l && !minimized)
 		video_show(l, fb);
+	else if (same && l && !minimized && v.video_frames)
+		frame_shown();	/* the picture stays, the frame counts */
 	if (!ended)
 		return;
 	mainloop_remove_fd(v.ml, fd);
@@ -728,6 +730,15 @@ unsigned view_video_frames(void)
 unsigned view_video_frame_times(uint64_t *out, unsigned max)
 {
 	return frametimes_last(&v.frame_times, out, max);
+}
+
+bool view_video_paced(void)
+{
+#ifdef HAVE_GAMES
+	if (v.video_src == VIDEO_GAME)
+		return v.video_game && (v.game.def->every_frame || game_proc_paced(v.video_game));
+#endif
+	return v.video_src != VIDEO_NONE;	/* the test pattern makes every frame */
 }
 
 void view_video_on_end(view_video_end_cb cb, void *ud)

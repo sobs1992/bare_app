@@ -35,6 +35,7 @@ struct game_proc {
 	struct hal_fb fb;
 	bool ended;
 	bool paused;
+	bool paced;		/* the game says when a frame did not change */
 	uint32_t held;		/* GP_BIT()s sent as pressed */
 	uint32_t axes;		/* bits of the axes sent off centre */
 	bool takes_keys, takes_mouse;	/* a keyboard's keys as they are, a mouse */
@@ -209,20 +210,30 @@ fail:
 	return NULL;
 }
 
+bool game_proc_paced(const struct game_proc *g)
+{
+	return g->paced;
+}
+
 int game_proc_fd(struct game_proc *g)
 {
 	return g->sock;
 }
 
-const struct hal_fb *game_proc_frame(struct game_proc *g, bool *ended)
+const struct hal_fb *game_proc_frame(struct game_proc *g, bool *ended, bool *same)
 {
 	struct game_msg m;
 	ssize_t n;
 
+	*same = false;
 	while (!g->ended) {
 		n = recv(g->sock, &m, sizeof(m), 0);
+		if (n == (ssize_t)sizeof(m) && m.type == GAME_MSG_FRAME && (m.flags & GAME_FRAME_SAME)) {
+			*same = g->paced = true;
+			continue;
+		}
 		if (n > 0)
-			continue;	/* only "frame published": the newest one is taken below */
+			continue;	/* "frame published": the newest one is taken below */
 		if (n < 0 && errno == EINTR)
 			continue;
 		if (n < 0 && errno == EAGAIN)

@@ -46,6 +46,9 @@ struct game_def {
 	/* "%s" text that tells what missing() returned; 0: S_GAME_MISSING_FMT */
 	enum str_id missing_fmt;
 	bool trigger_volume;	/* L2, R2: the volume instead of the game */
+	/* Publishes every frame it makes, changed or not (Xash3D): a gap in its
+	 * frames is a stall, never a still picture (view_video_paced()) */
+	bool every_frame;
 	/*
 	 * Games found at run time (Windows games of the games partition):
 	 * how many entries there are, looked for again if rescan. NULL: one.
