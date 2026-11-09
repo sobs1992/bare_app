@@ -10,6 +10,7 @@
  *   Screen    brightness (CTX_DISPLAY)
  *   Sound     volume, output (CTX_AUDIO)
  *   Internet  the Wi-Fi network: opens the Wi-Fi screen; the address (CTX_WIFI)
+ *   Games     the controls hint when a game starts (CTX_SETTINGS)
  *   System    language (CTX_SETTINGS), device, platform (CTX_SYSTEM),
  *             battery (CTX_POWER)
  *
@@ -30,8 +31,8 @@
 #define COLOR_FOCUS_BG lv_color_hex(0x232833)
 
 enum row_id {
-	R_BRIGHTNESS, R_VOLUME, R_OUTPUT, R_WIFI, R_IP, R_LANG, R_DEVICE, R_PLATFORM, R_BATTERY,
-	R_COUNT
+	R_BRIGHTNESS, R_VOLUME, R_OUTPUT, R_WIFI, R_IP, R_GAME_HINT, R_LANG, R_DEVICE, R_PLATFORM,
+	R_BATTERY, R_COUNT
 };
 
 enum row_kind {
@@ -58,7 +59,7 @@ struct category {
 
 struct settings {
 	lv_obj_t *panel, *footer;
-	lv_obj_t *cats[4];
+	lv_obj_t *cats[6];
 	lv_group_t *group;
 	int cat;			/* in the panel */
 	bool big;			/* 640x400 and up: more room around everything */
@@ -66,6 +67,7 @@ struct settings {
 	struct row rows[R_COUNT];
 	int shown_brightness, shown_volume;	/* -2: nothing yet */
 	enum audio_output output;
+	bool game_hint;
 };
 
 static int kept_cat;	/* the category last shown */
@@ -144,6 +146,9 @@ static void row_change(struct row *r, int dir)
 		break;
 	case R_LANG:
 		gui_action_post_str(ACT_SET_LANG, i18n_next(i18n_lang()));
+		break;
+	case R_GAME_HINT:
+		gui_action_post(ACT_SET_GAME_HINT, !s->game_hint);
 		break;
 	case R_WIFI:
 		kept_row = R_WIFI;
@@ -313,6 +318,13 @@ static void build_internet(struct settings *s)
 }
 #endif
 
+#ifdef CONFIG_GAMES
+static void build_games(struct settings *s)
+{
+	row_new(s, R_GAME_HINT, ROW_CHOICE, S_GAME_HINT);
+}
+#endif
+
 static void build_system(struct settings *s)
 {
 	if (i18n_count() > 1)
@@ -329,6 +341,9 @@ static const struct category categories[] = {
 #endif
 #if defined(CONFIG_WIFI) && defined(CONFIG_SCREEN_WIFI)
 	{ LV_SYMBOL_WIFI, S_SET_INTERNET, build_internet },
+#endif
+#ifdef CONFIG_GAMES
+	{ LV_SYMBOL_PLAY, S_SET_GAMES, build_games },
 #endif
 	{ LV_SYMBOL_LIST, S_SET_SYSTEM, build_system },
 };
@@ -615,6 +630,12 @@ static void update_system(struct settings *s, const struct gui_ctx *c)
 	}
 }
 
+static void update_games(struct settings *s, const struct gui_ctx *c)
+{
+	s->game_hint = c->settings.game_hint;
+	set_text(s->rows[R_GAME_HINT].value, tr(s->game_hint ? S_ON : S_OFF));
+}
+
 static void settings_update(void *self, const struct gui_ctx *c, uint32_t changed)
 {
 	struct settings *s = self;
@@ -631,6 +652,8 @@ static void settings_update(void *self, const struct gui_ctx *c, uint32_t change
 		update_wifi(s, c);
 	if ((changed & (CTX_SYSTEM | CTX_POWER | CTX_SETTINGS)) && s->rows[R_PLATFORM].obj)
 		update_system(s, c);
+	if ((changed & CTX_SETTINGS) && s->rows[R_GAME_HINT].obj)
+		update_games(s, c);
 	/* a row that went away: back to the categories */
 	f = lv_group_get_focused(s->group);
 	if (f && lv_obj_is_hidden(f))

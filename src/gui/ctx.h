@@ -98,6 +98,7 @@ struct gui_ctx {
 		char lang[16];		/* UI language code, "en", "ru"... */
 		/* game_key()s of the games played, the latest first, "," between */
 		char recent[RECENT_MAX * 9];
+		bool game_hint;		/* the controls hint when a game starts */
 	} settings;
 	struct {
 		bool available;		/* the platform has a mixer */

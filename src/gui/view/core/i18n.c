@@ -178,6 +178,10 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_BACK]            = { "Back" RU("Назад") },
 	[S_OK]              = { "OK" },
 	[S_CHANGE]          = { "Change" RU("Изменить") },
+	[S_SET_GAMES]       = { "Games" RU("Игры") },
+	[S_GAME_HINT]       = { "Controls at the start" RU("Подсказка при запуске") },
+	[S_ON]              = { "On" RU("Вкл.") },
+	[S_OFF]             = { "Off" RU("Выкл.") },
 };
 
 static int lang = LANG_EN;

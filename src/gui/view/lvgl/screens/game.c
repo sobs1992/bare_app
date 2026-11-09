@@ -2,7 +2,8 @@
  * The screen of every game (games/game.h), the one view_game_selected()
  * names when it opens: the game draws into the video layer under
  * a transparent screen and gets the gamepad. "Loading..." stays until its
- * first frame, then a hint shows the controls. Games that do not need the
+ * first frame, then a hint shows the controls if the setting says so
+ * (ctx settings.game_hint, off by default). Games that do not need the
  * triggers leave them for the volume (L2 down, R2 up). F5 (Heroes III
  * with the GO Ultra's keys: F1) minimises the game: it stops in the
  * background, and the same button or its menu entry brings it back. Holding the quit combo (F6) or Quit in the game ends it and comes
@@ -51,6 +52,14 @@ static void show_message(struct game_screen *g, const char *text)
 	lv_label_set_text_fmt(label, LV_SYMBOL_WARNING "  %s", text);
 }
 
+static void show_hint(struct game_screen *g)
+{
+	const struct gui_ctx *c = view_ctx();
+
+	if (c && c->settings.game_hint)
+		ui_toast(game_hint(g->game, view_platform()));
+}
+
 static void on_wait(lv_timer_t *t)
 {
 	struct game_screen *g = lv_timer_get_user_data(t);
@@ -58,7 +67,7 @@ static void on_wait(lv_timer_t *t)
 	if (!view_video_frames())
 		return;
 	stop_waiting(g);
-	ui_toast(game_hint(g->game, view_platform()));
+	show_hint(g);
 }
 
 static void on_input(const struct gp_event *ev, void *ud)
@@ -122,7 +131,7 @@ static void *game_init(lv_obj_t *parent, lv_obj_t **root)
 		view_input_grab(on_input, g);
 		view_video_on_end(on_end, g);
 		if (view_video_frames()) {
-			ui_toast(game_hint(g->game, view_platform()));
+			show_hint(g);
 			return g;
 		}
 		g->loading = lv_label_create(g->scr);	/* over the black video layer */

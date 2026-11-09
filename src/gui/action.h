@@ -27,6 +27,7 @@ enum gui_action_type {
 	ACT_USB_DISK,		/* arg = 1 share the games partition again, 0 take it back */
 	ACT_SYSMON,		/* arg = enum sysmon_mode (ctx.h) */
 	ACT_GAME_PLAYED,	/* str = game_key() of the game that has just started */
+	ACT_SET_GAME_HINT,	/* arg = 1 show the controls when a game starts, 0 not */
 };
 
 struct gui_action {

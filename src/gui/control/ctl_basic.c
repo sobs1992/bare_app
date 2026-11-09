@@ -143,6 +143,14 @@ static void set_recent(const char *list)
 	ctx_unlock(CTX_SETTINGS);
 }
 
+static void set_game_hint(bool on)
+{
+	struct gui_ctx *c = ctx_lock();
+
+	c->settings.game_hint = on;
+	ctx_unlock(CTX_SETTINGS);
+}
+
 static int settings_init(const struct control_env *env)
 {
 	const char *lang = env->lang && *env->lang ? env->lang : config_get("lang");
@@ -150,6 +158,7 @@ static int settings_init(const struct control_env *env)
 
 	set_lang(lang ? lang : "en");
 	set_recent(recent ? recent : "");
+	set_game_hint(config_get_int("game_hint", 0));
 	return 0;
 }
 
@@ -157,6 +166,11 @@ static void settings_action(const struct gui_action *a)
 {
 	char list[sizeof(((struct gui_ctx *)0)->settings.recent)];
 
+	if (a->type == ACT_SET_GAME_HINT) {
+		set_game_hint(a->arg);
+		config_set_int("game_hint", !!a->arg);
+		return;
+	}
 	if (!a->str[0] || strchr(a->str, ','))
 		return;
 	if (a->type == ACT_SET_LANG) {
