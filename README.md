@@ -356,7 +356,7 @@ tools/oga.sh wad doom1.wad  # положить IWAD в /usr/share/games/doom/ (�
 Шрифты с кириллицей пересоздаются так (нужен Pillow):
 
 ```sh
-for s in 14 20; do tools/gen_font.py --size $s --name ui_font_$s \
+for s in 14 20 28; do tools/gen_font.py --size $s --name ui_font_$s \
     --fallback lv_font_montserrat_$s -o src/gui/view/lvgl/fonts/ui_font_$s.c; done
 ```
 

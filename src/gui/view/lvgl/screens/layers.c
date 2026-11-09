@@ -13,7 +13,7 @@ struct layers {
 static void *layers_init(lv_obj_t *parent, lv_obj_t **root)
 {
 	struct layers *l = calloc(1, sizeof(*l));
-	lv_obj_t *scr, *panel, *text;
+	lv_obj_t *scr, *bar, *panel, *text;
 
 	(void)parent;
 	if (!l)
@@ -22,11 +22,17 @@ static void *layers_init(lv_obj_t *parent, lv_obj_t **root)
 	scr = lv_obj_create(NULL);
 	if (l->video)
 		lv_obj_set_style_bg_opa(scr, LV_OPA_TRANSP, 0);
-	statusbar_create(scr, LV_SYMBOL_IMAGE, tr(S_LAYERS));
+	else
+		screen_console_style(scr);
+	/* the header on a dark band: the bars are bright */
+	bar = statusbar_create(scr, LV_SYMBOL_IMAGE, tr(S_LAYERS));
+	lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
+	lv_obj_set_style_bg_opa(bar, LV_OPA_60, 0);
 
 	panel = lv_obj_create(scr);
-	lv_obj_set_size(panel, LV_PCT(90), LV_SIZE_CONTENT);
-	lv_obj_align(panel, LV_ALIGN_BOTTOM_MID, 0, -12);
+	lv_obj_set_size(panel, lv_display_get_horizontal_resolution(lv_display_get_default()) - 2 * ui_margin(),
+			LV_SIZE_CONTENT);
+	lv_obj_align(panel, LV_ALIGN_BOTTOM_MID, 0, -ui_cell() / 2);
 	lv_obj_set_style_bg_color(panel, lv_color_black(), 0);
 	lv_obj_set_style_bg_opa(panel, LV_OPA_60, 0);
 	lv_obj_set_style_border_width(panel, 0, 0);

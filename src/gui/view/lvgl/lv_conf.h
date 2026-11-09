@@ -1031,7 +1031,7 @@
 #define LV_FONT_MONTSERRAT_26 0
 
 /** Montserrat 28 */
-#define LV_FONT_MONTSERRAT_28 0
+#define LV_FONT_MONTSERRAT_28 1
 
 /** Montserrat 30 */
 #define LV_FONT_MONTSERRAT_30 0

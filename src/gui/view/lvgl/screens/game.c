@@ -44,7 +44,8 @@ static void show_message(struct game_screen *g, const char *text)
 
 	stop_waiting(g);
 	lv_obj_set_style_bg_opa(g->scr, LV_OPA_COVER, 0);
-	statusbar_create(g->scr, LV_SYMBOL_PLAY, game_title(g->game));
+	screen_console_style(g->scr);
+	console_header(g->scr, LV_SYMBOL_PLAY, game_title(g->game));
 	body = screen_body(g->scr);
 	label = lv_label_create(body);
 	lv_obj_set_width(label, LV_PCT(100));

@@ -48,17 +48,3 @@ void *widget_self(lv_obj_t *root)
 
 	return w ? w->self : NULL;
 }
-
-lv_obj_t *screen_body(lv_obj_t *screen)
-{
-	lv_obj_t *body = lv_obj_create(screen);
-
-	lv_obj_remove_style_all(body);
-	lv_obj_set_size(body, LV_PCT(100), lv_display_get_vertical_resolution(lv_display_get_default()) - UI_STATUSBAR_H);
-	lv_obj_set_pos(body, 0, UI_STATUSBAR_H);
-	lv_obj_set_style_pad_all(body, 10, 0);
-	lv_obj_set_style_pad_row(body, 10, 0);
-	lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	return body;
-}

@@ -32,6 +32,7 @@
 #include "core/frametimes.h"
 #include "core/util.h"
 
+#define SYSMON_FONT ui_font(UI_TEXT_COMPACT)	/* dense: the same on every screen */
 #define PANEL_MAX_W 560
 #define MARGIN 8
 #define TITLE_W 76
@@ -171,7 +172,7 @@ static lv_obj_t *label_new(lv_obj_t *parent, int32_t width)
 
 	lv_label_set_text(l, "");
 	if (width) {		/* one line of it, cut with dots */
-		lv_obj_set_size(l, width, lv_font_get_line_height(UI_FONT_SMALL));
+		lv_obj_set_size(l, width, lv_font_get_line_height(SYSMON_FONT));
 		lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
 	}
 	return l;
@@ -215,7 +216,7 @@ static void row_new(struct sysmon_view *m, struct row *r, const char *title, int
 	lv_obj_set_flex_grow(r->value, 1);
 	lv_label_set_long_mode(r->value, wrap ? LV_LABEL_LONG_MODE_WRAP : LV_LABEL_LONG_MODE_DOTS);
 	if (!wrap)
-		lv_obj_set_height(r->value, lv_font_get_line_height(UI_FONT_SMALL));
+		lv_obj_set_height(r->value, lv_font_get_line_height(SYSMON_FONT));
 }
 
 static void cluster_title(char *buf, size_t size, const struct sysmon_info *in, int i)
@@ -521,14 +522,14 @@ static void graph_draw(lv_event_t *e)
 		graph_flat(layer, c.x1, c.x1 + w - 1, graph_y(&c, 16667 * (int32_t)i, top), true);
 	{	/* the scale at the top right */
 		lv_draw_label_dsc_t ld;
-		lv_area_t a = { c.x1, c.y1 + 1, c.x1 + w - 4, c.y1 + 1 + lv_font_get_line_height(UI_FONT_SMALL) };
+		lv_area_t a = { c.x1, c.y1 + 1, c.x1 + w - 4, c.y1 + 1 + lv_font_get_line_height(SYSMON_FONT) };
 		char text[16];
 
 		snprintf(text, sizeof(text), "%u ms", (unsigned)(top / 1000));
 		lv_draw_label_dsc_init(&ld);
 		ld.text = text;
 		ld.text_local = 1;
-		ld.font = UI_FONT_SMALL;
+		ld.font = SYSMON_FONT;
 		ld.color = lv_color_white();
 		ld.opa = LV_OPA_50;
 		ld.align = LV_TEXT_ALIGN_RIGHT;
@@ -738,7 +739,7 @@ static lv_obj_t *panel_new(lv_obj_t *parent, int32_t width)
 	lv_obj_set_style_pad_all(p, 10, 0);
 	lv_obj_set_style_pad_row(p, 4, 0);
 	lv_obj_set_style_text_color(p, lv_color_white(), 0);
-	lv_obj_set_style_text_font(p, UI_FONT_SMALL, 0);
+	lv_obj_set_style_text_font(p, SYSMON_FONT, 0);
 	lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_scrollable(p, false);
 	lv_obj_set_hidden(p, true);

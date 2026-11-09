@@ -38,17 +38,20 @@ lv_obj_t *statusbar_create(lv_obj_t *parent, const char *symbol, const char *tit
 extern const struct widget_ops home_screen, settings_screen, input_test_screen, layers_screen,
 	game_screen, wifi_screen, wifi_key_screen, usb_disk_screen;
 
-/* A vertical screen body under the status bar */
+/* widgets/console.c: what every screen shares (the grid: lvgl_view.h) */
+/* A new screen: the background, the header with symbol and title, a line under it */
+lv_obj_t *console_screen(const char *symbol, const char *title);
+/* The header alone (the status bar: its ends at the margins) */
+lv_obj_t *console_header(lv_obj_t *screen, const char *symbol, const char *title);
+/* A column in ui_body_area() */
 lv_obj_t *screen_body(lv_obj_t *screen);
-
-/* widgets/footer.c: the console-like screens (home, settings) */
-/* Left and right of everything on them */
-int32_t ui_margin(void);
-/* The status bar over the background, its ends at the margins, h high */
-lv_obj_t *console_header(lv_obj_t *screen, const char *symbol, const char *title, int32_t h);
 /* A line along the bottom with the buttons' hints at its right, "(B) Back  (A) OK" */
-int32_t footer_height(void);
 lv_obj_t *footer_create(lv_obj_t *screen);
+/* Focused: a lighter box with the accent frame inside it (rows next to each
+ * other need no room for it) */
+void console_focus_box(lv_obj_t *o);
+/* A row of a list: two cells high at least, a line under it, focus box */
+lv_obj_t *console_row(lv_obj_t *parent);
 /* Button, text pairs up to a NULL: a letter ("A") or symbols (arrows) */
 void footer_set(lv_obj_t *footer, ...);
 /* The screen's background: a dark vertical gradient */

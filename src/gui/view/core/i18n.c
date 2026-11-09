@@ -113,8 +113,6 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_NO_NETWORKS]     = { "No networks found" RU("Сети не найдены") },
 	[S_SAVED]           = { "saved" RU("сохранена") },
 	[S_OPEN]            = { "open" RU("открытая") },
-	[S_WIFI_HINT]       = { "A  connect    X  forget    B  back"
-				RU("A  подключить    X  забыть    B  назад") },
 	[S_WIFI_FORGET_AGAIN_FMT] = { "X again: forget %s" RU("X ещё раз: забыть %s") },
 	[S_WIFI_KEY]        = { "Network key" RU("Ключ сети") },
 	[S_WIFI_KEY_HINT_FMT] = { "X  delete    %s  connect    B  back"
@@ -182,6 +180,9 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_GAME_HINT]       = { "Controls at the start" RU("Подсказка при запуске") },
 	[S_ON]              = { "On" RU("Вкл.") },
 	[S_OFF]             = { "Off" RU("Выкл.") },
+	[S_CALIBRATE]       = { "Calibrate" RU("Калибровка") },
+	[S_CONNECT]         = { "Connect" RU("Подключиться") },
+	[S_FORGET]          = { "Forget" RU("Забыть") },
 };
 
 static int lang = LANG_EN;

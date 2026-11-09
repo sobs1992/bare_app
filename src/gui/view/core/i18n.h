@@ -34,7 +34,6 @@ enum str_id {
 	S_WIFI_NO_IP_FMT,	/* "%s": network */
 	S_WIFI_NO_DAEMON,
 	S_NETWORKS, S_SEARCHING, S_NO_NETWORKS, S_SAVED, S_OPEN,
-	S_WIFI_HINT,
 	S_WIFI_FORGET_AGAIN_FMT,	/* "%s": network */
 	S_WIFI_KEY,
 	S_WIFI_KEY_HINT_FMT,	/* "%s": the OK key's symbol */
@@ -52,6 +51,7 @@ enum str_id {
 	S_IP_ADDRESS, S_DEVICE, S_PLATFORM, S_BATTERY, S_CHARGING,
 	S_BACK, S_OK, S_CHANGE,
 	S_SET_GAMES, S_GAME_HINT, S_ON, S_OFF,
+	S_CALIBRATE, S_CONNECT, S_FORGET,
 	S_COUNT
 };
 

@@ -12,13 +12,16 @@ struct hal_display;
 
 #ifdef CONFIG_UI_FONT_CYRILLIC
 /* Noto Sans with Cyrillic (fonts/, tools/gen_font.py); icons fall back to Montserrat */
-extern const lv_font_t ui_font_14, ui_font_20;
-#define UI_FONT_SMALL (&ui_font_14)
-#define UI_FONT_MID   (&ui_font_20)
-#else
-#define UI_FONT_SMALL (&lv_font_montserrat_14)
-#define UI_FONT_MID   (&lv_font_montserrat_20)
+extern const lv_font_t ui_font_14, ui_font_20, ui_font_28;
 #endif
+/* The two text sizes, by the screen's size (widgets/console.c) */
+enum ui_text {
+	UI_TEXT_SMALL, UI_TEXT_MID,
+	UI_TEXT_COMPACT,	/* 14 px everywhere: dense panels (the system monitor) */
+};
+const lv_font_t *ui_font(enum ui_text size);
+#define UI_FONT_SMALL ui_font(UI_TEXT_SMALL)
+#define UI_FONT_MID   ui_font(UI_TEXT_MID)
 #define UI_COLOR_DIM  lv_color_hex(0x8a8f98)
 #define UI_COLOR_ON   lv_color_hex(0x2f8cff)
 #define UI_COLOR_WARN lv_color_hex(0xff6a3d)
@@ -27,7 +30,17 @@ extern const lv_font_t ui_font_14, ui_font_20;
 #define UI_COLOR_BG2    lv_color_hex(0x0d0f13)	/* bottom */
 #define UI_COLOR_LINE   lv_color_hex(0x2a2f39)
 #define UI_COLOR_ACCENT lv_color_hex(0x31c6ff)	/* focus frames, what is chosen */
-#define UI_STATUSBAR_H 36
+/*
+ * The grid of every screen (widgets/console.c): UI_ROWS square cells high,
+ * the margins at the sides equal; the header and the footer two rows each.
+ */
+#define UI_ROWS 16
+int32_t ui_cell(void);		/* side of a cell, pixels */
+int32_t ui_px(int32_t px);	/* a size of the 480x320 layout (cell 20) on this screen */
+int32_t ui_margin(void);	/* left and right of everything */
+int32_t ui_header_h(void);
+int32_t footer_height(void);
+void ui_body_area(lv_area_t *a);	/* between them, half a cell off each */
 /* X as an LVGL key (LV_EVENT_KEY on the focused object); beyond Unicode, so
  * nothing types it */
 #define UI_LV_KEY_ALT 0x110000u

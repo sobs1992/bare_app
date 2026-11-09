@@ -144,12 +144,13 @@ if(CONFIG_VIEW_LVGL)
 		src/gui/view/lvgl/widget.c
 		src/gui/view/lvgl/screens.c
 		src/gui/view/lvgl/widgets/statusbar.c
-		src/gui/view/lvgl/widgets/footer.c
+		src/gui/view/lvgl/widgets/console.c
 		src/gui/view/lvgl/screens/home.c
 	)
 	if(CONFIG_UI_FONT_CYRILLIC)
 		list(APPEND LVGL_SOURCES src/gui/view/lvgl/fonts/ui_font_14.c
-					 src/gui/view/lvgl/fonts/ui_font_20.c)
+					 src/gui/view/lvgl/fonts/ui_font_20.c
+					 src/gui/view/lvgl/fonts/ui_font_28.c)
 	endif()
 	if(CONFIG_SCREEN_SETTINGS)
 		list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/settings.c)

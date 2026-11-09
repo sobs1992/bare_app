@@ -15,7 +15,7 @@
 #include "gui/action.h"
 
 #define AGAIN_MS 3000
-#define TEXT_W 600
+#define TEXT_CELLS 20	/* the text's width */
 
 struct usb_disk {
 	lv_obj_t *icon, *text, *hint;
@@ -65,16 +65,14 @@ static void *usb_disk_init(lv_obj_t *parent, lv_obj_t **root)
 	if (!d)
 		return NULL;
 	d->state = (enum usb_disk_state)-1;
-	scr = lv_obj_create(NULL);
-	statusbar_create(scr, LV_SYMBOL_USB, tr(S_USB_DISK));
+	scr = console_screen(LV_SYMBOL_USB, tr(S_USB_DISK));
 	body = screen_body(scr);
 	lv_obj_set_flex_align(body, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_row(body, 16, 0);
 
 	d->icon = lv_label_create(body);
-	lv_obj_set_style_text_font(d->icon, &lv_font_montserrat_20, 0);
+	lv_obj_set_style_text_font(d->icon, UI_FONT_MID, 0);
 	d->text = lv_label_create(body);
-	lv_obj_set_width(d->text, LV_MIN(TEXT_W, lv_display_get_horizontal_resolution(lv_display_get_default()) - 32));
+	lv_obj_set_width(d->text, LV_MIN(TEXT_CELLS * ui_cell(), LV_PCT(100)));
 	lv_label_set_long_mode(d->text, LV_LABEL_LONG_MODE_WRAP);
 	lv_obj_set_style_text_align(d->text, LV_TEXT_ALIGN_CENTER, 0);
 	lv_obj_set_style_text_font(d->text, UI_FONT_MID, 0);

@@ -1,5 +1,6 @@
 /*
- * Status bar: screen title on the left; volume (CTX_AUDIO), Wi-Fi (CTX_WIFI),
+ * Status bar, the header of every screen (widgets/console.c): the screen's
+ * title on the left; volume (CTX_AUDIO), Wi-Fi (CTX_WIFI),
  * battery (CTX_POWER) and the time on the right. The time only once the
  * clock has been set (a board without a set RTC starts in 1970 or 2000).
  */
@@ -64,10 +65,9 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 	s->shown_link = -1;
 	bar = lv_obj_create(parent);
 	lv_obj_remove_style_all(bar);
-	lv_obj_set_size(bar, LV_PCT(100), UI_STATUSBAR_H);
-	lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-	lv_obj_set_style_bg_color(bar, lv_color_hex(0x1b1f27), 0);
-	lv_obj_set_style_pad_hor(bar, 12, 0);
+	/* the header rows of the grid, on the screen's background */
+	lv_obj_set_size(bar, LV_PCT(100), ui_header_h());
+	lv_obj_set_style_pad_hor(bar, ui_margin(), 0);
 	lv_obj_set_scrollable(bar, false);
 
 	s->title = lv_label_create(bar);
@@ -81,7 +81,7 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_align(right, LV_ALIGN_RIGHT_MID, 0, 0);
 	lv_obj_set_flex_flow(right, LV_FLEX_FLOW_ROW);
 	lv_obj_set_flex_align(right, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_column(right, 14, 0);
+	lv_obj_set_style_pad_column(right, ui_px(14), 0);
 	s->volume = lv_label_create(right);
 	lv_obj_set_style_text_font(s->volume, UI_FONT_MID, 0);
 	lv_label_set_text(s->volume, "");

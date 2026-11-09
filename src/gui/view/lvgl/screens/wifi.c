@@ -17,7 +17,7 @@
 #define FORGET_MS 3000		/* X twice within this time */
 
 struct wifi_screen {
-	lv_obj_t *sw, *status, *header, *empty, *hint;
+	lv_obj_t *sw, *status, *header, *empty, *footer;
 	lv_obj_t *rows[WIFI_MAX_NETS], *names[WIFI_MAX_NETS], *infos[WIFI_MAX_NETS];
 	struct wifi_net nets[WIFI_MAX_NETS];	/* what the rows show */
 	bool current[WIFI_MAX_NETS];		/* ...and which one is joined */
@@ -105,18 +105,18 @@ static void *wifi_init(lv_obj_t *parent, lv_obj_t **root)
 		return NULL;
 	w->forget_row = -1;
 	w->link = -1;
-	scr = lv_obj_create(NULL);
-	statusbar_create(scr, LV_SYMBOL_WIFI, tr(S_WIFI));
+	scr = console_screen(LV_SYMBOL_WIFI, tr(S_WIFI));
 	body = screen_body(scr);
-	lv_obj_set_style_pad_row(body, 6, 0);
+	lv_obj_set_style_pad_row(body, 0, 0);
 
 	r = lv_obj_create(body);
 	lv_obj_remove_style_all(r);
 	lv_obj_set_size(r, LV_PCT(100), LV_SIZE_CONTENT);
 	lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
 	lv_obj_set_flex_align(r, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_column(r, 16, 0);
+	lv_obj_set_style_pad_column(r, ui_px(16), 0);
 	w->sw = lv_switch_create(r);
+	lv_obj_set_size(w->sw, ui_px(50), ui_px(26));
 	ui_focus_style(w->sw);
 	lv_obj_add_event_cb(w->sw, on_switch, LV_EVENT_VALUE_CHANGED, NULL);
 	w->status = lv_label_create(r);
@@ -126,6 +126,7 @@ static void *wifi_init(lv_obj_t *parent, lv_obj_t **root)
 
 	w->header = lv_label_create(body);
 	lv_obj_set_width(w->header, LV_PCT(100));
+	lv_obj_set_style_margin_top(w->header, ui_px(8), 0);
 	lv_obj_set_style_text_color(w->header, UI_COLOR_DIM, 0);
 	w->empty = lv_label_create(body);
 	lv_obj_set_width(w->empty, LV_PCT(100));
@@ -133,13 +134,8 @@ static void *wifi_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_style_text_font(w->empty, UI_FONT_MID, 0);
 
 	for (i = 0; i < WIFI_MAX_NETS; i++) {
-		r = w->rows[i] = lv_button_create(body);
-		lv_obj_set_size(r, LV_PCT(100), LV_SIZE_CONTENT);
-		lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
-		lv_obj_set_flex_align(r, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-				      LV_FLEX_ALIGN_CENTER);
-		lv_obj_set_style_pad_ver(r, 8, 0);
-		ui_focus_style(r);
+		r = w->rows[i] = console_row(body);
+		lv_group_add_obj(lv_group_get_default(), r);
 		lv_obj_add_event_cb(r, on_click, LV_EVENT_CLICKED, w);
 		lv_obj_add_event_cb(r, on_key, LV_EVENT_KEY, w);
 		label = w->names[i] = lv_label_create(r);
@@ -147,12 +143,11 @@ static void *wifi_init(lv_obj_t *parent, lv_obj_t **root)
 		lv_obj_set_style_text_font(label, UI_FONT_MID, 0);
 		lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
 		w->infos[i] = lv_label_create(r);
+		lv_obj_set_style_text_color(w->infos[i], UI_COLOR_DIM, 0);
 		lv_obj_set_hidden(r, true);
 	}
 
-	w->hint = lv_label_create(body);
-	lv_obj_set_style_text_color(w->hint, UI_COLOR_DIM, 0);
-	lv_label_set_text(w->hint, tr(S_WIFI_HINT));
+	w->footer = footer_create(scr);
 
 	gui_action_post(ACT_WIFI_SCAN, 0);
 	w->rescan = lv_timer_create(on_rescan, RESCAN_MS, NULL);
@@ -218,7 +213,10 @@ static void update_list(struct wifi_screen *w, const struct gui_ctx *c)
 	lv_label_set_text(w->empty, tr(c->wifi.available ? S_NO_NETWORKS : S_WIFI_NO_DAEMON));
 	lv_obj_set_hidden(w->empty, w->count > 0 || (on && c->wifi.scanning) ||
 				    (c->wifi.available && !c->wifi.enabled));
-	lv_obj_set_hidden(w->hint, w->count == 0);
+	if (w->count)
+		footer_set(w->footer, "X", tr(S_FORGET), "B", tr(S_BACK), "A", tr(S_CONNECT), NULL);
+	else
+		footer_set(w->footer, "B", tr(S_BACK), NULL);
 }
 
 static void wifi_update(void *self, const struct gui_ctx *c, uint32_t changed)

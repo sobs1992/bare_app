@@ -2,10 +2,14 @@
  * Home, laid out like a console's home menu: the games of games/game.h as
  * a row of big square tiles (their cover.png, or the title on a colour of
  * its own), the one played last first (ctx settings.recent, the games never
- * played after them in the order of games.c), the name of the focused one
- * above it, a row of round buttons
- * for the other screens under it, and what A does at the bottom. Left and
- * Right go along a row, Up and Down between the rows (port_input_set_2d()).
+ * played after them in the order of games.c), the name of what is focused
+ * above it, a row of round buttons for the other screens under it, and
+ * what A does at the bottom. Left and Right go along a row, Up and Down
+ * between the rows (port_input_set_2d()).
+ *
+ * On the grid (widgets/console.c, in cells): the header rows 0-2, the name
+ * from 2.25, the tiles 7 cells square from row 4, a cell apart, the round
+ * buttons 1.5 cells from row 12, the footer from row 14.
  *
  * A minimised game has a pause mark; picking another entry that needs
  * the video layer (another game) or the games partition (the USB disk)
@@ -21,19 +25,15 @@
 #include "games/game.h"
 #include "gui/action.h"
 
-#define BUTTON_H 40		/* the dialog's */
-#define BUTTON_GAP 8
-#define DIALOG_W 400
+#define DIALOG_W 20		/* cells */
 #define MENU_MAX 64
 
-#define TILE_MAX 240		/* tile side on a big screen */
-#define TILE_SMALL 150		/* below it the small font on the tile */
-#define TILE_MIN 96
-#define TILE_GAP 18
-#define TILE_RADIUS 12
-#define FOCUS_W 4		/* the focused tile's or button's frame */
-#define FOCUS_PAD 4
-#define ROUND_GAP 22
+#define TILE_CELLS 7
+#define TILE_SMALL 120		/* below it the small font on the tile */
+#define TITLE_ROW 9		/* the name's top: 2.25 cells, in quarters */
+#define TILES_ROW 4
+#define ROUNDS_ROW 12
+#define ROUND_HALVES 3		/* the round buttons' side: 1.5 cells */
 #define COLOR_ROUND lv_color_hex(0x2a2f39)
 
 struct entry {
@@ -201,7 +201,7 @@ static lv_obj_t *dialog_button(lv_obj_t *parent, const char *text, lv_event_cb_t
 {
 	lv_obj_t *btn = lv_button_create(parent), *label;
 
-	lv_obj_set_size(btn, LV_PCT(100), BUTTON_H);
+	lv_obj_set_size(btn, LV_PCT(100), 2 * ui_cell());
 	ui_focus_style(btn);
 	lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, d);
 	lv_obj_add_event_cb(btn, on_cancel, LV_EVENT_CANCEL, d);	/* B */
@@ -234,9 +234,11 @@ static void ask_close(lv_obj_t *scr, const struct entry *picked, const struct en
 	lv_obj_add_event_cb(d->backdrop, on_dialog_delete, LV_EVENT_DELETE, d);
 
 	box = lv_obj_create(d->backdrop);
-	lv_obj_set_size(box, LV_MIN(DIALOG_W, lv_obj_get_width(scr) - 20), LV_SIZE_CONTENT);
+	lv_obj_set_size(box, LV_MIN(DIALOG_W * ui_cell(), lv_obj_get_width(scr) - 2 * ui_margin()),
+			LV_SIZE_CONTENT);
 	lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_style_pad_row(box, BUTTON_GAP, 0);
+	lv_obj_set_style_pad_all(box, ui_cell(), 0);
+	lv_obj_set_style_pad_row(box, ui_cell() / 2, 0);
 	lv_obj_set_scrollable(box, false);
 	lv_obj_center(box);
 	label = lv_label_create(box);
@@ -267,7 +269,7 @@ static void on_click(lv_event_t *e)
 /* ---- the menu ------------------------------------------------------------ */
 
 struct home {
-	lv_obj_t *scr, *title, *row, *rounds, *round_name, *footer;
+	lv_obj_t *scr, *title, *row, *rounds, *footer;
 	lv_obj_t *tiles[MENU_MAX], *buttons[N_ENTRIES];
 	const struct entry *tile_entry[MENU_MAX], *button_entry[N_ENTRIES];
 	int n_tiles, n_buttons, last_tile, last_button;
@@ -313,14 +315,11 @@ static void focus_changed(lv_obj_t *obj, const struct entry *en)
 
 	if ((i = index_of(home->tiles, home->n_tiles, obj)) >= 0) {
 		home->last_tile = i;
-		lv_label_set_text(home->title, entry_text(en));
-		lv_obj_set_hidden(home->round_name, true);
 		lv_obj_scroll_to_view(obj, LV_ANIM_ON);
 	} else if ((i = index_of(home->buttons, home->n_buttons, obj)) >= 0) {
 		home->last_button = i;
-		lv_label_set_text(home->round_name, entry_text(en));
-		lv_obj_set_hidden(home->round_name, false);
 	}
+	lv_label_set_text(home->title, entry_text(en));
 	set_action(en);
 }
 
@@ -351,12 +350,18 @@ static void on_key(lv_event_t *e)
 		lv_group_focus_obj(to);
 }
 
+/* The focused tile's or button's frame: how far it reaches out of it */
+static int32_t focus_reach(void)
+{
+	return 2 * ui_px(4);
+}
+
 static void focus_frame(lv_obj_t *obj, int32_t radius)
 {
 	lv_obj_set_style_radius(obj, radius, 0);
-	lv_obj_set_style_outline_width(obj, FOCUS_W, LV_STATE_FOCUS_KEY);
+	lv_obj_set_style_outline_width(obj, ui_px(4), LV_STATE_FOCUS_KEY);
 	lv_obj_set_style_outline_color(obj, UI_COLOR_ACCENT, LV_STATE_FOCUS_KEY);
-	lv_obj_set_style_outline_pad(obj, FOCUS_PAD, LV_STATE_FOCUS_KEY);
+	lv_obj_set_style_outline_pad(obj, ui_px(4), LV_STATE_FOCUS_KEY);
 	lv_obj_set_style_outline_opa(obj, LV_OPA_COVER, LV_STATE_FOCUS_KEY);
 }
 
@@ -369,7 +374,7 @@ static lv_obj_t *tile_new(lv_obj_t *parent, const struct entry *en, bool minimiz
 
 	lv_obj_remove_style_all(t);
 	lv_obj_set_size(t, home->tile, home->tile);
-	focus_frame(t, TILE_RADIUS);
+	focus_frame(t, ui_px(12));
 	lv_obj_set_style_clip_corner(t, true, 0);
 	lv_obj_set_style_bg_opa(t, LV_OPA_COVER, 0);
 	lv_obj_set_style_bg_color(t, c, 0);
@@ -385,7 +390,7 @@ static lv_obj_t *tile_new(lv_obj_t *parent, const struct entry *en, bool minimiz
 		lv_image_set_inner_align(o, LV_IMAGE_ALIGN_COVER);
 	} else {
 		o = lv_label_create(t);
-		lv_obj_set_width(o, home->tile - 20);
+		lv_obj_set_width(o, home->tile - ui_cell());
 		lv_label_set_long_mode(o, LV_LABEL_LONG_MODE_WRAP);
 		lv_obj_set_style_text_align(o, LV_TEXT_ALIGN_CENTER, 0);
 		lv_obj_set_style_text_font(o, home->tile < TILE_SMALL ? UI_FONT_SMALL : UI_FONT_MID, 0);
@@ -394,7 +399,7 @@ static lv_obj_t *tile_new(lv_obj_t *parent, const struct entry *en, bool minimiz
 		o = lv_label_create(t);
 		lv_obj_set_style_text_opa(o, LV_OPA_50, 0);
 		lv_label_set_text(o, LV_SYMBOL_PLAY);
-		lv_obj_align(o, LV_ALIGN_TOP_LEFT, 10, 8);
+		lv_obj_align(o, LV_ALIGN_TOP_LEFT, ui_px(10), ui_px(8));
 	}
 	if (game_missing_text(en->game, src, sizeof(src))) {
 		/* dimmed under a veil: the focus frame stays bright */
@@ -407,22 +412,24 @@ static lv_obj_t *tile_new(lv_obj_t *parent, const struct entry *en, bool minimiz
 		lv_obj_set_style_text_font(o, UI_FONT_SMALL, 0);
 		lv_obj_set_style_bg_color(o, lv_color_black(), 0);
 		lv_obj_set_style_bg_opa(o, LV_OPA_70, 0);
-		lv_obj_set_style_pad_hor(o, 6, 0);
-		lv_obj_set_style_radius(o, 4, 0);
+		lv_obj_set_style_pad_hor(o, ui_px(6), 0);
+		lv_obj_set_style_radius(o, ui_px(4), 0);
 		/* a small tile has no room for the words */
 		lv_label_set_text(o, home->tile < TILE_SMALL ? LV_SYMBOL_WARNING : tr(S_HOME_NOT_INSTALLED));
-		lv_obj_align(o, LV_ALIGN_BOTTOM_MID, 0, -8);
+		lv_obj_align(o, LV_ALIGN_BOTTOM_MID, 0, -ui_px(8));
 	}
 	if (minimized) {
 		o = lv_label_create(t);
-		lv_obj_set_size(o, 34, 34);
+		int32_t d = ui_px(34);
+
+		lv_obj_set_size(o, d, d);
 		lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
 		lv_obj_set_style_bg_color(o, lv_color_black(), 0);
 		lv_obj_set_style_bg_opa(o, LV_OPA_70, 0);
 		lv_obj_set_style_text_align(o, LV_TEXT_ALIGN_CENTER, 0);
-		lv_obj_set_style_pad_top(o, 8, 0);
+		lv_obj_set_style_pad_top(o, (d - lv_font_get_line_height(UI_FONT_SMALL)) / 2, 0);
 		lv_label_set_text(o, LV_SYMBOL_PAUSE);
-		lv_obj_align(o, LV_ALIGN_TOP_RIGHT, -8, 8);
+		lv_obj_align(o, LV_ALIGN_TOP_RIGHT, -ui_px(8), ui_px(8));
 	}
 	lv_obj_add_event_cb(t, on_click, LV_EVENT_CLICKED, (void *)en);
 	lv_obj_add_event_cb(t, on_focused, LV_EVENT_FOCUSED, (void *)en);
@@ -467,12 +474,8 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 {
 	lv_display_t *disp = lv_display_get_default();
 	int32_t w = lv_display_get_horizontal_resolution(disp);
-	int32_t h = lv_display_get_vertical_resolution(disp);
-	int32_t footer_h = footer_height(), round = h >= 400 ? 52 : 40;
-	int32_t title_h = lv_font_get_line_height(UI_FONT_MID);
-	int32_t name_h = lv_font_get_line_height(UI_FONT_SMALL);
-	int32_t frame = FOCUS_W + FOCUS_PAD, margin = ui_margin();
-	int32_t avail, fixed, top, gap;
+	int32_t u = ui_cell(), round = ROUND_HALVES * u / 2;
+	int32_t frame = focus_reach(), margin = ui_margin();
 	lv_obj_t *scr, *focus = NULL;
 	size_t i;
 
@@ -482,20 +485,13 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 	if (!home)
 		return NULL;
 	home->group = lv_group_get_default();
+	home->tile = TILE_CELLS * u;
 
 	scr = lv_obj_create(NULL);
 	home->scr = scr;
 	screen_console_style(scr);
 	lv_obj_add_event_cb(scr, on_screen_delete, LV_EVENT_DELETE, home);
-	console_header(scr, NULL, "", UI_STATUSBAR_H);	/* the time, volume, Wi-Fi, battery */
-
-	/* title, the tiles, the round buttons with the name under them: the
-	 * tiles as big as the rest leaves room for, the whole block centred */
-	avail = h - UI_STATUSBAR_H - footer_h;
-	fixed = title_h + 2 * frame + round + 2 * frame + name_h + 3 * 10;
-	home->tile = LV_CLAMP(TILE_MIN, avail - fixed, TILE_MAX);
-	gap = LV_MAX(10, (avail - fixed - home->tile) / 5 + 10);
-	top = UI_STATUSBAR_H + LV_MAX(0, (avail - (fixed - 3 * 10 + 3 * gap) - home->tile) / 2);
+	console_header(scr, NULL, "");	/* the time, volume, Wi-Fi, battery */
 
 	home->title = lv_label_create(scr);
 	lv_obj_set_style_text_font(home->title, UI_FONT_MID, 0);
@@ -503,39 +499,30 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_width(home->title, w - 2 * margin);
 	lv_label_set_long_mode(home->title, LV_LABEL_LONG_MODE_DOTS);
 	lv_label_set_text(home->title, n_games ? "" : tr(S_HOME_NO_GAMES));
-	lv_obj_set_pos(home->title, margin, top);
+	lv_obj_set_pos(home->title, margin, TITLE_ROW * u / 4);
 
+	/* the whole width: the tiles scroll under the margins */
 	home->row = lv_obj_create(scr);
 	lv_obj_remove_style_all(home->row);
 	lv_obj_set_size(home->row, w, home->tile + 2 * frame);
-	lv_obj_set_pos(home->row, 0, top + title_h + gap - frame);
+	lv_obj_set_pos(home->row, 0, TILES_ROW * u - frame);
 	lv_obj_set_flex_flow(home->row, LV_FLEX_FLOW_ROW);
 	lv_obj_set_flex_align(home->row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	lv_obj_set_style_pad_left(home->row, margin, 0);
 	lv_obj_set_style_pad_right(home->row, margin, 0);
-	lv_obj_set_style_pad_column(home->row, TILE_GAP, 0);
+	lv_obj_set_style_pad_column(home->row, u, 0);
 	lv_obj_set_scroll_dir(home->row, LV_DIR_HOR);
 	lv_obj_set_scrollbar_mode(home->row, LV_SCROLLBAR_MODE_OFF);
 
 	home->rounds = lv_obj_create(scr);
 	lv_obj_remove_style_all(home->rounds);
 	lv_obj_set_size(home->rounds, w, round + 2 * frame);
-	lv_obj_set_pos(home->rounds, 0, top + title_h + gap + home->tile + frame + gap);
+	lv_obj_set_pos(home->rounds, 0, ROUNDS_ROW * u - frame);
 	lv_obj_set_flex_flow(home->rounds, LV_FLEX_FLOW_ROW);
 	lv_obj_set_flex_align(home->rounds, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
 			      LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_column(home->rounds, ROUND_GAP, 0);
+	lv_obj_set_style_pad_column(home->rounds, u, 0);
 	lv_obj_set_scrollable(home->rounds, false);
-
-	home->round_name = lv_label_create(scr);
-	lv_obj_set_style_text_font(home->round_name, UI_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(home->round_name, UI_COLOR_DIM, 0);
-	lv_label_set_text(home->round_name, "");
-	lv_obj_set_hidden(home->round_name, true);
-	lv_obj_align_to(home->round_name, home->rounds, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
-	lv_obj_set_width(home->round_name, w);
-	lv_obj_set_style_text_align(home->round_name, LV_TEXT_ALIGN_CENTER, 0);
-	lv_obj_set_x(home->round_name, 0);
 
 	home->footer = footer_create(scr);
 

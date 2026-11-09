@@ -26,9 +26,8 @@
 #include "gui/action.h"
 
 #define STEP 5		/* percent per slider step */
-#define SIDE_PAD 4	/* room for the focus frames in the columns */
-#define FOCUS_W 3
-#define COLOR_FOCUS_BG lv_color_hex(0x232833)
+#define SIDE_CELLS 7	/* the categories' column */
+#define ROW_CELLS 2	/* a category, a setting at least */
 
 enum row_id {
 	R_BRIGHTNESS, R_VOLUME, R_OUTPUT, R_WIFI, R_IP, R_GAME_HINT, R_LANG, R_DEVICE, R_PLATFORM,
@@ -62,7 +61,6 @@ struct settings {
 	lv_obj_t *cats[6];
 	lv_group_t *group;
 	int cat;			/* in the panel */
-	bool big;			/* 640x400 and up: more room around everything */
 	int32_t row_h;
 	struct row rows[R_COUNT];
 	int shown_brightness, shown_volume;	/* -2: nothing yet */
@@ -242,10 +240,10 @@ static struct row *row_new(struct settings *s, enum row_id id, enum row_kind kin
 	lv_obj_remove_style_all(o);
 	lv_obj_set_size(o, LV_PCT(100), LV_SIZE_CONTENT);
 	lv_obj_set_style_min_height(o, s->row_h, 0);
-	lv_obj_set_style_pad_hor(o, s->big ? 20 : 10, 0);
-	lv_obj_set_style_pad_ver(o, s->big ? 12 : 8, 0);
-	lv_obj_set_style_pad_row(o, s->big ? 16 : 10, 0);
-	lv_obj_set_style_pad_column(o, s->big ? 16 : 8, 0);
+	lv_obj_set_style_pad_hor(o, ui_cell() / 2, 0);
+	lv_obj_set_style_pad_ver(o, ui_px(8), 0);
+	lv_obj_set_style_pad_row(o, ui_px(10), 0);
+	lv_obj_set_style_pad_column(o, ui_px(8), 0);
 	lv_obj_set_style_border_side(o, LV_BORDER_SIDE_BOTTOM, 0);
 	lv_obj_set_style_border_width(o, 1, 0);
 	lv_obj_set_style_border_color(o, UI_COLOR_LINE, 0);
@@ -266,23 +264,18 @@ static struct row *row_new(struct settings *s, enum row_id id, enum row_kind kin
 		lv_group_remove_obj(sl);	/* the row moves it */
 		lv_obj_set_clickable(sl, false);
 		/* in line with the text: the knob reaches into the row's padding */
-		lv_obj_set_size(sl, LV_PCT(100), 6);
-		lv_obj_set_style_margin_bottom(sl, s->big ? 6 : 4, 0);
+		lv_obj_set_size(sl, LV_PCT(100), ui_px(6));
+		lv_obj_set_style_margin_bottom(sl, ui_px(6), 0);
 		lv_obj_set_style_bg_color(sl, lv_color_lighten(UI_COLOR_LINE, LV_OPA_20), LV_PART_MAIN);
 		lv_obj_set_style_bg_color(sl, UI_COLOR_ACCENT, LV_PART_INDICATOR);
 		lv_obj_set_style_bg_color(sl, lv_color_white(), LV_PART_KNOB);
-		lv_obj_set_style_pad_all(sl, 6, LV_PART_KNOB);
+		lv_obj_set_style_pad_all(sl, ui_px(6), LV_PART_KNOB);
 		lv_obj_set_style_shadow_width(sl, 0, LV_PART_KNOB);
 		lv_slider_set_range(sl, 0, 100 / STEP);
 		r->slider = sl;
 	}
 	if (kind != ROW_INFO) {
-		lv_obj_set_style_radius(o, 8, 0);
-		lv_obj_set_style_bg_color(o, COLOR_FOCUS_BG, LV_STATE_FOCUSED);
-		lv_obj_set_style_bg_opa(o, LV_OPA_COVER, LV_STATE_FOCUSED);
-		lv_obj_set_style_outline_width(o, FOCUS_W, LV_STATE_FOCUSED);
-		lv_obj_set_style_outline_color(o, UI_COLOR_ACCENT, LV_STATE_FOCUSED);
-		lv_obj_set_style_outline_opa(o, LV_OPA_COVER, LV_STATE_FOCUSED);
+		console_focus_box(o);
 		lv_group_add_obj(s->group, o);
 		lv_obj_add_event_cb(o, on_row_focused, LV_EVENT_FOCUSED, r);
 		lv_obj_add_event_cb(o, on_row_key, LV_EVENT_KEY, r);
@@ -425,8 +418,6 @@ static void on_cat_click(lv_event_t *e)
 
 static lv_obj_t *cat_new(struct settings *s, lv_obj_t *parent, int i)
 {
-	bool big = s->big;
-
 	lv_obj_t *o = lv_obj_create(parent), *label;
 
 	lv_obj_remove_style_all(o);
@@ -434,25 +425,20 @@ static lv_obj_t *cat_new(struct settings *s, lv_obj_t *parent, int i)
 	lv_obj_set_user_data(o, (void *)(intptr_t)i);
 	lv_obj_set_flex_flow(o, LV_FLEX_FLOW_ROW);
 	lv_obj_set_flex_align(o, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_left(o, big ? 16 : 8, 0);
-	lv_obj_set_style_pad_column(o, big ? 14 : 6, 0);
-	lv_obj_set_style_radius(o, 8, 0);
+	lv_obj_set_style_pad_left(o, ui_cell() / 2, 0);
+	lv_obj_set_style_pad_column(o, ui_px(8), 0);
 	lv_obj_set_scrollable(o, false);
 	lv_obj_set_style_text_font(o, UI_FONT_MID, 0);
 	lv_obj_set_style_text_color(o, lv_color_white(), 0);
 	/* the one shown: a bar at its left and the accent colour */
 	lv_obj_set_style_text_color(o, UI_COLOR_ACCENT, LV_STATE_CHECKED);
 	lv_obj_set_style_border_side(o, LV_BORDER_SIDE_LEFT, LV_STATE_CHECKED);
-	lv_obj_set_style_border_width(o, 4, LV_STATE_CHECKED);
+	lv_obj_set_style_border_width(o, ui_px(4), LV_STATE_CHECKED);
 	lv_obj_set_style_border_color(o, UI_COLOR_ACCENT, LV_STATE_CHECKED);
-	lv_obj_set_style_bg_color(o, COLOR_FOCUS_BG, LV_STATE_FOCUSED);
-	lv_obj_set_style_bg_opa(o, LV_OPA_COVER, LV_STATE_FOCUSED);
-	lv_obj_set_style_outline_width(o, FOCUS_W, LV_STATE_FOCUSED);
-	lv_obj_set_style_outline_color(o, UI_COLOR_ACCENT, LV_STATE_FOCUSED);
-	lv_obj_set_style_outline_opa(o, LV_OPA_COVER, LV_STATE_FOCUSED);
+	console_focus_box(o);
 
 	label = lv_label_create(o);
-	lv_obj_set_width(label, big ? 26 : 20);
+	lv_obj_set_width(label, ui_cell());
 	lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
 	lv_label_set_text(label, categories[i].symbol);
 	label = lv_label_create(o);
@@ -477,7 +463,6 @@ static lv_obj_t *column(lv_obj_t *scr, int32_t x, int32_t y, int32_t w, int32_t 
 	lv_obj_remove_style_all(o);
 	lv_obj_set_pos(o, x, y);
 	lv_obj_set_size(o, w, h);
-	lv_obj_set_style_pad_all(o, SIDE_PAD, 0);
 	lv_obj_set_flex_flow(o, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_scrollbar_mode(o, LV_SCROLLBAR_MODE_OFF);
 	return o;
@@ -496,45 +481,35 @@ static lv_obj_t *line(lv_obj_t *scr, int32_t x, int32_t y, int32_t w, int32_t h)
 }
 
 /*
- * One margin at the sides (ui_margin(), as the header and the hints), the
- * columns from under the header's line to over the hints' line with the
- * same room above and below, the line between them in the middle of the gap.
+ * On the grid (widgets/console.c): the body between the header's and the
+ * footer's lines, the categories SIDE_CELLS wide at the left margin, the
+ * line between the columns in the middle of the next cell, the settings
+ * from the cell after it to the right margin. A category and a setting
+ * are ROW_CELLS high, so they are level.
  */
 static void *settings_init(lv_obj_t *parent, lv_obj_t **root)
 {
 	struct settings *s = calloc(1, sizeof(*s));
-	lv_display_t *disp = lv_display_get_default();
-	int32_t w = lv_display_get_horizontal_resolution(disp);
-	int32_t h = lv_display_get_vertical_resolution(disp);
-	bool big = w >= 640 && h >= 400;
-	int32_t margin = ui_margin(), header_h = big ? 60 : UI_STATUSBAR_H + 4;
-	int32_t side_w = big ? 230 : 138, gap = big ? 28 : 8, room = big ? 22 : 10;
-	int32_t top = header_h + room, col_h = h - footer_height() - room - top;
-	int32_t panel_x = margin + side_w + 2 * gap + 1;
+	int32_t u = ui_cell(), side_w = SIDE_CELLS * u;
 	lv_obj_t *scr, *side;
+	lv_area_t body;
 	int i;
 
 	(void)parent;
 	if (!s)
 		return NULL;
 	s->group = lv_group_get_default();
-	s->big = big;
-	s->row_h = big ? 64 : 44;
+	s->row_h = ROW_CELLS * u;
 	s->output = -1;
-	scr = lv_obj_create(NULL);
-	screen_console_style(scr);
-	console_header(scr, LV_SYMBOL_SETTINGS, tr(S_SETTINGS), header_h);
-	line(scr, margin, header_h, w - 2 * margin, 1);
+	scr = console_screen(LV_SYMBOL_SETTINGS, tr(S_SETTINGS));
 	s->footer = footer_create(scr);
 
-	/* the columns reach SIDE_PAD out of their place: room for the focus frames */
-	side = column(scr, margin - SIDE_PAD, top - SIDE_PAD, side_w + 2 * SIDE_PAD,
-		      col_h + 2 * SIDE_PAD);
-	lv_obj_set_style_pad_row(side, big ? 8 : 4, 0);
+	ui_body_area(&body);
+	side = column(scr, body.x1, body.y1, side_w, lv_area_get_height(&body));
 	lv_obj_set_scrollable(side, false);
-	line(scr, margin + side_w + gap, top, 1, col_h);
-	s->panel = column(scr, panel_x - SIDE_PAD, top - SIDE_PAD, w - margin - panel_x + 2 * SIDE_PAD,
-			  col_h + 2 * SIDE_PAD);
+	line(scr, body.x1 + side_w + u / 2, body.y1, 1, lv_area_get_height(&body));
+	s->panel = column(scr, body.x1 + side_w + u, body.y1, lv_area_get_width(&body) - side_w - u,
+			  lv_area_get_height(&body));
 	lv_obj_set_scroll_dir(s->panel, LV_DIR_VER);
 
 	for (i = 0; i < N_CATS; i++)

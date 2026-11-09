@@ -56,8 +56,8 @@ static void *wifi_key_init(lv_obj_t *parent, lv_obj_t **root)
 	if (!k)
 		return NULL;
 	scr = lv_obj_create(NULL);
-	lv_obj_set_scrollable(scr, false);
-	k->bar = statusbar_create(scr, LV_SYMBOL_WIFI, "");
+	screen_console_style(scr);
+	k->bar = console_header(scr, LV_SYMBOL_WIFI, "");
 
 	k->ta = lv_textarea_create(scr);
 	lv_group_remove_obj(k->ta);	/* the keyboard has the focus */
@@ -65,14 +65,15 @@ static void *wifi_key_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_textarea_set_max_length(k->ta, 63);
 	lv_textarea_set_placeholder_text(k->ta, tr(S_WIFI_KEY));
 	lv_obj_set_style_text_font(k->ta, UI_FONT_MID, 0);
-	lv_obj_set_width(k->ta, lv_display_get_horizontal_resolution(lv_display_get_default()) - 20);
-	lv_obj_align(k->ta, LV_ALIGN_TOP_MID, 0, UI_STATUSBAR_H + 8);
+	lv_obj_set_width(k->ta, lv_display_get_horizontal_resolution(lv_display_get_default()) -
+				2 * ui_margin());
+	lv_obj_align(k->ta, LV_ALIGN_TOP_MID, 0, ui_header_h());
 	lv_obj_add_state(k->ta, LV_STATE_FOCUSED);	/* shows the cursor */
 
 	hint = lv_label_create(scr);
 	lv_obj_set_style_text_color(hint, UI_COLOR_DIM, 0);
 	lv_label_set_text_fmt(hint, tr(S_WIFI_KEY_HINT_FMT), LV_SYMBOL_OK);
-	lv_obj_align_to(hint, k->ta, LV_ALIGN_OUT_BOTTOM_LEFT, 4, 6);
+	lv_obj_align_to(hint, k->ta, LV_ALIGN_OUT_BOTTOM_LEFT, ui_px(4), ui_px(6));
 
 	k->kb = lv_keyboard_create(scr);
 	lv_obj_set_style_text_font(k->kb, UI_FONT_MID, 0);

@@ -1,6 +1,10 @@
 /*
  * Input test: grabs the gamepad, lights up pressed buttons and shows the
- * sticks. Only what the hardware has is shown (input_*_present()). B is
+ * sticks. Only what the hardware has is shown (input_*_present()), laid
+ * out as on a gamepad over the body of the screen (in cells of the grid,
+ * widgets/console.c): the shoulder buttons along the top, the D-pad and
+ * the left stick under it on the left, X Y A B and the right stick on
+ * the right, the other buttons and the stick values in the middle. B is
  * one of the buttons under test, so it cannot simply mean "back": B
  * pressed twice within 600 ms leaves.
  *
@@ -18,8 +22,8 @@
 #include "core/util.h"
 #include "gui/action.h"
 
-#define STICK 96		/* stick box size */
-#define DOT 14
+#define PAD_W 22		/* the gamepad's width in cells; 11 high (the body) */
+#define DOT 14			/* of the 480x320 layout (ui_px()) */
 #define EDGE_DOT 4
 #define DOUBLE_TAP_MS 600
 #define SAMPLE_MS 20
@@ -38,10 +42,11 @@ struct still {
 };
 
 struct input_test {
+	int32_t stick, dot_d, edge_d;	/* pixels: a stick's box, its dot, an edge dot */
 	lv_obj_t *cell[GP_COUNT];	/* NULL: the device has no such button */
 	lv_obj_t *dot[INPUT_STICKS];	/* NULL: no such stick */
 	lv_obj_t *edge[INPUT_STICKS][JOY_CAL_BINS];
-	lv_obj_t *values, *hint;
+	lv_obj_t *values, *hint, *footer;
 	uint32_t last_a, last_b;
 	enum mode mode;
 	enum str_id note;		/* under the hint in MODE_TEST; S_COUNT: none */
@@ -50,9 +55,9 @@ struct input_test {
 	struct joy_cal_rec rec[INPUT_STICKS];
 };
 
-static void place(lv_obj_t *obj, int size, float x, float y)
+static void place(const struct input_test *t, lv_obj_t *obj, int size, float x, float y)
 {
-	int half = (STICK - size) / 2;
+	int half = (t->stick - size) / 2;
 
 	x = x < -1 ? -1 : x > 1 ? 1 : x;
 	y = y < -1 ? -1 : y > 1 ? 1 : y;
@@ -77,7 +82,7 @@ static void place_dot(struct input_test *t, int stick)
 			y -= t->rec[stick].cy;
 		}
 	}
-	place(t->dot[stick], DOT, x, y);
+	place(t, t->dot[stick], t->dot_d, x, y);
 }
 
 static void show_edge(struct input_test *t, int stick)
@@ -94,7 +99,7 @@ static void show_edge(struct input_test *t, int stick)
 			lv_obj_set_hidden(e, true);
 			continue;
 		}
-		place(e, EDGE_DOT, r->bx[i], r->by[i]);
+		place(t, e, t->edge_d, r->bx[i], r->by[i]);
 		lv_obj_set_hidden(e, false);
 	}
 }
@@ -140,13 +145,14 @@ static void show_hint(struct input_test *t)
 		lv_label_set_text(t->hint, tr(S_STICK_CAL_REST));
 	else if (t->mode == MODE_TURN)
 		lv_label_set_text(t->hint, tr(S_STICK_CAL_TURN));
-	else if (!t->dot[0] && !t->dot[1])
-		lv_label_set_text(t->hint, tr(S_TWICE_BACK));
-	else if (t->note == S_COUNT)
-		lv_label_set_text_fmt(t->hint, "%s\n%s", tr(S_TWICE_BACK), tr(S_STICK_CAL_START));
 	else
-		lv_label_set_text_fmt(t->hint, "%s\n%s\n%s", tr(S_TWICE_BACK), tr(S_STICK_CAL_START),
-				      tr(t->note));
+		lv_label_set_text(t->hint, t->note == S_COUNT ? "" : tr(t->note));
+	if (t->mode != MODE_TEST)
+		footer_set(t->footer, "B", tr(S_CANCEL), NULL);
+	else if (t->dot[0] || t->dot[1])
+		footer_set(t->footer, "B\xc3\x97" "2", tr(S_BACK), "A\xc3\x97" "2", tr(S_CALIBRATE), NULL);
+	else
+		footer_set(t->footer, "B\xc3\x97" "2", tr(S_BACK), NULL);
 }
 
 static void show(struct input_test *t)
@@ -302,118 +308,171 @@ static void on_input(const struct gp_event *ev, void *ud)
 	}
 }
 
-static lv_obj_t *stick_box(lv_obj_t *parent, const char *name, lv_obj_t **dot, lv_obj_t **edge)
+/* A stick: a round box at (x, y) cells of the pad, its edge dots, its dot */
+static void stick_box(struct input_test *t, lv_obj_t *pad, int32_t x, int32_t y, lv_obj_t **dot,
+		      lv_obj_t **edge)
 {
-	lv_obj_t *col = lv_obj_create(parent), *box, *label;
+	lv_obj_t *box = lv_obj_create(pad);
 	int i;
 
-	lv_obj_remove_style_all(col);
-	lv_obj_set_size(col, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-	lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(col, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_row(col, 4, 0);
-	label = lv_label_create(col);
-	lv_label_set_text(label, name);
-	box = lv_obj_create(col);
-	lv_obj_set_size(box, STICK, STICK);
+	lv_obj_set_size(box, t->stick, t->stick);
+	lv_obj_set_pos(box, x, y);
 	lv_obj_set_style_pad_all(box, 0, 0);
-	lv_obj_set_style_radius(box, STICK / 2, 0);
+	lv_obj_set_style_radius(box, LV_RADIUS_CIRCLE, 0);
+	lv_obj_set_style_bg_color(box, lv_color_hex(0x232833), 0);
+	lv_obj_set_style_border_color(box, UI_COLOR_LINE, 0);
 	lv_obj_set_scrollable(box, false);
 	for (i = 0; i < JOY_CAL_BINS; i++) {
 		edge[i] = lv_obj_create(box);
 		lv_obj_remove_style_all(edge[i]);
-		lv_obj_set_size(edge[i], EDGE_DOT, EDGE_DOT);
-		lv_obj_set_style_radius(edge[i], EDGE_DOT / 2, 0);
+		lv_obj_set_size(edge[i], t->edge_d, t->edge_d);
+		lv_obj_set_style_radius(edge[i], LV_RADIUS_CIRCLE, 0);
 		lv_obj_set_style_bg_opa(edge[i], LV_OPA_COVER, 0);
 		lv_obj_set_style_bg_color(edge[i], UI_COLOR_DIM, 0);
 		lv_obj_set_hidden(edge[i], true);
 	}
 	*dot = lv_obj_create(box);
-	lv_obj_set_size(*dot, DOT, DOT);
-	lv_obj_set_style_radius(*dot, DOT / 2, 0);
+	lv_obj_remove_style_all(*dot);
+	lv_obj_set_size(*dot, t->dot_d, t->dot_d);
+	lv_obj_set_style_radius(*dot, LV_RADIUS_CIRCLE, 0);
+	lv_obj_set_style_bg_opa(*dot, LV_OPA_COVER, 0);
 	lv_obj_set_style_bg_color(*dot, UI_COLOR_ON, 0);
-	lv_obj_set_style_border_width(*dot, 0, 0);
-	return col;
 }
 
-static lv_obj_t *column(lv_obj_t *parent, int width)
-{
-	lv_obj_t *c = lv_obj_create(parent);
+/* Where each button is on the pad: x, y, width, height in quarter cells */
+static const struct {
+	int8_t x, y, w, h;
+	bool round;
+} spots[GP_COUNT] = {
+	/* the D-pad around 3.75 cells, X Y A B around 18.25: 1.75 cell buttons */
+	[GP_UP]    = { 12, 8, 7, 7, false },  [GP_DOWN]  = { 12, 22, 7, 7, false },
+	[GP_LEFT]  = { 5, 15, 7, 7, false },  [GP_RIGHT] = { 19, 15, 7, 7, false },
+	[GP_X]     = { 70, 8, 7, 7, true },   [GP_B]     = { 70, 22, 7, 7, true },
+	[GP_Y]     = { 63, 15, 7, 7, true },  [GP_A]     = { 77, 15, 7, 7, true },
+	/* the shoulders */
+	[GP_L2]    = { 0, 0, 10, 6, false },  [GP_L1]    = { 12, 0, 10, 6, false },
+	[GP_R1]    = { 66, 0, 10, 6, false }, [GP_R2]    = { 78, 0, 10, 6, false },
+	/* the middle */
+	[GP_VOL_DOWN] = { 31, 0, 8, 6, false }, [GP_MENU] = { 40, 0, 8, 6, false },
+	[GP_VOL_UP] = { 49, 0, 8, 6, false },
+	[GP_SELECT] = { 32, 8, 11, 6, false }, [GP_START] = { 45, 8, 11, 6, false },
+	[GP_F1]    = { 31, 16, 8, 6, false }, [GP_F2]    = { 40, 16, 8, 6, false },
+	[GP_F3]    = { 49, 16, 8, 6, false }, [GP_F4]    = { 31, 24, 8, 6, false },
+	[GP_F5]    = { 40, 24, 8, 6, false }, [GP_F6]    = { 49, 24, 8, 6, false },
+};
 
-	lv_obj_remove_style_all(c);
-	lv_obj_set_size(c, width, LV_SIZE_CONTENT);
-	lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_row(c, 8, 0);
-	return c;
+static const char *button_text(enum gp_button b)
+{
+	switch (b) {
+	case GP_UP:       return LV_SYMBOL_UP;
+	case GP_DOWN:     return LV_SYMBOL_DOWN;
+	case GP_LEFT:     return LV_SYMBOL_LEFT;
+	case GP_RIGHT:    return LV_SYMBOL_RIGHT;
+	case GP_A:        return "A";
+	case GP_B:        return "B";
+	case GP_X:        return "X";
+	case GP_Y:        return "Y";
+	case GP_L1:       return "L1";
+	case GP_L2:       return "L2";
+	case GP_R1:       return "R1";
+	case GP_R2:       return "R2";
+	case GP_SELECT:   return "Select";
+	case GP_START:    return "Start";
+	case GP_MENU:     return "Menu";
+	case GP_VOL_UP:   return "Vol+";
+	case GP_VOL_DOWN: return "Vol-";
+	case GP_F1:       return "F1";
+	case GP_F2:       return "F2";
+	case GP_F3:       return "F3";
+	case GP_F4:       return "F4";
+	case GP_F5:       return "F5";
+	case GP_F6:       return "F6";
+	default:          return gp_button_name(b);
+	}
+}
+
+static lv_obj_t *button_new(lv_obj_t *pad, enum gp_button b, int32_t q)
+{
+	lv_obj_t *cell = lv_obj_create(pad), *label;
+	bool big = spots[b].w >= 7 && spots[b].h >= 7;
+
+	lv_obj_set_pos(cell, spots[b].x * q, spots[b].y * q);
+	lv_obj_set_size(cell, spots[b].w * q, spots[b].h * q);
+	lv_obj_set_style_pad_all(cell, 0, 0);
+	lv_obj_set_style_radius(cell, spots[b].round ? LV_RADIUS_CIRCLE : ui_px(8), 0);
+	lv_obj_set_style_bg_color(cell, lv_color_hex(0x2a2f39), 0);
+	lv_obj_set_style_border_width(cell, 0, 0);
+	lv_obj_set_style_bg_color(cell, UI_COLOR_ON, LV_STATE_CHECKED);
+	lv_obj_set_scrollable(cell, false);
+	label = lv_label_create(cell);
+	lv_obj_set_style_text_font(label, big ? UI_FONT_MID : UI_FONT_SMALL, 0);
+	lv_label_set_text(label, button_text(b));
+	lv_obj_center(label);
+	return cell;
 }
 
 static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 {
 	struct input_test *t = calloc(1, sizeof(*t));
-	lv_obj_t *scr, *body, *left, *grid, *right, *sticks;
+	int32_t u = ui_cell(), q = u / 4, stick_y = 30 * q;
+	lv_obj_t *scr, *pad, *text;
 	uint32_t present, axes;
+	lv_area_t body;
 	int b;
 
 	(void)parent;
 	if (!t)
 		return NULL;
 	t->note = S_COUNT;
-	scr = lv_obj_create(NULL);
-	statusbar_create(scr, LV_SYMBOL_KEYBOARD, tr(S_INPUT_TEST));
-	body = screen_body(scr);
-	lv_obj_set_flex_flow(body, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(body, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+	t->stick = 14 * q;		/* 3.5 cells */
+	t->dot_d = ui_px(DOT);
+	t->edge_d = LV_MAX(2, ui_px(EDGE_DOT));
+	scr = console_screen(LV_SYMBOL_KEYBOARD, tr(S_INPUT_TEST));
+	t->footer = footer_create(scr);
 
-	/* left: one cell per logical button, 5 per row */
-	left = column(body, 250);
-	grid = lv_obj_create(left);
-	lv_obj_remove_style_all(grid);
-	lv_obj_set_size(grid, LV_PCT(100), LV_SIZE_CONTENT);
-	lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-	lv_obj_set_style_pad_gap(grid, 5, 0);
+	/* the pad PAD_W cells wide in the middle of the body */
+	ui_body_area(&body);
+	pad = lv_obj_create(scr);
+	lv_obj_remove_style_all(pad);
+	lv_obj_set_size(pad, PAD_W * u, lv_area_get_height(&body));
+	lv_obj_set_pos(pad, body.x1 + (lv_area_get_width(&body) - PAD_W * u) / 2, body.y1);
+	lv_obj_set_scrollable(pad, false);
+
 	present = input_buttons_present();
 	if (!present)
 		present = GP_BIT(GP_COUNT) - 1;	/* nothing declared: show all */
 	for (b = 0; b < GP_COUNT; b++) {
-		lv_obj_t *cell, *label;
-
 		/* the power key never reaches a screen: it puts the device to sleep */
-		if (!(present & GP_BIT(b)) || b == GP_POWER)
+		if (!(present & GP_BIT(b)) || b == GP_POWER || !spots[b].w)
 			continue;
-		cell = lv_obj_create(grid);
-		lv_obj_set_size(cell, 46, 30);
-		lv_obj_set_style_pad_all(cell, 0, 0);
-		lv_obj_set_scrollable(cell, false);
-		lv_obj_set_style_bg_color(cell, UI_COLOR_ON, LV_STATE_CHECKED);
-		label = lv_label_create(cell);
-		lv_label_set_text(label, gp_button_name(b));
-		lv_obj_center(label);
+		t->cell[b] = button_new(pad, b, q);
 		if (input_buttons() & GP_BIT(b))
-			lv_obj_add_state(cell, LV_STATE_CHECKED);
-		t->cell[b] = cell;
+			lv_obj_add_state(t->cell[b], LV_STATE_CHECKED);
 	}
-	t->hint = lv_label_create(left);
-	lv_obj_set_width(t->hint, LV_PCT(100));
-	lv_label_set_long_mode(t->hint, LV_LABEL_LONG_WRAP);
-	lv_obj_set_style_text_color(t->hint, UI_COLOR_DIM, 0);
 
-	/* right: both sticks and their values */
-	right = column(body, 2 * STICK + 10);
-	sticks = lv_obj_create(right);
-	lv_obj_remove_style_all(sticks);
-	lv_obj_set_size(sticks, LV_PCT(100), LV_SIZE_CONTENT);
-	lv_obj_set_flex_flow(sticks, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(sticks, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+	/* the sticks under the D-pad and X Y A B */
 	axes = input_axes_present();
 	if (axes & LEFT_STICK)
-		stick_box(sticks, (axes & RIGHT_STICK) ? "L" : "", &t->dot[0], t->edge[0]);
+		stick_box(t, pad, 15 * q - t->stick / 2, stick_y, &t->dot[0], t->edge[0]);
 	if (axes & RIGHT_STICK)
-		stick_box(sticks, (axes & LEFT_STICK) ? "R" : "", &t->dot[1], t->edge[1]);
+		stick_box(t, pad, 73 * q - t->stick / 2, stick_y, &t->dot[1], t->edge[1]);
+
+	/* the values and what to do, in the middle under the buttons */
+	text = lv_obj_create(pad);
+	lv_obj_remove_style_all(text);
+	lv_obj_set_pos(text, 29 * q, 32 * q);
+	lv_obj_set_size(text, 30 * q, lv_area_get_height(&body) - 32 * q);
+	lv_obj_set_flex_flow(text, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_flex_align(text, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	if (axes & (LEFT_STICK | RIGHT_STICK)) {
-		t->values = lv_label_create(right);
+		t->values = lv_label_create(text);
+		lv_obj_set_style_text_align(t->values, LV_TEXT_ALIGN_CENTER, 0);
 		lv_obj_set_style_text_color(t->values, UI_COLOR_DIM, 0);
 	}
+	t->hint = lv_label_create(text);
+	lv_obj_set_width(t->hint, LV_PCT(100));
+	lv_label_set_long_mode(t->hint, LV_LABEL_LONG_MODE_WRAP);
+	lv_obj_set_style_text_align(t->hint, LV_TEXT_ALIGN_CENTER, 0);
 
 	show(t);
 	view_input_grab(on_input, t);
