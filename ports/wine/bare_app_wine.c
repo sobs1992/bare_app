@@ -67,10 +67,11 @@ static void msg(const char *fmt, ...)
 
 /* ---- wine.ini ------------------------------------------------------------ */
 
-enum act_kind { ACT_NONE, ACT_KEYS, ACT_MOUSE, ACT_WHEEL };
+enum act_kind { ACT_NONE, ACT_KEYS, ACT_MOUSE, ACT_WHEEL, ACT_MAGNIFY };
 
 /* What a button does: up to 4 keys pressed together (ctrl+s), a mouse
- * button (the WB_MOUSE_*_DOWN flag) or a wheel step (+1 / -1) */
+ * button (the WB_MOUSE_*_DOWN flag), a wheel step (+1 / -1) or the
+ * magnifier while it is held */
 struct action {
 	uint8_t kind, count;
 	int16_t wheel;
@@ -95,6 +96,7 @@ static struct {
 	bool cursor_keys;		/* arrows = cursor: the arrow keys are the cursor block's */
 	float cursor_speed;		/* screen widths a second at full deflection */
 	float mouse_speed;		/* desktop pixels a count of a real mouse */
+	bool fill;			/* scale = fill: the whole frame, the aspect not kept */
 	struct action button[GP_COUNT];
 } cfg;
 
@@ -167,6 +169,10 @@ static int parse_action(const char *value, struct action *a)
 		a->kind = ACT_MOUSE;
 		a->mouse = value[0] == 'l' ? WB_MOUSE_LEFT_DOWN :
 			   value[0] == 'r' ? WB_MOUSE_RIGHT_DOWN : WB_MOUSE_MIDDLE_DOWN;
+		return 0;
+	}
+	if (!strcmp(value, "magnify")) {
+		a->kind = ACT_MAGNIFY;
 		return 0;
 	}
 	if (!strcmp(value, "wheelup") || !strcmp(value, "wheeldown")) {
@@ -330,7 +336,12 @@ static int read_ini(const char *path)
 			snprintf(cfg.writable, sizeof(cfg.writable), "%s", value);
 		} else if (!strcmp(key, "locale")) {
 			snprintf(cfg.locale, sizeof(cfg.locale), "%s", value);
-		} else if (strcmp(key, "name") && strcmp(key, "render")) {
+		} else if (!strcmp(key, "scale")) {
+			if (strcmp(value, "fill") && strcmp(value, "aspect"))
+				msg("%s:%d: scale %s?", path, lineno, value);
+			cfg.fill = !strcmp(value, "fill");
+		} else if (strcmp(key, "name") && strcmp(key, "render") && strcmp(key, "cover") &&
+			   strncmp(key, "hint", 4)) {	/* bare_app's: the menu entry */
 			msg("%s:%d: %s?", path, lineno, key);
 		}
 	}
@@ -621,63 +632,172 @@ static unsigned zorder_count;
 
 static struct wb_mode mode;		/* current */
 static uint32_t *screen;		/* mode.width x mode.height */
+static uint32_t *last_screen;		/* the screen as it was taken down last */
 static bool dirty;
 
 static float cur_x, cur_y;		/* the cursor on the screen */
 static bool cursor_shown = true;
+static uint32_t *cursor_pic;		/* its picture, BGRA straight alpha; NULL: an arrow */
+static int cursor_w, cursor_h, cursor_hx, cursor_hy;
 
 static bool trace;			/* $BARE_APP_WINE_TRACE: cursor and input */
 
 static struct game_link app;		/* bare_app: frames, gamepad */
 static int dst_x, dst_y, dst_w, dst_h;	/* the screen in the frame */
-static int32_t *xmap, *ymap;		/* source pixel << 8 | weight */
+
+static bool magnify;			/* held ("magnify"): the screen at 1:1 around the cursor */
+static int view_x, view_y;		/* the magnifier's top left pixel on the screen */
+
+/*
+ * The screen to the frame, on each axis by itself, in linear light. Taken
+ * down, a frame pixel is the average of the screen pixels whose centres
+ * lie in it: no thin stroke is skipped and text drawn over exactly those
+ * pixels does not leak into the next one; taken up, bilinear. Linear light
+ * keeps light text on a dark background as bright as it is drawn (an sRGB
+ * average darkens and thins it out). Only the frame rows of screen rows
+ * that changed are taken down again.
+ */
+#define WEIGHT_ONE 256			/* the weights of a frame pixel sum to this */
+#define LINEAR_MAX ((1 << 15) - 1)	/* times both axes' weights it stays within 32 bits */
+#define SRGB_BITS 14			/* of a linear sum, that pick its sRGB value */
+#define SRGB_SHIFT (15 + 16 - SRGB_BITS)
+
+struct axis {
+	int taps;			/* screen pixels of a frame pixel, at most */
+	int *first;			/* each frame pixel's first screen pixel */
+	uint16_t *weight;		/* taps for each frame pixel; a 0 ends them */
+};
+
+static struct axis ax, ay;
+static uint16_t to_linear[256];
+static uint8_t to_srgb[(1 << SRGB_BITS) + 1];
+static uint32_t *scaled;		/* dst_w x dst_h: the screen taken down */
+static uint32_t *line;			/* one row's linear sums, 3 a screen pixel */
+static uint8_t *row_changed;		/* each screen row, this time */
+static bool redo_all;			/* every frame row taken down again */
+
+static void make_tables(void)
+{
+	int i;
+
+	for (i = 0; i < 256; i++) {
+		double c = i / 255.0;
+
+		to_linear[i] = (uint16_t)lround((c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)) * LINEAR_MAX);
+	}
+	for (i = 0; i <= 1 << SRGB_BITS; i++) {
+		double l = fmin(1.0, (i + 0.5) / (1 << SRGB_BITS));
+
+		to_srgb[i] = (uint8_t)lround((l <= 0.0031308 ? l * 12.92 : 1.055 * pow(l, 1 / 2.4) - 0.055) * 255);
+	}
+}
+
+/* The first screen pixel whose centre lies in frame pixel i, `from` screen
+ * pixels to `to` frame pixels: i * from <= (s + 0.5) * to */
+static int first_in(int i, int from, int to)
+{
+	int64_t num = 2 * (int64_t)i * from - to;
+
+	return num <= 0 ? 0 : (int)((num + 2 * (int64_t)to - 1) / (2 * (int64_t)to));
+}
+
+static int build_axis(struct axis *a, int from, int to)
+{
+	int i, k, n, f, l;
+
+	free(a->first);
+	free(a->weight);
+	a->taps = from > to ? (from + to - 1) / to + 1 : 2;
+	a->first = calloc((size_t)to, sizeof(*a->first));
+	a->weight = calloc((size_t)to * a->taps, sizeof(*a->weight));
+	if (!a->first || !a->weight)
+		return -1;
+	for (i = 0; i < to; i++) {
+		uint16_t *w = a->weight + (size_t)i * a->taps;
+
+		if (from == to) {
+			a->first[i] = i;
+			w[0] = WEIGHT_ONE;
+		} else if (from > to) {
+			f = first_in(i, from, to);
+			l = first_in(i + 1, from, to);
+			if (f > from - 1)
+				f = from - 1;
+			if (l > from)
+				l = from;
+			n = l - f < 1 ? 1 : l - f > a->taps ? a->taps : l - f;
+			a->first[i] = f;
+			for (k = 0; k < n; k++)
+				w[k] = WEIGHT_ONE / n;
+			w[0] += WEIGHT_ONE % n;
+		} else {
+			/* the frame pixel's centre on the screen, 24.8 fixed point */
+			int64_t s8 = ((2 * i + 1) * (int64_t)from * 128) / to - 128;
+
+			if (s8 < 0)
+				s8 = 0;
+			a->first[i] = (int)(s8 >> 8);
+			if (a->first[i] >= from - 1) {
+				a->first[i] = from - 1;
+				w[0] = WEIGHT_ONE;
+			} else {
+				w[0] = (uint16_t)(WEIGHT_ONE - (s8 & 0xff));
+				w[1] = (uint16_t)(s8 & 0xff);
+			}
+		}
+	}
+	return 0;
+}
 
 static void set_mode(struct wb_mode m)
 {
-	uint32_t *s = calloc((size_t)m.width * m.height, 4);
-	int x, y;
+	uint32_t *s = calloc((size_t)m.width * m.height, 4), *ls = calloc((size_t)m.width * m.height, 4);
 
-	if (!s) {
+	if (!s || !ls) {
 		msg("no memory for %ux%u", m.width, m.height);
+		free(s);
+		free(ls);
 		return;
 	}
 	free(screen);
+	free(last_screen);
 	screen = s;
+	last_screen = ls;
 	mode = m;
-	/* the aspect kept, centred */
-	dst_h = app.shm->height;
-	dst_w = (int)((int64_t)dst_h * m.width / m.height);
-	if (dst_w > (int)app.shm->width) {
+	if (cfg.fill) {
+		/* the whole frame, each axis scaled by itself */
 		dst_w = app.shm->width;
-		dst_h = (int)((int64_t)dst_w * m.height / m.width);
+		dst_h = app.shm->height;
+	} else {
+		/* the aspect kept, centred */
+		dst_h = app.shm->height;
+		dst_w = (int)((int64_t)dst_h * m.width / m.height);
+		if (dst_w > (int)app.shm->width) {
+			dst_w = app.shm->width;
+			dst_h = (int)((int64_t)dst_w * m.height / m.width);
+		}
 	}
 	dst_x = (app.shm->width - dst_w) / 2;
 	dst_y = (app.shm->height - dst_h) / 2;
-	free(xmap);
-	free(ymap);
-	xmap = malloc(sizeof(*xmap) * dst_w);
-	ymap = malloc(sizeof(*ymap) * dst_h);
-	if (!xmap || !ymap) {
+	free(scaled);
+	free(line);
+	free(row_changed);
+	scaled = calloc((size_t)dst_w * dst_h, 4);
+	line = malloc((size_t)m.width * 3 * sizeof(*line));
+	row_changed = malloc(m.height);
+	if (!scaled || !line || !row_changed || build_axis(&ax, m.width, dst_w) < 0 ||
+	    build_axis(&ay, m.height, dst_h) < 0) {
 		msg("out of memory");
 		exit(1);
 	}
-	/* the centre of each frame pixel on the screen, 24.8 fixed point */
-	for (x = 0; x < dst_w; x++) {
-		int32_t s8 = (int32_t)(((2 * x + 1) * (int64_t)m.width * 128) / dst_w) - 128;
-
-		xmap[x] = s8 < 0 ? 0 : s8 > (int32_t)(m.width - 1) * 256 ? (int32_t)(m.width - 1) * 256 : s8;
-	}
-	for (y = 0; y < dst_h; y++) {
-		int32_t s8 = (int32_t)(((2 * y + 1) * (int64_t)m.height * 128) / dst_h) - 128;
-
-		ymap[y] = s8 < 0 ? 0 : s8 > (int32_t)(m.height - 1) * 256 ? (int32_t)(m.height - 1) * 256 : s8;
-	}
+	redo_all = true;
 	if (cur_x >= m.width)
 		cur_x = m.width - 1;
 	if (cur_y >= m.height)
 		cur_y = m.height - 1;
 	dirty = true;
-	msg("display mode %ux%u, shown %dx%d", m.width, m.height, dst_w, dst_h);
+	msg("display mode %ux%u, shown %dx%d%s", m.width, m.height, dst_w, dst_h,
+	    cfg.fill ? " (fill)" : "");
 }
 
 static void blit(const struct surface *s)
@@ -716,34 +836,6 @@ static int z_index(uint64_t hwnd)
 	return -1;
 }
 
-/* A standard arrow, 12 x 19: '#' outline, '.' fill */
-static const char *const arrow[] = {
-	"#           ", "##          ", "#.#         ", "#..#        ", "#...#       ",
-	"#....#      ", "#.....#     ", "#......#    ", "#.......#   ", "#........#  ",
-	"#.........# ", "#..........#", "#......#####", "#...#..#    ", "#..# #..#   ",
-	"#.#  #..#   ", "##    #..#  ", "      #..#  ", "       ##   ",
-};
-
-static void draw_cursor(void)
-{
-	int cx = (int)cur_x, cy = (int)cur_y, x, y;
-	/* drawn at the size it has on the device screen, ~19 pixels high */
-	int scale = mode.height > (uint32_t)dst_h ? (mode.height + dst_h / 2) / dst_h : 1;
-
-	for (y = 0; y < 19 * scale; y++) {
-		if (cy + y >= (int)mode.height)
-			break;
-		for (x = 0; x < 12 * scale; x++) {
-			char c = arrow[y / scale][x / scale];
-
-			if (cx + x >= (int)mode.width)
-				break;
-			if (c != ' ')
-				screen[(size_t)(cy + y) * mode.width + cx + x] = c == '#' ? 0 : 0xffffff;
-		}
-	}
-}
-
 static void compose(void)
 {
 	struct surface *s;
@@ -760,58 +852,209 @@ static void compose(void)
 			for (s = surfaces; s; s = s->next)
 				if (s->hwnd == zorder[i] && s->layer == layer && drawable(s))
 					blit(s);
-	if (cursor_shown)
-		draw_cursor();
 }
 
-static inline uint32_t lerp(uint32_t a, uint32_t b, uint32_t f)
+/* Frame row y of the screen into scaled */
+static void take_down_row(int y)
 {
-	uint32_t g = 256 - f;
+	const uint16_t *wy = ay.weight + (size_t)y * ay.taps;
+	uint32_t *out = scaled + (size_t)y * dst_w;
+	uint32_t w = mode.width;
+	int x, k;
+	uint32_t s;
 
-	return ((((a & 0xff00ff) * g + (b & 0xff00ff) * f) >> 8) & 0xff00ff) |
-	       ((((a & 0x00ff00) * g + (b & 0x00ff00) * f) >> 8) & 0x00ff00);
-}
+	if (wy[0] == WEIGHT_ONE && ax.taps == 2 && w == (uint32_t)dst_w) {
+		memcpy(out, screen + (size_t)ay.first[y] * w, (size_t)w * 4);	/* 1:1 */
+		return;
+	}
+	memset(line, 0, (size_t)w * 3 * sizeof(*line));
+	for (k = 0; k < ay.taps && wy[k]; k++) {
+		const uint32_t *r = screen + (size_t)(ay.first[y] + k) * w;
+		uint32_t f = wy[k], *l = line;
 
-/* The screen into the frame being drawn, bilinear */
-static void scale(void)
-{
-	uint8_t *frame = game_link_frame(&app);
-	uint32_t w = mode.width, last_row = (uint32_t)-1;
-	int x, y;
+		for (s = 0; s < w; s++, l += 3) {
+			uint32_t p = r[s];
 
-	for (y = 0; y < (int)app.shm->height; y++) {
-		uint32_t *out = (uint32_t *)(frame + (size_t)y * app.shm->stride);
-
-		if (y < dst_y || y >= dst_y + dst_h) {
-			memset(out, 0, (size_t)app.shm->width * 4);
-			continue;
-		}
-		memset(out, 0, (size_t)dst_x * 4);
-		memset(out + dst_x + dst_w, 0, (size_t)(app.shm->width - dst_x - dst_w) * 4);
-		out += dst_x;
-		if ((uint32_t)ymap[y - dst_y] == last_row) {
-			memcpy(out, (uint8_t *)out - app.shm->stride, (size_t)dst_w * 4);
-			continue;
-		}
-		last_row = ymap[y - dst_y];
-
-		uint32_t sy = last_row >> 8, fy = last_row & 0xff;
-		const uint32_t *r0 = screen + (size_t)sy * w;
-		const uint32_t *r1 = sy + 1 < mode.height ? r0 + w : r0;
-
-		for (x = 0; x < dst_w; x++) {
-			uint32_t sx = (uint32_t)xmap[x] >> 8, fx = xmap[x] & 0xff;
-			uint32_t sx1 = sx + 1 < w ? sx + 1 : sx;
-
-			out[x] = lerp(lerp(r0[sx], r0[sx1], fx), lerp(r1[sx], r1[sx1], fx), fy);
+			l[0] += to_linear[p & 0xff] * f;
+			l[1] += to_linear[(p >> 8) & 0xff] * f;
+			l[2] += to_linear[(p >> 16) & 0xff] * f;
 		}
 	}
+	for (x = 0; x < dst_w; x++) {
+		const uint16_t *wx = ax.weight + (size_t)x * ax.taps;
+		const uint32_t *l = line + 3 * (size_t)ax.first[x];
+		uint32_t b = 0, g = 0, r = 0;
+
+		for (k = 0; k < ax.taps && wx[k]; k++, l += 3) {
+			b += l[0] * wx[k];
+			g += l[1] * wx[k];
+			r += l[2] * wx[k];
+		}
+		out[x] = (uint32_t)to_srgb[r >> SRGB_SHIFT] << 16 | (uint32_t)to_srgb[g >> SRGB_SHIFT] << 8 |
+			 to_srgb[b >> SRGB_SHIFT];
+	}
+}
+
+/* The frame rows of the screen rows that changed since last time */
+static void take_down(void)
+{
+	size_t row = (size_t)mode.width * 4;
+	int y, k;
+
+	for (y = 0; y < (int)mode.height; y++) {
+		const uint32_t *now = screen + (size_t)y * mode.width;
+		uint32_t *was = last_screen + (size_t)y * mode.width;
+
+		row_changed[y] = redo_all || memcmp(now, was, row);
+		if (row_changed[y])
+			memcpy(was, now, row);
+	}
+	for (y = 0; y < dst_h; y++) {
+		const uint16_t *wy = ay.weight + (size_t)y * ay.taps;
+		bool changed = false;
+
+		for (k = 0; k < ay.taps && wy[k] && !changed; k++)
+			changed = row_changed[ay.first[y] + k];
+		if (changed)
+			take_down_row(y);
+	}
+	redo_all = false;
+}
+
+/* The magnifier's part of the screen: at most the frame's size */
+static void magnifier_size(int *w, int *h)
+{
+	*w = (int)app.shm->width < (int)mode.width ? (int)app.shm->width : (int)mode.width;
+	*h = (int)app.shm->height < (int)mode.height ? (int)app.shm->height : (int)mode.height;
+}
+
+/* The magnifier around the cursor: it moves only when the cursor would
+ * leave it (centred on it when CENTRE) */
+static void follow_cursor(bool centre)
+{
+	int w, h, cx = (int)cur_x, cy = (int)cur_y;
+
+	magnifier_size(&w, &h);
+	if (centre) {
+		view_x = cx - w / 2;
+		view_y = cy - h / 2;
+	} else {
+		if (cx < view_x)
+			view_x = cx;
+		else if (cx >= view_x + w)
+			view_x = cx - w + 1;
+		if (cy < view_y)
+			view_y = cy;
+		else if (cy >= view_y + h)
+			view_y = cy - h + 1;
+	}
+	view_x = view_x < 0 ? 0 : view_x > (int)mode.width - w ? (int)mode.width - w : view_x;
+	view_y = view_y < 0 ? 0 : view_y > (int)mode.height - h ? (int)mode.height - h : view_y;
+}
+
+/* A standard arrow, 12 x 19: '#' outline, '.' fill */
+static const char *const arrow[] = {
+	"#           ", "##          ", "#.#         ", "#..#        ", "#...#       ",
+	"#....#      ", "#.....#     ", "#......#    ", "#.......#   ", "#........#  ",
+	"#.........# ", "#..........#", "#......#####", "#...#..#    ", "#..# #..#   ",
+	"#.#  #..#   ", "##    #..#  ", "      #..#  ", "       ##   ",
+};
+
+static inline uint32_t over(uint32_t under, uint32_t p)
+{
+	uint32_t a = p >> 24, b = 255 - a, out = 0;
+	int sh;
+
+	if (a == 255)
+		return p & 0xffffff;
+	for (sh = 0; sh <= 16; sh += 8)
+		out |= ((((p >> sh) & 0xff) * a + ((under >> sh) & 0xff) * b + 127) / 255) << sh;
+	return out;
+}
+
+/* The cursor over the frame, at the frame's own pixels (as sharp as its
+ * picture), its hotspot at (fx, fy) */
+static void draw_cursor(uint8_t *frame, int fx, int fy)
+{
+	int fw = (int)app.shm->width, fh = (int)app.shm->height, x, y;
+	int w = cursor_pic ? cursor_w : 12, h = cursor_pic ? cursor_h : 19;
+	int x0 = fx - (cursor_pic ? cursor_hx : 0), y0 = fy - (cursor_pic ? cursor_hy : 0);
+
+	for (y = 0; y < h; y++) {
+		uint32_t *out;
+
+		if (y0 + y < 0 || y0 + y >= fh)
+			continue;
+		out = (uint32_t *)(frame + (size_t)(y0 + y) * app.shm->stride);
+		for (x = 0; x < w; x++) {
+			if (x0 + x < 0 || x0 + x >= fw)
+				continue;
+			if (cursor_pic) {
+				uint32_t p = cursor_pic[(size_t)y * w + x];
+
+				if (p >> 24)
+					out[x0 + x] = over(out[x0 + x], p);
+			} else if (arrow[y][x] != ' ') {
+				out[x0 + x] = arrow[y][x] == '#' ? 0 : 0xffffff;
+			}
+		}
+	}
+}
+
+/* The frame: the screen taken down (or the magnifier's part of it at 1:1),
+ * black around, the cursor over it */
+static void put_frame(void)
+{
+	uint8_t *frame = game_link_frame(&app);
+	int fw = (int)app.shm->width, fh = (int)app.shm->height, y, fx, fy;
+
+	if (magnify) {
+		int w, h, mx, my;
+
+		magnifier_size(&w, &h);
+		mx = (fw - w) / 2;
+		my = (fh - h) / 2;
+		for (y = 0; y < fh; y++) {
+			uint32_t *out = (uint32_t *)(frame + (size_t)y * app.shm->stride);
+
+			if (y < my || y >= my + h) {
+				memset(out, 0, (size_t)fw * 4);
+				continue;
+			}
+			memset(out, 0, (size_t)mx * 4);
+			memcpy(out + mx, screen + (size_t)(view_y + y - my) * mode.width + view_x, (size_t)w * 4);
+			memset(out + mx + w, 0, (size_t)(fw - mx - w) * 4);
+		}
+		fx = mx + (int)cur_x - view_x;
+		fy = my + (int)cur_y - view_y;
+	} else {
+		for (y = 0; y < fh; y++) {
+			uint32_t *out = (uint32_t *)(frame + (size_t)y * app.shm->stride);
+
+			if (y < dst_y || y >= dst_y + dst_h) {
+				memset(out, 0, (size_t)fw * 4);
+				continue;
+			}
+			memset(out, 0, (size_t)dst_x * 4);
+			memcpy(out + dst_x, scaled + (size_t)(y - dst_y) * dst_w, (size_t)dst_w * 4);
+			memset(out + dst_x + dst_w, 0, (size_t)(fw - dst_x - dst_w) * 4);
+		}
+		/* the frame pixel the cursor's screen pixel (its centre) lies in */
+		fx = dst_x + (int)(((int)cur_x * 2 + 1) * (int64_t)dst_w / (2 * (int64_t)mode.width));
+		fy = dst_y + (int)(((int)cur_y * 2 + 1) * (int64_t)dst_h / (2 * (int64_t)mode.height));
+	}
+	if (cursor_shown)
+		draw_cursor(frame, fx, fy);
 }
 
 static int publish(void)
 {
 	compose();
-	scale();
+	if (magnify)
+		follow_cursor(false);
+	else
+		take_down();
+	put_frame();
 	dirty = false;
 	return game_link_publish(&app);
 }
@@ -952,6 +1195,30 @@ static void new_surface(struct client *c, const struct wb_msg *m, int fd)
 	surfaces = s;
 }
 
+/* WB_CURSOR: shown or not, its picture from FD (an arrow without one) */
+static void set_cursor(const struct wb_msg *m, int fd)
+{
+	size_t size = (size_t)m->cursor.width * m->cursor.height * 4;
+	void *map;
+
+	free(cursor_pic);
+	cursor_pic = NULL;
+	if (fd >= 0 && m->cursor.width && m->cursor.height && m->cursor.width <= 256 &&
+	    m->cursor.height <= 256) {
+		if ((map = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0)) != MAP_FAILED) {
+			if ((cursor_pic = malloc(size)))
+				memcpy(cursor_pic, map, size);
+			munmap(map, size);
+			cursor_w = m->cursor.width;
+			cursor_h = m->cursor.height;
+			cursor_hx = m->cursor.hot_x;
+			cursor_hy = m->cursor.hot_y;
+		}
+	}
+	cursor_shown = m->cursor.visible;
+	dirty = true;
+}
+
 static void on_client_msg(struct client *c, const struct wb_msg *m, int fd)
 {
 	struct surface *s;
@@ -1015,11 +1282,10 @@ static void on_client_msg(struct client *c, const struct wb_msg *m, int fd)
 	}
 	case WB_CURSOR:
 		if (trace)
-			msg("pid %d: cursor %s", (int)c->pid, m->cursor.visible ? "shown" : "hidden");
-		if (cursor_shown != !!m->cursor.visible) {
-			cursor_shown = m->cursor.visible;
-			dirty = true;
-		}
+			msg("pid %d: cursor %s, %ux%u hotspot %d,%d", (int)c->pid,
+			    m->cursor.visible ? "shown" : "hidden", m->cursor.width, m->cursor.height,
+			    m->cursor.hot_x, m->cursor.hot_y);
+		set_cursor(m, fd);
 		break;
 	case WB_CURSOR_POS:
 		if (trace)
@@ -1130,6 +1396,12 @@ static void do_action(const struct action *a, bool pressed)
 	case ACT_WHEEL:
 		if (pressed)
 			send_mouse(0, a->wheel);
+		break;
+	case ACT_MAGNIFY:
+		if (pressed && !magnify)
+			follow_cursor(true);
+		magnify = pressed;
+		dirty = true;
 		break;
 	}
 }
@@ -1327,7 +1599,7 @@ static void move_cursor(float nx, float ny)
 		send_mouse_at((int)cur_x + px, (int)cur_y + py, 0, 0);
 		past_x -= px;
 		past_y -= py;
-		if (cursor_shown)
+		if (cursor_shown || magnify)
 			dirty = true;
 	}
 }
@@ -1590,6 +1862,7 @@ int main(int argc, char **argv)
 	if (read_ini(ini) < 0)
 		return 1;
 	set_env();
+	make_tables();
 	set_mode(cfg.mode);
 	cur_x = mode.width / 2;
 	cur_y = mode.height / 2;

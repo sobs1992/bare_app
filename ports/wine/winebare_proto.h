@@ -13,14 +13,17 @@
  *
  * One struct wb_msg per packet. Pixel memory travels as a memfd in
  * SCM_RIGHTS with WB_SURFACE: width * height * 4 bytes per buffer, rows
- * top-down, BGRX (Windows' 32 bpp DIB = XRGB8888 little endian).
+ * top-down, BGRX (Windows' 32 bpp DIB = XRGB8888 little endian); with
+ * WB_CURSOR the cursor's picture, width * height * 4 bytes, rows top-down,
+ * BGRA with straight alpha (0 transparent). A shown cursor without a
+ * picture (width 0) is an arrow drawn by the host.
  */
 #pragma once
 
 #include <stdint.h>
 
 #define WINEBARE_SOCKET_ENV "WINEBARE_SOCKET"
-#define WB_PROTO_VERSION 2	/* 2: key flags */
+#define WB_PROTO_VERSION 3	/* 2: key flags, 3: cursor pictures */
 
 #define WB_MAX_MODES 16
 
@@ -33,7 +36,7 @@ enum wb_msg_type {
 	WB_FLUSH,		/* surface id, buffer, dirty rect: new pixels there */
 	WB_ZORDER,		/* hwnds of visible top-level windows, top first */
 	WB_MODE_SET,		/* width, height: ChangeDisplaySettings */
-	WB_CURSOR,		/* visible (an arrow drawn by the host) */
+	WB_CURSOR,		/* visible, picture: memfd attached when width > 0 */
 	WB_CURSOR_POS,		/* x, y: SetCursorPos */
 
 	/* host -> driver */
@@ -101,6 +104,8 @@ struct wb_msg {
 		} mode_set;
 		struct {
 			uint32_t visible;
+			uint16_t width, height;	/* the picture, 0 x 0: none */
+			int16_t hot_x, hot_y;	/* its pixel at the pointer's position */
 		} cursor;
 		struct {
 			int32_t x, y;
