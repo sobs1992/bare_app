@@ -645,8 +645,9 @@ static bool trace;			/* $BARE_APP_WINE_TRACE: cursor and input */
 static struct game_link app;		/* bare_app: frames, gamepad */
 static int dst_x, dst_y, dst_w, dst_h;	/* the screen in the frame */
 
-static bool magnify;			/* held ("magnify"): the screen at 1:1 around the cursor */
+static bool magnify;			/* "magnify": the screen at 1:1 around the cursor */
 static int view_x, view_y;		/* the magnifier's top left pixel on the screen */
+static bool view_detached;		/* moved by the right stick, off the cursor */
 
 /*
  * The screen to the frame, on each axis by itself, in linear light. Taken
@@ -1050,7 +1051,7 @@ static void put_frame(void)
 static int publish(void)
 {
 	compose();
-	if (magnify)
+	if (magnify && !view_detached)
 		follow_cursor(false);
 	else
 		take_down();
@@ -1118,6 +1119,9 @@ static void send_mouse_at(int x, int y, uint32_t flags, int wheel)
  * pointer does and what the stick asks for (scroll_update()).
  */
 static int scroll_dir[2], scroll_want[2];
+static int scroll_push[2];		/* where the stick is pushed: -1, 0, 1 (hysteresis) */
+
+static void scroll_update(bool settle);
 
 static bool scrolling(void)
 {
@@ -1429,8 +1433,15 @@ static void do_action(const struct action *a, bool pressed)
 		if (!pressed)
 			break;
 		magnify = !magnify;
+		view_detached = false;
 		if (magnify)
 			follow_cursor(true);
+		if (cfg.rstick == STICK_SCROLL) {
+			/* the stick scrolls the map at once again, or first moves the magnifier */
+			scroll_want[0] = magnify ? 0 : scroll_push[0];
+			scroll_want[1] = magnify ? 0 : scroll_push[1];
+			scroll_update(false);
+		}
 		dirty = true;
 		break;
 	}
@@ -1626,9 +1637,51 @@ static void scroll_update(bool settle)
 	scroll_send();
 }
 
+/*
+ * The right stick with the magnifier on (rstick = scroll), as VCMI's
+ * magnifier: it moves the magnifier over the screen and leaves the cursor
+ * where it is; pushed on (past half way) where the magnifier is at the
+ * screen's edge, the map scrolls that way. Once the cursor moves it comes
+ * into the magnifier at the edge it was beyond (move_cursor()).
+ */
+#define MAGNIFIER_SPEED 900.0f	/* screen pixels a second, full out */
+
+static float view_fx, view_fy;		/* the detached magnifier, to the sub-pixel */
+
+static void magnifier_tick(float dt)
+{
+	float v[2] = { curve(axis[GP_AXIS_RX]), curve(axis[GP_AXIS_RY]) }, *f[2] = { &view_fx, &view_fy };
+	int *view[2] = { &view_x, &view_y }, max[2], w, h, i;
+
+	magnifier_size(&w, &h);
+	max[0] = (int)mode.width - w;
+	max[1] = (int)mode.height - h;
+	if (!view_detached) {
+		view_fx = view_x;
+		view_fy = view_y;
+	}
+	for (i = 0; i < 2; i++) {
+		float n = *f[i] + v[i] * MAGNIFIER_SPEED * dt;
+
+		n = n < 0 ? 0 : n > max[i] ? max[i] : n;
+		scroll_want[i] = 0;
+		if (n != *f[i]) {
+			*f[i] = n;
+			*view[i] = (int)lrintf(n);
+			view_detached = true;
+			dirty = true;
+		} else if (v[i]) {
+			scroll_want[i] = scroll_push[i];	/* at the screen's edge */
+		}
+	}
+	scroll_update(true);
+}
+
 static bool moving(void)
 {
 	if (numpad.release || turn.key || scroll_waiting)
+		return true;
+	if (cfg.rstick == STICK_SCROLL && magnify && (curve(axis[GP_AXIS_RX]) || curve(axis[GP_AXIS_RY])))
 		return true;
 	return (cfg.lstick == STICK_MOUSE && (curve(axis[GP_AXIS_LX]) || curve(axis[GP_AXIS_LY]))) ||
 	       (cfg.rstick == STICK_MOUSE && (curve(axis[GP_AXIS_RX]) || curve(axis[GP_AXIS_RY]))) ||
@@ -1641,7 +1694,28 @@ static bool moving(void)
 static void move_cursor(float nx, float ny)
 {
 	static float past_x, past_y;	/* pushed on past the screen's edge */
-	int ox = (int)cur_x, oy = (int)cur_y, px, py;
+	int ox, oy, px, py;
+
+	if (magnify && view_detached) {
+		/* the magnifier was moved off the cursor: the cursor comes in at the
+		 * edge it was beyond, the magnifier stays */
+		int w, h;
+		float cx, cy;
+
+		magnifier_size(&w, &h);
+		cx = cur_x < view_x ? view_x : cur_x > view_x + w - 1 ? view_x + w - 1 : cur_x;
+		cy = cur_y < view_y ? view_y : cur_y > view_y + h - 1 ? view_y + h - 1 : cur_y;
+		nx += cx - cur_x;
+		ny += cy - cur_y;
+		cur_x = cx;
+		cur_y = cy;
+		view_detached = false;
+		if (!scrolling())
+			send_mouse_at((int)cur_x, (int)cur_y, 0, 0);
+		dirty = true;
+	}
+	ox = (int)cur_x;
+	oy = (int)cur_y;
 
 	cur_x = nx < 0 ? 0 : nx > mode.width - 1 ? mode.width - 1 : nx;
 	cur_y = ny < 0 ? 0 : ny > mode.height - 1 ? mode.height - 1 : ny;
@@ -1779,7 +1853,9 @@ static void move_tick(void)
 	if (numpad.release && ms_since(&numpad.since) >= NUMPAD_MIN_MS &&
 	    ms_since(&numpad.rest) >= NUMPAD_REST_MS)
 		numpad_set(-1);
-	if (scroll_waiting)
+	if (cfg.rstick == STICK_SCROLL && magnify)
+		magnifier_tick(dt);
+	else if (scroll_waiting)
 		scroll_update(true);
 	if (!moving())
 		return;
@@ -1818,14 +1894,21 @@ static void on_axis(enum gp_axis a, int value)
 		clock_gettime(CLOCK_MONOTONIC, &last_move);
 	axis[a] = (float)value / GAME_AXIS_MAX;
 	if (cfg.rstick == STICK_SCROLL && (a == GP_AXIS_RX || a == GP_AXIS_RY)) {
-		int i = a == GP_AXIS_RX ? 0 : 1, d = scroll_want[i];
+		int i = a == GP_AXIS_RX ? 0 : 1, d = scroll_push[i];
 		float v = axis[a];
 
 		/* out past half way, back in below 0.35 */
 		if (!d || d * v < 0.35f)
 			d = v < -0.5f ? -1 : v > 0.5f ? 1 : 0;
-		scroll_want[i] = d;
-		scroll_update(false);
+		scroll_push[i] = d;
+		if (!magnify) {
+			scroll_want[i] = d;
+			scroll_update(false);
+		} else if (!scroll_push[0] && !scroll_push[1]) {
+			/* the magnifier's stick back at rest: no more scrolling either */
+			scroll_want[0] = scroll_want[1] = 0;
+			scroll_update(false);
+		}
 	}
 	if (cfg.rstick == STICK_ARROWS && (a == GP_AXIS_RX || a == GP_AXIS_RY)) {
 		/* a direction held while the stick is out */
