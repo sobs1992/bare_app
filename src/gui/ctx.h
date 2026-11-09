@@ -14,6 +14,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "core/remap.h"
 #include "services/sysmon.h"
 
 enum screen_id {
@@ -25,6 +26,7 @@ enum screen_id {
 	SCREEN_WIFI,
 	SCREEN_WIFI_KEY,	/* key for the network in wifi.asked */
 	SCREEN_USB_DISK,	/* the games partition as a USB disk for the computer */
+	SCREEN_CONTROLS,	/* the controls of the game of view_game_selected() */
 	SCREEN_COUNT
 };
 
@@ -45,6 +47,8 @@ enum ctx_section {
 #define WIFI_SSID_MAX 32
 #define WIFI_MAX_NETS 16
 #define RECENT_MAX 16		/* games the home screen remembers the order of */
+#define CONTROLS_MAX 16		/* games with controls of their own */
+#define GAME_KEY_LEN 9		/* game_key() and its end */
 
 /* Where the sound goes: the setting */
 enum audio_output { AUDIO_OUT_AUTO, AUDIO_OUT_SPEAKER, AUDIO_OUT_HEADPHONES, AUDIO_OUT_COUNT };
@@ -66,6 +70,12 @@ struct wifi_net {
 	int signal;		/* percent */
 	bool secured;		/* needs a key */
 	bool saved;		/* known: connects without asking */
+};
+
+/* A game's own controls (ACT_SET_CONTROL) */
+struct game_controls {
+	char game[GAME_KEY_LEN];	/* game_key() */
+	struct gp_remap map;		/* never the default: then there is no entry */
 };
 
 /* ACT_SYSMON: what of the system monitor is over the screen */
@@ -99,6 +109,8 @@ struct gui_ctx {
 		/* game_key()s of the games played, the latest first, "," between */
 		char recent[RECENT_MAX * 9];
 		bool game_hint;		/* the controls hint when a game starts */
+		int ncontrols;
+		struct game_controls controls[CONTROLS_MAX];
 	} settings;
 	struct {
 		bool available;		/* the platform has a mixer */
@@ -144,6 +156,9 @@ void ctx_unlock(uint32_t changed);
 uint32_t ctx_snapshot(struct gui_ctx *snap);
 int ctx_fd(void);		/* readable when there is something new */
 void ctx_ack(void);
+
+/* A game's controls, NULL: the default ones */
+const struct gp_remap *ctx_controls(const struct gui_ctx *c, const char *game);
 
 static inline enum screen_id ctx_screen(const struct gui_ctx *c)
 {

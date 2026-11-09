@@ -151,6 +151,83 @@ static void set_game_hint(bool on)
 	ctx_unlock(CTX_SETTINGS);
 }
 
+/* ---- a game's own controls: "controls.<game_key()>" in the config ------ */
+
+#define CONTROLS_KEY "controls."
+
+static bool game_key_ok(const char *key)
+{
+	size_t n = strlen(key);
+
+	return n > 0 && n < GAME_KEY_LEN && strspn(key, "0123456789abcdef") == n;
+}
+
+/* The entry of game (added if add), NULL: none or no room */
+static struct game_controls *controls_of(struct gui_ctx *c, const char *game, bool add)
+{
+	struct game_controls *gc;
+	int i;
+
+	for (i = 0; i < c->settings.ncontrols; i++)
+		if (!strcmp(c->settings.controls[i].game, game))
+			return &c->settings.controls[i];
+	if (!add || c->settings.ncontrols == CONTROLS_MAX)
+		return NULL;
+	gc = &c->settings.controls[c->settings.ncontrols++];
+	snprintf(gc->game, sizeof(gc->game), "%s", game);
+	gp_remap_reset(&gc->map);
+	return gc;
+}
+
+static void load_controls(const char *key, const char *value, void *ud)
+{
+	struct gui_ctx *c = ud;
+	const char *game = key + strlen(CONTROLS_KEY);
+	struct gp_remap m;
+	struct game_controls *gc;
+
+	if (!game_key_ok(game))
+		return;
+	gp_remap_parse(&m, value);
+	if (gp_remap_is_default(&m) || !(gc = controls_of(c, game, true)))
+		return;
+	gc->map = m;
+}
+
+/* One button of a game, or all back to the default (from < 0); kept in the config */
+static void set_control(const char *game, int from, int to)
+{
+	struct gui_ctx *c;
+	struct game_controls *gc;
+	char key[sizeof(CONTROLS_KEY) + GAME_KEY_LEN], text[256];
+	bool keep;
+
+	if (!game_key_ok(game) || from >= GP_COUNT || to < GP_NONE || to >= GP_COUNT)
+		return;
+	c = ctx_lock();
+	gc = controls_of(c, game, from >= 0);
+	if (!gc) {
+		ctx_unlock(0);
+		if (from >= 0)
+			LOGW("settings", "no room for the controls of another game");
+		return;
+	}
+	if (from >= 0)
+		gc->map.to[from] = (int8_t)to;
+	else
+		gp_remap_reset(&gc->map);
+	keep = !gp_remap_is_default(&gc->map);
+	gp_remap_format(&gc->map, text, sizeof(text));
+	if (!keep)	/* the default has no entry */
+		*gc = c->settings.controls[--c->settings.ncontrols];
+	ctx_unlock(CTX_SETTINGS);
+	snprintf(key, sizeof(key), CONTROLS_KEY "%s", game);
+	if (keep)
+		config_set(key, text);
+	else
+		config_unset(key);
+}
+
 static int settings_init(const struct control_env *env)
 {
 	const char *lang = env->lang && *env->lang ? env->lang : config_get("lang");
@@ -159,6 +236,8 @@ static int settings_init(const struct control_env *env)
 	set_lang(lang ? lang : "en");
 	set_recent(recent ? recent : "");
 	set_game_hint(config_get_int("game_hint", 0));
+	config_each(CONTROLS_KEY, load_controls, ctx_lock());
+	ctx_unlock(CTX_SETTINGS);
 	return 0;
 }
 
@@ -169,6 +248,14 @@ static void settings_action(const struct gui_action *a)
 	if (a->type == ACT_SET_GAME_HINT) {
 		set_game_hint(a->arg);
 		config_set_int("game_hint", !!a->arg);
+		return;
+	}
+	if (a->type == ACT_SET_CONTROL) {
+		set_control(a->str, ACT_CONTROL_FROM(a->arg), ACT_CONTROL_TO(a->arg));
+		return;
+	}
+	if (a->type == ACT_RESET_CONTROLS) {
+		set_control(a->str, -1, 0);
 		return;
 	}
 	if (!a->str[0] || strchr(a->str, ','))

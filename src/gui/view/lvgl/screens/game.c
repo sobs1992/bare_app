@@ -9,6 +9,11 @@
  * background, and the same button or its menu entry brings it back. Holding the quit combo (F6) or Quit in the game ends it and comes
  * back here. When the game cannot start or ends with an error the screen
  * says why.
+ *
+ * The game's own controls (ctx settings.controls, the controls screen)
+ * turn each button into the one the game gets, after the buttons bare_app
+ * keeps (the minimise button, the triggers for the volume). Directions of
+ * the left stick stay as they are: the controls are the device's buttons.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +29,7 @@
 struct game_screen {
 	lv_obj_t *scr;
 	struct game_ref game;
+	char key[GAME_KEY_SIZE];
 	lv_obj_t *loading;
 	lv_timer_t *wait;	/* for the first frame */
 };
@@ -89,6 +95,18 @@ static void on_input(const struct gp_event *ev, void *ud)
 									   : -VIEW_VOLUME_STEP);
 		return;
 	}
+	if (ev->type == GP_EV_BUTTON && !ev->stick) {
+		const struct gp_remap *m = ctx_controls(view_ctx(), g->key);
+
+		if (m) {
+			struct gp_event mapped = *ev;
+
+			mapped.code = gp_remap_apply(m, ev->code);
+			if (mapped.code != GP_NONE)
+				view_video_input(&mapped);
+			return;
+		}
+	}
 	view_video_input(ev);
 }
 
@@ -119,15 +137,14 @@ static void *game_init(lv_obj_t *parent, lv_obj_t **root)
 	if (!g)
 		return NULL;
 	g->game = view_game_selected();
+	game_key(g->game, g->key);
 	g->scr = lv_obj_create(NULL);
 	*root = g->scr;
 	if (!g->game.def) {
 		show_message(g, tr(S_GAME_FAILED));
 	} else if (view_video_set(VIDEO_GAME) == 0) {	/* or back from minimised */
-		char key[GAME_KEY_SIZE];
-
 		/* the home screen puts it first */
-		gui_action_post_str(ACT_GAME_PLAYED, game_key(g->game, key));
+		gui_action_post_str(ACT_GAME_PLAYED, g->key);
 		lv_obj_set_style_bg_opa(g->scr, LV_OPA_TRANSP, 0);
 		view_input_grab(on_input, g);
 		view_video_on_end(on_end, g);

@@ -40,6 +40,7 @@ set(CORE_SOURCES
 	src/core/log.c
 	src/core/mainloop.c
 	src/core/msgq.c
+	src/core/remap.c
 	src/core/util.c
 	src/core/volume.c
 	src/hal/platform.c
@@ -162,7 +163,8 @@ if(CONFIG_VIEW_LVGL)
 		list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/layers.c)
 	endif()
 	if(CONFIG_GAMES)
-		list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/game.c)
+		list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/game.c
+					 src/gui/view/lvgl/screens/controls.c)
 	endif()
 	if(CONFIG_SCREEN_USB_DISK)
 		list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/usb_disk.c)

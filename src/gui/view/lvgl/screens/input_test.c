@@ -361,36 +361,6 @@ static const struct {
 	[GP_F5]    = { 40, 24, 8, 6, false }, [GP_F6]    = { 49, 24, 8, 6, false },
 };
 
-static const char *button_text(enum gp_button b)
-{
-	switch (b) {
-	case GP_UP:       return LV_SYMBOL_UP;
-	case GP_DOWN:     return LV_SYMBOL_DOWN;
-	case GP_LEFT:     return LV_SYMBOL_LEFT;
-	case GP_RIGHT:    return LV_SYMBOL_RIGHT;
-	case GP_A:        return "A";
-	case GP_B:        return "B";
-	case GP_X:        return "X";
-	case GP_Y:        return "Y";
-	case GP_L1:       return "L1";
-	case GP_L2:       return "L2";
-	case GP_R1:       return "R1";
-	case GP_R2:       return "R2";
-	case GP_SELECT:   return "Select";
-	case GP_START:    return "Start";
-	case GP_MENU:     return "Menu";
-	case GP_VOL_UP:   return "Vol+";
-	case GP_VOL_DOWN: return "Vol-";
-	case GP_F1:       return "F1";
-	case GP_F2:       return "F2";
-	case GP_F3:       return "F3";
-	case GP_F4:       return "F4";
-	case GP_F5:       return "F5";
-	case GP_F6:       return "F6";
-	default:          return gp_button_name(b);
-	}
-}
-
 static lv_obj_t *button_new(lv_obj_t *pad, enum gp_button b, int32_t q)
 {
 	lv_obj_t *cell = lv_obj_create(pad), *label;
@@ -406,7 +376,7 @@ static lv_obj_t *button_new(lv_obj_t *pad, enum gp_button b, int32_t q)
 	lv_obj_set_scrollable(cell, false);
 	label = lv_label_create(cell);
 	lv_obj_set_style_text_font(label, big ? UI_FONT_MID : UI_FONT_SMALL, 0);
-	lv_label_set_text(label, button_text(b));
+	lv_label_set_text(label, ui_button_name(b));
 	lv_obj_center(label);
 	return cell;
 }

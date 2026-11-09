@@ -36,7 +36,7 @@ lv_obj_t *statusbar_create(lv_obj_t *parent, const char *symbol, const char *tit
 
 /* screens/ */
 extern const struct widget_ops home_screen, settings_screen, input_test_screen, layers_screen,
-	game_screen, wifi_screen, wifi_key_screen, usb_disk_screen;
+	game_screen, wifi_screen, wifi_key_screen, usb_disk_screen, controls_screen;
 
 /* widgets/console.c: what every screen shares (the grid: lvgl_view.h) */
 /* A new screen: the background, the header with symbol and title, a line under it */
@@ -52,6 +52,8 @@ lv_obj_t *footer_create(lv_obj_t *screen);
 void console_focus_box(lv_obj_t *o);
 /* A row of a list: two cells high at least, a line under it, focus box */
 lv_obj_t *console_row(lv_obj_t *parent);
+/* A button as printed on the device: arrows, "A", "L1", "Select", "F1"; GP_NONE a dash */
+const char *ui_button_name(enum gp_button b);
 /* Button, text pairs up to a NULL: a letter ("A") or symbols (arrows) */
 void footer_set(lv_obj_t *footer, ...);
 /* The screen's background: a dark vertical gradient */

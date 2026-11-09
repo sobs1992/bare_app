@@ -35,6 +35,14 @@ void gui_action_post_str(enum gui_action_type type, const char *str)
 	msgq_post(q, &a);
 }
 
+void gui_action_post_str_arg(enum gui_action_type type, const char *str, int arg)
+{
+	struct gui_action a = { .type = type, .arg = arg };
+
+	snprintf(a.str, sizeof(a.str), "%s", str);
+	msgq_post(q, &a);
+}
+
 void gui_action_post_secret(enum gui_action_type type, const char *str, const char *secret)
 {
 	struct gui_action a = { .type = type };
@@ -66,6 +74,8 @@ const char *action_name(enum gui_action_type type)
 	case ACT_BACK:           return "back";
 	case ACT_GAME_PLAYED:    return "game-played";
 	case ACT_SET_GAME_HINT:  return "set-game-hint";
+	case ACT_SET_CONTROL:    return "set-control";
+	case ACT_RESET_CONTROLS: return "reset-controls";
 	case ACT_OPEN_SCREEN:    return "open-screen";
 	case ACT_SET_BRIGHTNESS: return "set-brightness";
 	case ACT_SET_LANG:       return "set-lang";

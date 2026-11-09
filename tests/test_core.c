@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "core/frametimes.h"
+#include "core/remap.h"
 #include "core/input.h"
 #include "core/joystick.h"
 #include "core/mainloop.h"
@@ -162,6 +163,26 @@ static void test_frametimes(void)
 	CHECK(!frametimes_is_hitch(20000, 5000));	/* short ones never are */
 	n = frametimes_last(&f, t, 10);
 	CHECK(n == 10 && t[9] == us);
+}
+
+static void test_remap(void)
+{
+	struct gp_remap m;
+	char buf[64];
+
+	gp_remap_reset(&m);
+	CHECK(gp_remap_is_default(&m));
+	CHECK(gp_remap_format(&m, buf, sizeof(buf)) && !strcmp(buf, ""));
+	CHECK(gp_remap_parse(&m, "a=b,b=a,x=-") == 0);
+	CHECK(gp_remap_apply(&m, GP_A) == GP_B && gp_remap_apply(&m, GP_B) == GP_A);
+	CHECK(gp_remap_apply(&m, GP_X) == GP_NONE && gp_remap_apply(&m, GP_Y) == GP_Y);
+	CHECK(gp_remap_format(&m, buf, sizeof(buf)) && !strcmp(buf, "a=b,b=a,x=-"));
+	CHECK(!gp_remap_format(&m, buf, 8));	/* too small: cut at a pair */
+	CHECK(!strcmp(buf, "a=b,b=a"));
+	/* unknown names are skipped, the rest is kept */
+	CHECK(gp_remap_parse(&m, "a=zz,qq=b,l1=r1,") == -1);
+	CHECK(gp_remap_apply(&m, GP_A) == GP_A && gp_remap_apply(&m, GP_L1) == GP_R1);
+	CHECK(gp_remap_parse(&m, NULL) == 0 && gp_remap_is_default(&m));
 }
 
 static void test_msgq(void)
@@ -761,6 +782,7 @@ int main(void)
 	test_blit();
 	test_damage();
 	test_frametimes();
+	test_remap();
 	test_hid();
 #ifdef CONFIG_SYSMON
 	test_sysmon();

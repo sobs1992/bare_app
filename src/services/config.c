@@ -12,13 +12,13 @@
 #include "core/mainloop.h"
 
 #define TAG "config"
-#define MAX_KEYS 32
+#define MAX_KEYS 64
 #define SAVE_DELAY_MS 1000
 
 static struct {
 	struct mainloop *ml;
 	char path[256];
-	struct { char key[32], value[160]; } kv[MAX_KEYS];
+	struct { char key[32], value[256]; } kv[MAX_KEYS];
 	int n;
 	struct ml_timer *save;
 } cf;
@@ -49,7 +49,7 @@ static void put(const char *key, const char *value)
 static void load(void)
 {
 	FILE *f = fopen(cf.path, "r");
-	char line[256];
+	char line[320];
 
 	if (!f) {
 		if (errno != ENOENT)
@@ -168,4 +168,26 @@ void config_set_int(const char *key, int value)
 
 	snprintf(buf, sizeof(buf), "%d", value);
 	config_set(key, buf);
+}
+
+void config_unset(const char *key)
+{
+	int i = find(key);
+
+	if (i < 0)
+		return;
+	cf.kv[i] = cf.kv[--cf.n];
+	if (*cf.path && !cf.save)
+		cf.save = mainloop_add_timer(cf.ml, SAVE_DELAY_MS, 0, save, NULL);
+}
+
+void config_each(const char *prefix, void (*cb)(const char *key, const char *value, void *ud),
+		 void *ud)
+{
+	size_t len = strlen(prefix);
+	int i;
+
+	for (i = 0; i < cf.n; i++)
+		if (!strncmp(cf.kv[i].key, prefix, len))
+			cb(cf.kv[i].key, cf.kv[i].value, ud);
 }

@@ -183,6 +183,10 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_CALIBRATE]       = { "Calibrate" RU("Калибровка") },
 	[S_CONNECT]         = { "Connect" RU("Подключиться") },
 	[S_FORGET]          = { "Forget" RU("Забыть") },
+	[S_CONTROLS]        = { "Controls" RU("Управление") },
+	[S_RESET]           = { "Reset" RU("Сбросить") },
+	[S_DEFAULT]         = { "Default" RU("Как было") },
+	[S_CONTROLS_RESET_ALL] = { "All buttons as they were" RU("Все кнопки как были") },
 };
 
 static int lang = LANG_EN;

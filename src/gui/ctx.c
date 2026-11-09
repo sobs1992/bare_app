@@ -75,3 +75,13 @@ void ctx_ack(void)
 		/* EAGAIN: nothing pending */
 	}
 }
+
+const struct gp_remap *ctx_controls(const struct gui_ctx *c, const char *game)
+{
+	int i;
+
+	for (i = 0; c && game && i < c->settings.ncontrols; i++)
+		if (!strcmp(c->settings.controls[i].game, game))
+			return &c->settings.controls[i].map;
+	return NULL;
+}

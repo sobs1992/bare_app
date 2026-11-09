@@ -11,6 +11,8 @@
  * from 2.25, the tiles 7 cells square from row 4, a cell apart, the round
  * buttons 1.5 cells from row 12, the footer from row 14.
  *
+ * X on a game opens its controls (screens/controls.c).
+ *
  * A minimised game has a pause mark; picking another entry that needs
  * the video layer (another game) or the games partition (the USB disk)
  * first asks whether to close it. A game whose files are missing is
@@ -306,7 +308,10 @@ static void set_action(const struct entry *en)
 	enum str_id what = en->game.def ? (en == running ? S_HOME_RESUME : S_HOME_START)
 			   : en->action == ACT_POWER_OFF ? S_QUIT : S_HOME_OPEN;
 
-	footer_set(home->footer, "A", tr(what), NULL);
+	if (en->game.def)
+		footer_set(home->footer, "X", tr(S_CONTROLS), "A", tr(what), NULL);
+	else
+		footer_set(home->footer, "A", tr(what), NULL);
 }
 
 static void focus_changed(lv_obj_t *obj, const struct entry *en)
@@ -337,6 +342,11 @@ static void on_key(lv_event_t *e)
 	int t = index_of(home->tiles, home->n_tiles, obj);
 	int b = index_of(home->buttons, home->n_buttons, obj);
 
+	if (key == UI_LV_KEY_ALT && t >= 0) {	/* X: the game's controls */
+		view_game_select(home->tile_entry[t]->game);
+		gui_action_post(ACT_OPEN_SCREEN, SCREEN_CONTROLS);
+		return;
+	}
 	if (key == LV_KEY_LEFT)
 		to = t > 0 ? home->tiles[t - 1] : b > 0 ? home->buttons[b - 1] : NULL;
 	else if (key == LV_KEY_RIGHT)

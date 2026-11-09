@@ -15,3 +15,7 @@ const char *config_get(const char *key);		/* NULL if unset */
 int config_get_int(const char *key, int def);
 void config_set(const char *key, const char *value);
 void config_set_int(const char *key, int value);
+void config_unset(const char *key);
+/* Every key starting with prefix, in no order */
+void config_each(const char *prefix, void (*cb)(const char *key, const char *value, void *ud),
+		 void *ud);
