@@ -82,6 +82,10 @@ int game_entries(const struct game_def *g, bool rescan);
 const char *game_title(struct game_ref g);
 const char *game_hint(struct game_ref g, const struct platform *pf);
 bool game_trigger_volume(struct game_ref g);
+/* A name of the entry that stays the same between runs and builds: 8 hex
+ * digits of its id and, for a game found at run time, its name */
+#define GAME_KEY_SIZE 9
+const char *game_key(struct game_ref g, char buf[GAME_KEY_SIZE]);
 /* Its cover picture if the file is there, else NULL */
 const char *game_cover(struct game_ref g);
 /* "<dir>/cover.png" into buf (dir may be "" for none: NULL) */

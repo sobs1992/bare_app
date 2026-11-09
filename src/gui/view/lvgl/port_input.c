@@ -26,6 +26,7 @@ static struct {
 	uint32_t last_key;
 	lv_indev_state_t last_state;
 	lv_group_t *nav2d;	/* its objects get Up/Down as keys */
+	bool back_taken;	/* port_input_take_back() during this key */
 } pi;
 
 static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
@@ -79,10 +80,16 @@ bool port_input_key(enum ui_key key, bool pressed, bool repeat)
 	if (repeat)
 		push(k, LV_INDEV_STATE_RELEASED);
 	push(k, pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED);
+	pi.back_taken = false;
 	while (pi.count)
 		lv_indev_read(pi.indev);
-	/* BACK is left to the view core: it closes the screen */
-	return key != UI_KEY_BACK;
+	/* BACK is left to the view core (it closes the screen) unless taken */
+	return key != UI_KEY_BACK || pi.back_taken;
+}
+
+void port_input_take_back(void)
+{
+	pi.back_taken = true;
 }
 
 void port_input_set_group(lv_group_t *g)

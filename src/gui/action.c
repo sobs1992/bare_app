@@ -64,6 +64,7 @@ const char *action_name(enum gui_action_type type)
 {
 	switch (type) {
 	case ACT_BACK:           return "back";
+	case ACT_GAME_PLAYED:    return "game-played";
 	case ACT_OPEN_SCREEN:    return "open-screen";
 	case ACT_SET_BRIGHTNESS: return "set-brightness";
 	case ACT_SET_LANG:       return "set-lang";

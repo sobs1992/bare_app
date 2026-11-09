@@ -1,6 +1,7 @@
 /* The games of this build (game.h): one line each, in menu order */
 #include "game.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -47,6 +48,23 @@ const char *game_title(struct game_ref g)
 		return "";
 	name = info(g).name;
 	return name ? name : tr(g.def->title);
+}
+
+const char *game_key(struct game_ref g, char buf[GAME_KEY_SIZE])
+{
+	const char *name = g.def && g.def->entries ? info(g).name : NULL;
+	uint32_t h = 2166136261u;	/* FNV-1a */
+	const char *p;
+
+	for (p = g.def ? g.def->id : ""; *p; p++)
+		h = (h ^ (uint8_t)*p) * 16777619u;
+	if (name) {
+		h = (h ^ '/') * 16777619u;
+		for (p = name; *p; p++)
+			h = (h ^ (uint8_t)*p) * 16777619u;
+	}
+	snprintf(buf, GAME_KEY_SIZE, "%08x", (unsigned)h);
+	return buf;
 }
 
 const char *game_hint(struct game_ref g, const struct platform *pf)

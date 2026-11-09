@@ -105,7 +105,7 @@ const struct control_ops ctl_system = {
 	.init = system_init,
 };
 
-/* ---- settings: UI language (kept in the config file) ------------------ */
+/* ---- settings: UI language, the games played (kept in the config file) */
 
 static void set_lang(const char *lang)
 {
@@ -116,20 +116,57 @@ static void set_lang(const char *lang)
 	ctx_unlock(CTX_SETTINGS);
 }
 
+/* key first, then the others of list but key, at most RECENT_MAX */
+static void recent_put(char *out, size_t size, const char *list, const char *key)
+{
+	size_t len = (size_t)snprintf(out, size, "%s", key), klen = strlen(key);
+	int n = 1;
+
+	while (list && *list && n < RECENT_MAX) {
+		size_t l = strcspn(list, ",");
+
+		if (l && (l != klen || strncmp(list, key, l)) && len + 1 + l < size) {
+			out[len++] = ',';
+			memcpy(out + len, list, l);
+			out[len += l] = '\0';
+			n++;
+		}
+		list += l + (list[l] == ',');
+	}
+}
+
+static void set_recent(const char *list)
+{
+	struct gui_ctx *c = ctx_lock();
+
+	snprintf(c->settings.recent, sizeof(c->settings.recent), "%s", list);
+	ctx_unlock(CTX_SETTINGS);
+}
+
 static int settings_init(const struct control_env *env)
 {
 	const char *lang = env->lang && *env->lang ? env->lang : config_get("lang");
+	const char *recent = config_get("recent");
 
 	set_lang(lang ? lang : "en");
+	set_recent(recent ? recent : "");
 	return 0;
 }
 
 static void settings_action(const struct gui_action *a)
 {
-	if (a->type != ACT_SET_LANG || !a->str[0])
+	char list[sizeof(((struct gui_ctx *)0)->settings.recent)];
+
+	if (!a->str[0] || strchr(a->str, ','))
 		return;
-	set_lang(a->str);
-	config_set("lang", a->str);
+	if (a->type == ACT_SET_LANG) {
+		set_lang(a->str);
+		config_set("lang", a->str);
+	} else if (a->type == ACT_GAME_PLAYED) {
+		recent_put(list, sizeof(list), config_get("recent"), a->str);
+		set_recent(list);
+		config_set("recent", list);
+	}
 }
 
 const struct control_ops ctl_settings = {

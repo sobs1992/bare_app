@@ -114,6 +114,10 @@ static void *game_init(lv_obj_t *parent, lv_obj_t **root)
 	if (!g->game.def) {
 		show_message(g, tr(S_GAME_FAILED));
 	} else if (view_video_set(VIDEO_GAME) == 0) {	/* or back from minimised */
+		char key[GAME_KEY_SIZE];
+
+		/* the home screen puts it first */
+		gui_action_post_str(ACT_GAME_PLAYED, game_key(g->game, key));
 		lv_obj_set_style_bg_opa(g->scr, LV_OPA_TRANSP, 0);
 		view_input_grab(on_input, g);
 		view_video_on_end(on_end, g);

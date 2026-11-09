@@ -44,6 +44,7 @@ enum ctx_section {
 #define NAV_DEPTH 8
 #define WIFI_SSID_MAX 32
 #define WIFI_MAX_NETS 16
+#define RECENT_MAX 16		/* games the home screen remembers the order of */
 
 /* Where the sound goes: the setting */
 enum audio_output { AUDIO_OUT_AUTO, AUDIO_OUT_SPEAKER, AUDIO_OUT_HEADPHONES, AUDIO_OUT_COUNT };
@@ -95,6 +96,8 @@ struct gui_ctx {
 	} system;
 	struct {
 		char lang[16];		/* UI language code, "en", "ru"... */
+		/* game_key()s of the games played, the latest first, "," between */
+		char recent[RECENT_MAX * 9];
 	} settings;
 	struct {
 		bool available;		/* the platform has a mixer */

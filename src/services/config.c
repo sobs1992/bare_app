@@ -18,7 +18,7 @@
 static struct {
 	struct mainloop *ml;
 	char path[256];
-	struct { char key[32], value[64]; } kv[MAX_KEYS];
+	struct { char key[32], value[160]; } kv[MAX_KEYS];
 	int n;
 	struct ml_timer *save;
 } cf;
@@ -49,7 +49,7 @@ static void put(const char *key, const char *value)
 static void load(void)
 {
 	FILE *f = fopen(cf.path, "r");
-	char line[128];
+	char line[256];
 
 	if (!f) {
 		if (errno != ENOENT)

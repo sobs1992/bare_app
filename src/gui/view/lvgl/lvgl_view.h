@@ -22,6 +22,11 @@ extern const lv_font_t ui_font_14, ui_font_20;
 #define UI_COLOR_DIM  lv_color_hex(0x8a8f98)
 #define UI_COLOR_ON   lv_color_hex(0x2f8cff)
 #define UI_COLOR_WARN lv_color_hex(0xff6a3d)
+/* The console-like screens (home, settings) */
+#define UI_COLOR_BG     lv_color_hex(0x15181e)	/* top of the background */
+#define UI_COLOR_BG2    lv_color_hex(0x0d0f13)	/* bottom */
+#define UI_COLOR_LINE   lv_color_hex(0x2a2f39)
+#define UI_COLOR_ACCENT lv_color_hex(0x31c6ff)	/* focus frames, what is chosen */
 #define UI_STATUSBAR_H 36
 /* X as an LVGL key (LV_EVENT_KEY on the focused object); beyond Unicode, so
  * nothing types it */
@@ -39,6 +44,8 @@ void port_input_set_group(lv_group_t *g);
  * LV_EVENT_KEY instead of the focus going to the previous/next (NULL: none) */
 void port_input_set_2d(lv_group_t *g);
 lv_group_t *port_input_2d(void);
+/* From LV_EVENT_CANCEL (B) of an object: B is used, the screen stays */
+void port_input_take_back(void);
 
 /* screens.c: shows the screen named by CTX_NAV */
 int screens_init(void);

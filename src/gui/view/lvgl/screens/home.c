@@ -1,7 +1,9 @@
 /*
  * Home, laid out like a console's home menu: the games of games/game.h as
  * a row of big square tiles (their cover.png, or the title on a colour of
- * its own), the name of the focused one above it, a row of round buttons
+ * its own), the one played last first (ctx settings.recent, the games never
+ * played after them in the order of games.c), the name of the focused one
+ * above it, a row of round buttons
  * for the other screens under it, and what A does at the bottom. Left and
  * Right go along a row, Up and Down between the rows (port_input_set_2d()).
  *
@@ -32,12 +34,7 @@
 #define FOCUS_W 4		/* the focused tile's or button's frame */
 #define FOCUS_PAD 4
 #define ROUND_GAP 22
-#define FOOTER_H_MAX 40
-#define COLOR_BG lv_color_hex(0x15181e)
-#define COLOR_BG2 lv_color_hex(0x0d0f13)
 #define COLOR_ROUND lv_color_hex(0x2a2f39)
-#define COLOR_LINE lv_color_hex(0x2a2f39)
-#define COLOR_ACCENT lv_color_hex(0x31c6ff)
 
 struct entry {
 	const char *symbol;
@@ -71,6 +68,46 @@ static const struct entry entries[] = {
 static struct entry menu[MENU_MAX];
 static size_t n_menu, n_games;
 
+/* Where g is in the list of the games played, the latest first; RECENT_MAX:
+ * never played */
+static int recent_rank(const char *recent, struct game_ref g)
+{
+	char key[GAME_KEY_SIZE];
+	size_t klen = strlen(game_key(g, key));
+	int i;
+
+	for (i = 0; *recent; i++) {
+		size_t l = strcspn(recent, ",");
+
+		if (l == klen && !strncmp(recent, key, l))
+			return i;
+		recent += l + (recent[l] == ',');
+	}
+	return RECENT_MAX;
+}
+
+/* The games in the order they were played in (stable: the others keep theirs) */
+static void sort_games(void)
+{
+	const struct gui_ctx *c = view_ctx();
+	int rank[MENU_MAX];
+	size_t i, j;
+
+	if (!c)
+		return;
+	for (i = 0; i < n_games; i++) {
+		struct entry en = menu[i];
+		int r = recent_rank(c->settings.recent, en.game);
+
+		for (j = i; j > 0 && rank[j - 1] > r; j--) {
+			menu[j] = menu[j - 1];
+			rank[j] = rank[j - 1];
+		}
+		menu[j] = en;
+		rank[j] = r;
+	}
+}
+
 static void build_menu(void)
 {
 	struct game_ref running = view_game();
@@ -90,6 +127,7 @@ static void build_menu(void)
 	(void)running;
 #endif
 	n_games = n_menu;
+	sort_games();
 	for (i = 0; i < N_ENTRIES; i++)
 		menu[n_menu++] = entries[i];
 }
@@ -229,7 +267,7 @@ static void on_click(lv_event_t *e)
 /* ---- the menu ------------------------------------------------------------ */
 
 struct home {
-	lv_obj_t *scr, *title, *row, *rounds, *round_name, *action;
+	lv_obj_t *scr, *title, *row, *rounds, *round_name, *footer;
 	lv_obj_t *tiles[MENU_MAX], *buttons[N_ENTRIES];
 	const struct entry *tile_entry[MENU_MAX], *button_entry[N_ENTRIES];
 	int n_tiles, n_buttons, last_tile, last_button;
@@ -266,7 +304,7 @@ static void set_action(const struct entry *en)
 	enum str_id what = en->game.def ? (en == running ? S_HOME_RESUME : S_HOME_START)
 			   : en->action == ACT_POWER_OFF ? S_QUIT : S_HOME_OPEN;
 
-	lv_label_set_text(home->action, tr(what));
+	footer_set(home->footer, "A", tr(what), NULL);
 }
 
 static void focus_changed(lv_obj_t *obj, const struct entry *en)
@@ -317,7 +355,7 @@ static void focus_frame(lv_obj_t *obj, int32_t radius)
 {
 	lv_obj_set_style_radius(obj, radius, 0);
 	lv_obj_set_style_outline_width(obj, FOCUS_W, LV_STATE_FOCUS_KEY);
-	lv_obj_set_style_outline_color(obj, COLOR_ACCENT, LV_STATE_FOCUS_KEY);
+	lv_obj_set_style_outline_color(obj, UI_COLOR_ACCENT, LV_STATE_FOCUS_KEY);
 	lv_obj_set_style_outline_pad(obj, FOCUS_PAD, LV_STATE_FOCUS_KEY);
 	lv_obj_set_style_outline_opa(obj, LV_OPA_COVER, LV_STATE_FOCUS_KEY);
 }
@@ -414,42 +452,6 @@ static lv_obj_t *round_new(lv_obj_t *parent, const struct entry *en, int32_t siz
 	return b;
 }
 
-/* "(A) text" in the bottom right corner */
-static lv_obj_t *footer_new(lv_obj_t *scr, int32_t w, int32_t h, int32_t footer_h)
-{
-	lv_obj_t *line = lv_obj_create(scr), *box, *badge;
-
-	lv_obj_remove_style_all(line);
-	lv_obj_set_size(line, w - 2 * 24, 1);
-	lv_obj_set_style_bg_opa(line, LV_OPA_COVER, 0);
-	lv_obj_set_style_bg_color(line, COLOR_LINE, 0);
-	lv_obj_set_pos(line, 24, h - footer_h);
-
-	box = lv_obj_create(scr);
-	lv_obj_remove_style_all(box);
-	lv_obj_set_size(box, LV_SIZE_CONTENT, footer_h);
-	lv_obj_set_flex_flow(box, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(box, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_column(box, 8, 0);
-	lv_obj_align(box, LV_ALIGN_BOTTOM_RIGHT, -28, 0);
-
-	badge = lv_label_create(box);
-	lv_obj_set_size(badge, 22, 22);
-	lv_obj_set_style_radius(badge, LV_RADIUS_CIRCLE, 0);
-	lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
-	lv_obj_set_style_bg_color(badge, lv_color_white(), 0);
-	lv_obj_set_style_text_color(badge, COLOR_BG, 0);
-	lv_obj_set_style_text_font(badge, UI_FONT_SMALL, 0);
-	lv_obj_set_style_text_align(badge, LV_TEXT_ALIGN_CENTER, 0);
-	lv_obj_set_style_pad_top(badge, 2, 0);
-	lv_label_set_text(badge, "A");
-
-	home->action = lv_label_create(box);
-	lv_obj_set_style_text_font(home->action, UI_FONT_SMALL, 0);
-	lv_label_set_text(home->action, "");
-	return box;
-}
-
 static void on_screen_delete(lv_event_t *e)
 {
 	struct home *h = lv_event_get_user_data(e);
@@ -466,12 +468,12 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_display_t *disp = lv_display_get_default();
 	int32_t w = lv_display_get_horizontal_resolution(disp);
 	int32_t h = lv_display_get_vertical_resolution(disp);
-	int32_t footer_h = LV_MIN(FOOTER_H_MAX, h / 9), round = h >= 400 ? 52 : 40;
+	int32_t footer_h = footer_height(), round = h >= 400 ? 52 : 40;
 	int32_t title_h = lv_font_get_line_height(UI_FONT_MID);
 	int32_t name_h = lv_font_get_line_height(UI_FONT_SMALL);
-	int32_t frame = FOCUS_W + FOCUS_PAD, margin = w >= 640 ? 44 : 20;
+	int32_t frame = FOCUS_W + FOCUS_PAD, margin = ui_margin();
 	int32_t avail, fixed, top, gap;
-	lv_obj_t *scr, *bar, *focus = NULL;
+	lv_obj_t *scr, *focus = NULL;
 	size_t i;
 
 	(void)parent;
@@ -483,15 +485,9 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 
 	scr = lv_obj_create(NULL);
 	home->scr = scr;
-	lv_obj_set_style_bg_color(scr, COLOR_BG, 0);
-	lv_obj_set_style_bg_grad_color(scr, COLOR_BG2, 0);
-	lv_obj_set_style_bg_grad_dir(scr, LV_GRAD_DIR_VER, 0);
-	lv_obj_set_style_text_color(scr, lv_color_white(), 0);
-	lv_obj_set_scrollable(scr, false);
+	screen_console_style(scr);
 	lv_obj_add_event_cb(scr, on_screen_delete, LV_EVENT_DELETE, home);
-	bar = statusbar_create(scr, NULL, "");	/* the time, volume, Wi-Fi, battery */
-	if (bar)
-		lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, 0);
+	console_header(scr, NULL, "", UI_STATUSBAR_H);	/* the time, volume, Wi-Fi, battery */
 
 	/* title, the tiles, the round buttons with the name under them: the
 	 * tiles as big as the rest leaves room for, the whole block centred */
@@ -503,7 +499,7 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 
 	home->title = lv_label_create(scr);
 	lv_obj_set_style_text_font(home->title, UI_FONT_MID, 0);
-	lv_obj_set_style_text_color(home->title, COLOR_ACCENT, 0);
+	lv_obj_set_style_text_color(home->title, UI_COLOR_ACCENT, 0);
 	lv_obj_set_width(home->title, w - 2 * margin);
 	lv_label_set_long_mode(home->title, LV_LABEL_LONG_MODE_DOTS);
 	lv_label_set_text(home->title, n_games ? "" : tr(S_HOME_NO_GAMES));
@@ -541,7 +537,7 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_style_text_align(home->round_name, LV_TEXT_ALIGN_CENTER, 0);
 	lv_obj_set_x(home->round_name, 0);
 
-	footer_new(scr, w, h, footer_h);
+	home->footer = footer_create(scr);
 
 	for (i = 0; i < n_menu; i++) {
 		bool minimized = view_video_minimized() != VIDEO_NONE && running_entry() == &menu[i];

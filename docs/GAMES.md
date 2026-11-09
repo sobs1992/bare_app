@@ -147,7 +147,8 @@ config BR2_PACKAGE_BARE_APP_CHOCOLATE_DOOM
 BARE_APP_GAME_INIS-$(BR2_PACKAGE_BARE_APP_CHOCOLATE_DOOM) += chocolate-doom.ini
 ```
 
-**4. Прошивка** — опции в `configs/ogu_defconfig`:
+**4. Прошивка** — опции в конфигурации прошивки (в `configs/ogu_defconfig` Chocolate Doom
+сейчас выключен: у bare_app свой Doom):
 
 ```make
 APPS_CONFIG := ... bare-app.SDL=y bare-app.CHOCOLATE_DOOM=y

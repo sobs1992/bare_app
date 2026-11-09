@@ -40,3 +40,16 @@ extern const struct widget_ops home_screen, settings_screen, input_test_screen, 
 
 /* A vertical screen body under the status bar */
 lv_obj_t *screen_body(lv_obj_t *screen);
+
+/* widgets/footer.c: the console-like screens (home, settings) */
+/* Left and right of everything on them */
+int32_t ui_margin(void);
+/* The status bar over the background, its ends at the margins, h high */
+lv_obj_t *console_header(lv_obj_t *screen, const char *symbol, const char *title, int32_t h);
+/* A line along the bottom with the buttons' hints at its right, "(B) Back  (A) OK" */
+int32_t footer_height(void);
+lv_obj_t *footer_create(lv_obj_t *screen);
+/* Button, text pairs up to a NULL: a letter ("A") or symbols (arrows) */
+void footer_set(lv_obj_t *footer, ...);
+/* The screen's background: a dark vertical gradient */
+void screen_console_style(lv_obj_t *screen);

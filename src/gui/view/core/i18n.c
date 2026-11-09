@@ -19,7 +19,6 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_QUIT]            = { "Quit" RU("Выход") },
 	[S_BRIGHTNESS]      = { "Brightness" RU("Яркость") },
 	[S_NOT_AVAILABLE]   = { "not available" RU("недоступна") },
-	[S_CHANGE_BACK]     = { "change    B  back" RU("изменить    B  назад") },
 	[S_TWICE_BACK]      = { "B twice: back" RU("B дважды: назад") },
 	[S_STICK_CAL_START] = { "A twice: calibrate the sticks" RU("A дважды: калибровка стиков") },
 	[S_STICK_CAL_REST]  = { "Let go of the sticks...\nB  cancel"
@@ -167,6 +166,18 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_HOME_RESUME]     = { "Resume" RU("Продолжить") },
 	[S_HOME_NO_GAMES]   = { "No games yet" RU("Игр пока нет") },
 	[S_HOME_NOT_INSTALLED] = { "not installed" RU("не установлена") },
+	[S_SET_SCREEN]      = { "Screen" RU("Экран") },
+	[S_SET_SOUND]       = { "Sound" RU("Звук") },
+	[S_SET_INTERNET]    = { "Internet" RU("Интернет") },
+	[S_SET_SYSTEM]      = { "System" RU("Система") },
+	[S_IP_ADDRESS]      = { "IP address" RU("IP-адрес") },
+	[S_DEVICE]          = { "Device" RU("Устройство") },
+	[S_PLATFORM]        = { "Platform" RU("Платформа") },
+	[S_BATTERY]         = { "Battery" RU("Батарея") },
+	[S_CHARGING]        = { "charging" RU("заряжается") },
+	[S_BACK]            = { "Back" RU("Назад") },
+	[S_OK]              = { "OK" },
+	[S_CHANGE]          = { "Change" RU("Изменить") },
 };
 
 static int lang = LANG_EN;

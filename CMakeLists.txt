@@ -94,7 +94,10 @@ add_if(CONFIG_GAME_HALFLIFE     src/games/halflife.c)
 add_if(CONFIG_GAME_WINE         src/games/wine.c src/games/ini.c)
 add_if(CONFIG_GAME_NATIVE       src/games/native.c src/games/ini.c)
 add_if(CONFIG_SYSMON            src/services/sysmon.c src/gui/control/ctl_sysmon.c)
-add_if(CONFIG_GAMES             src/games/games.c src/games/game_proc.c)
+# games.c also without games: the home screen's code asks it of the games
+# it has none of
+list(APPEND CORE_SOURCES src/games/games.c)
+add_if(CONFIG_GAMES             src/games/game_proc.c)
 if(CONFIG_DISPLAY_DRM OR CONFIG_DISPLAY_FBDEV)
 	list(APPEND CORE_SOURCES src/drivers/blit.c src/drivers/console.c)
 elseif(CONFIG_BUILD_TESTS)
@@ -141,6 +144,7 @@ if(CONFIG_VIEW_LVGL)
 		src/gui/view/lvgl/widget.c
 		src/gui/view/lvgl/screens.c
 		src/gui/view/lvgl/widgets/statusbar.c
+		src/gui/view/lvgl/widgets/footer.c
 		src/gui/view/lvgl/screens/home.c
 	)
 	if(CONFIG_UI_FONT_CYRILLIC)

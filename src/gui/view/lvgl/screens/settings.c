@@ -1,154 +1,553 @@
 /*
- * Settings: brightness (CTX_DISPLAY), volume and output (CTX_AUDIO),
- * language, Wi-Fi status that opens the Wi-Fi screen (CTX_WIFI). Sized to
- * fit 320 lines without scrolling; the battery is in the status bar.
+ * Settings, laid out like a console's system settings: the categories in a
+ * column on the left, the settings of the chosen one on the right, what the
+ * buttons do at the bottom. Up and Down go along a column (the screen's
+ * group gets them as keys, port_input_set_2d()); Right or A goes into the
+ * settings, Left or B back to the categories, B there closes the screen.
+ * In the settings Left and Right move a slider, A changes a choice or
+ * opens the screen of a link.
+ *
+ *   Screen    brightness (CTX_DISPLAY)
+ *   Sound     volume, output (CTX_AUDIO)
+ *   Internet  the Wi-Fi network: opens the Wi-Fi screen; the address (CTX_WIFI)
+ *   System    language (CTX_SETTINGS), device, platform (CTX_SYSTEM),
+ *             battery (CTX_POWER)
+ *
+ * Only the chosen category's rows exist; it is kept while the application
+ * runs, so the screen rebuilt in another language shows the same one.
  */
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "../widget.h"
 #include "gui/action.h"
 
 #define STEP 5		/* percent per slider step */
-#define ROW_PAD 4	/* above and below the content of a row */
+#define SIDE_PAD 4	/* room for the focus frames in the columns */
+#define FOCUS_W 3
+#define COLOR_FOCUS_BG lv_color_hex(0x232833)
 
-struct settings {
-	lv_obj_t *slider, *value, *no_bl;
-	int shown_brightness;
-	lv_obj_t *vol_row, *vol_slider, *vol_value, *out_row, *out_label;
-	int shown_volume;
-	enum audio_output output;
-	lv_obj_t *wifi_row, *wifi_label;
+enum row_id {
+	R_BRIGHTNESS, R_VOLUME, R_OUTPUT, R_WIFI, R_IP, R_LANG, R_DEVICE, R_PLATFORM, R_BATTERY,
+	R_COUNT
 };
 
-static void on_lang(lv_event_t *e)
+enum row_kind {
+	ROW_SLIDER,	/* Left, Right */
+	ROW_CHOICE,	/* A: the next value */
+	ROW_LINK,	/* A: another screen */
+	ROW_INFO,	/* not focusable */
+};
+
+struct settings;
+
+struct row {
+	struct settings *s;
+	enum row_id id;
+	enum row_kind kind;
+	lv_obj_t *obj, *value, *slider;		/* obj NULL: not in the panel */
+};
+
+struct category {
+	const char *symbol;
+	enum str_id name;
+	void (*build)(struct settings *s);
+};
+
+struct settings {
+	lv_obj_t *panel, *footer;
+	lv_obj_t *cats[4];
+	lv_group_t *group;
+	int cat;			/* in the panel */
+	bool big;			/* 640x400 and up: more room around everything */
+	int32_t row_h;
+	struct row rows[R_COUNT];
+	int shown_brightness, shown_volume;	/* -2: nothing yet */
+	enum audio_output output;
+};
+
+static int kept_cat;	/* the category last shown */
+static int kept_row = -1;	/* the link row whose screen was opened: focused again */
+
+/* ---- rows --------------------------------------------------------------- */
+
+static void set_text(lv_obj_t *label, const char *text)
 {
-	(void)e;
-	gui_action_post_str(ACT_SET_LANG, i18n_next(i18n_lang()));
+	if (strcmp(lv_label_get_text(label), text))
+		lv_label_set_text(label, text);
 }
 
-static void on_slider(lv_event_t *e)
+static bool row_shown(const struct row *r)
 {
-	lv_obj_t *slider = lv_event_get_target(e);
+	return r->obj && !lv_obj_is_hidden(r->obj);
+}
 
-	gui_action_post(ACT_SET_BRIGHTNESS, (int)lv_slider_get_value(slider) * STEP);
+static void focus_cat(struct settings *s)
+{
+	lv_group_focus_obj(s->cats[s->cat]);
+}
+
+/* The next focusable row from obj (NULL: from the top) in dir (+1, -1) */
+static lv_obj_t *row_next(struct settings *s, lv_obj_t *obj, int dir)
+{
+	int32_t n = (int32_t)lv_obj_get_child_count(s->panel);
+	int32_t i = obj ? lv_obj_get_index(obj) + dir : dir > 0 ? 0 : n - 1;
+
+	for (; i >= 0 && i < n; i += dir) {
+		lv_obj_t *o = lv_obj_get_child(s->panel, i);
+
+		if (lv_obj_get_group(o) && !lv_obj_is_hidden(o))
+			return o;
+	}
+	return NULL;
+}
+
+static void show_slider(struct row *r, int percent)
+{
+	char text[8];
+
+	lv_slider_set_value(r->slider, (percent + STEP / 2) / STEP, LV_ANIM_OFF);
+	snprintf(text, sizeof(text), "%d%%", percent);
+	set_text(r->value, text);
+}
+
+/* A or Left, Right (dir 0: A) on a row */
+static void row_change(struct row *r, int dir)
+{
+	struct settings *s = r->s;
+	int v;
+
+	if (r->kind == ROW_SLIDER) {
+		if (!dir || lv_obj_is_hidden(r->slider))
+			return;
+		v = (int)lv_slider_get_value(r->slider) + dir;
+		if (v < lv_slider_get_min_value(r->slider) || v > lv_slider_get_max_value(r->slider))
+			return;
+		/* at once, the context follows (the same value: shown already) */
+		show_slider(r, v * STEP);
+		if (r->id == R_BRIGHTNESS) {
+			s->shown_brightness = v * STEP;
+			gui_action_post(ACT_SET_BRIGHTNESS, v * STEP);
+		} else {
+			s->shown_volume = v * STEP;
+			gui_action_post(ACT_SET_VOLUME, v * STEP);
+		}
+		return;
+	}
+	if (dir)
+		return;
+	switch (r->id) {
+	case R_OUTPUT:
+		gui_action_post(ACT_SET_AUDIO_OUT, (s->output + 1) % AUDIO_OUT_COUNT);
+		break;
+	case R_LANG:
+		gui_action_post_str(ACT_SET_LANG, i18n_next(i18n_lang()));
+		break;
+	case R_WIFI:
+		kept_row = R_WIFI;
+		gui_action_post(ACT_OPEN_SCREEN, SCREEN_WIFI);
+		break;
+	default:
+		break;
+	}
+}
+
+static void row_hints(struct row *r)
+{
+	const char *back = tr(S_BACK);
+
+	if (r->kind == ROW_SLIDER && !lv_obj_is_hidden(r->slider))
+		footer_set(r->s->footer, LV_SYMBOL_LEFT LV_SYMBOL_RIGHT, tr(S_CHANGE), "B", back, NULL);
+	else if (r->kind == ROW_CHOICE)
+		footer_set(r->s->footer, "B", back, "A", tr(S_CHANGE), NULL);
+	else if (r->kind == ROW_LINK)
+		footer_set(r->s->footer, "B", back, "A", tr(S_OK), NULL);
+	else
+		footer_set(r->s->footer, "B", back, NULL);
+}
+
+static void on_row_focused(lv_event_t *e)
+{
+	struct row *r = lv_event_get_user_data(e);
+
+	lv_obj_scroll_to_view(r->obj, LV_ANIM_ON);
+	row_hints(r);
+}
+
+static void on_row_key(lv_event_t *e)
+{
+	struct row *r = lv_event_get_user_data(e);
+	lv_obj_t *to;
+
+	switch (lv_event_get_key(e)) {
+	case LV_KEY_UP:
+	case LV_KEY_DOWN:
+		to = row_next(r->s, r->obj, lv_event_get_key(e) == LV_KEY_UP ? -1 : 1);
+		if (to)
+			lv_group_focus_obj(to);
+		break;
+	case LV_KEY_LEFT:
+		if (r->kind == ROW_SLIDER && !lv_obj_is_hidden(r->slider))
+			row_change(r, -1);
+		else
+			focus_cat(r->s);
+		break;
+	case LV_KEY_RIGHT:
+		row_change(r, 1);
+		break;
+	default:
+		break;
+	}
+}
+
+static void on_row_click(lv_event_t *e)
+{
+	row_change(lv_event_get_user_data(e), 0);
+}
+
+/* B in the settings: back to the categories, not out of the screen */
+static void on_row_cancel(lv_event_t *e)
+{
+	struct row *r = lv_event_get_user_data(e);
+
+	port_input_take_back();
+	focus_cat(r->s);
+}
+
+static lv_obj_t *label_new(lv_obj_t *parent, lv_color_t color)
+{
+	lv_obj_t *l = lv_label_create(parent);
+
+	lv_obj_set_style_text_font(l, UI_FONT_MID, 0);
+	lv_obj_set_style_text_color(l, color, 0);
+	lv_label_set_text(l, "");
+	return l;
+}
+
+/* name on the left, the value on the right, a slider under them */
+static struct row *row_new(struct settings *s, enum row_id id, enum row_kind kind,
+			   enum str_id name)
+{
+	struct row *r = &s->rows[id];
+	lv_obj_t *o = lv_obj_create(s->panel), *label;
+
+	*r = (struct row){ .s = s, .id = id, .kind = kind, .obj = o };
+	lv_obj_remove_style_all(o);
+	lv_obj_set_size(o, LV_PCT(100), LV_SIZE_CONTENT);
+	lv_obj_set_style_min_height(o, s->row_h, 0);
+	lv_obj_set_style_pad_hor(o, s->big ? 20 : 10, 0);
+	lv_obj_set_style_pad_ver(o, s->big ? 12 : 8, 0);
+	lv_obj_set_style_pad_row(o, s->big ? 16 : 10, 0);
+	lv_obj_set_style_pad_column(o, s->big ? 16 : 8, 0);
+	lv_obj_set_style_border_side(o, LV_BORDER_SIDE_BOTTOM, 0);
+	lv_obj_set_style_border_width(o, 1, 0);
+	lv_obj_set_style_border_color(o, UI_COLOR_LINE, 0);
+	/* the name never wraps: a value too long for its line goes under it */
+	lv_obj_set_flex_flow(o, LV_FLEX_FLOW_ROW_WRAP);
+	lv_obj_set_flex_align(o, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_scrollable(o, false);
+
+	label = label_new(o, lv_color_white());
+	lv_label_set_text(label, tr(name));
+	r->value = label_new(o, kind == ROW_CHOICE ? UI_COLOR_ACCENT : UI_COLOR_DIM);
+	lv_obj_set_style_max_width(r->value, LV_PCT(100), 0);
+	lv_label_set_long_mode(r->value, LV_LABEL_LONG_MODE_WRAP);
+
+	if (kind == ROW_SLIDER) {
+		lv_obj_t *sl = lv_slider_create(o);
+
+		lv_group_remove_obj(sl);	/* the row moves it */
+		lv_obj_set_clickable(sl, false);
+		/* in line with the text: the knob reaches into the row's padding */
+		lv_obj_set_size(sl, LV_PCT(100), 6);
+		lv_obj_set_style_margin_bottom(sl, s->big ? 6 : 4, 0);
+		lv_obj_set_style_bg_color(sl, lv_color_lighten(UI_COLOR_LINE, LV_OPA_20), LV_PART_MAIN);
+		lv_obj_set_style_bg_color(sl, UI_COLOR_ACCENT, LV_PART_INDICATOR);
+		lv_obj_set_style_bg_color(sl, lv_color_white(), LV_PART_KNOB);
+		lv_obj_set_style_pad_all(sl, 6, LV_PART_KNOB);
+		lv_obj_set_style_shadow_width(sl, 0, LV_PART_KNOB);
+		lv_slider_set_range(sl, 0, 100 / STEP);
+		r->slider = sl;
+	}
+	if (kind != ROW_INFO) {
+		lv_obj_set_style_radius(o, 8, 0);
+		lv_obj_set_style_bg_color(o, COLOR_FOCUS_BG, LV_STATE_FOCUSED);
+		lv_obj_set_style_bg_opa(o, LV_OPA_COVER, LV_STATE_FOCUSED);
+		lv_obj_set_style_outline_width(o, FOCUS_W, LV_STATE_FOCUSED);
+		lv_obj_set_style_outline_color(o, UI_COLOR_ACCENT, LV_STATE_FOCUSED);
+		lv_obj_set_style_outline_opa(o, LV_OPA_COVER, LV_STATE_FOCUSED);
+		lv_group_add_obj(s->group, o);
+		lv_obj_add_event_cb(o, on_row_focused, LV_EVENT_FOCUSED, r);
+		lv_obj_add_event_cb(o, on_row_key, LV_EVENT_KEY, r);
+		lv_obj_add_event_cb(o, on_row_click, LV_EVENT_CLICKED, r);
+		lv_obj_add_event_cb(o, on_row_cancel, LV_EVENT_CANCEL, r);
+	}
+	return r;
+}
+
+/* ---- the categories ----------------------------------------------------- */
+
+static void build_screen(struct settings *s)
+{
+	row_new(s, R_BRIGHTNESS, ROW_SLIDER, S_BRIGHTNESS);
+	lv_slider_set_range(s->rows[R_BRIGHTNESS].slider, 1, 100 / STEP);
 }
 
 #ifdef CONFIG_AUDIO
-static void on_volume(lv_event_t *e)
+static void build_sound(struct settings *s)
 {
-	lv_obj_t *slider = lv_event_get_target(e);
-
-	gui_action_post(ACT_SET_VOLUME, (int)lv_slider_get_value(slider) * STEP);
-}
-
-static void on_output(lv_event_t *e)
-{
-	struct settings *s = lv_event_get_user_data(e);
-
-	gui_action_post(ACT_SET_AUDIO_OUT, (s->output + 1) % AUDIO_OUT_COUNT);
+	row_new(s, R_VOLUME, ROW_SLIDER, S_VOLUME);
+	row_new(s, R_OUTPUT, ROW_CHOICE, S_OUTPUT);
 }
 #endif
 
 #if defined(CONFIG_WIFI) && defined(CONFIG_SCREEN_WIFI)
-static void on_wifi(lv_event_t *e)
+static void build_internet(struct settings *s)
 {
-	(void)e;
-	gui_action_post(ACT_OPEN_SCREEN, SCREEN_WIFI);
+	struct row *r = row_new(s, R_WIFI, ROW_LINK, S_WIFI);
+
+	lv_obj_set_style_text_color(r->value, lv_color_white(), 0);
+	row_new(s, R_IP, ROW_INFO, S_IP_ADDRESS);
 }
 #endif
 
-static lv_obj_t *row(lv_obj_t *parent, const char *name)
+static void build_system(struct settings *s)
 {
-	lv_obj_t *r = lv_obj_create(parent), *label;
-
-	lv_obj_remove_style_all(r);
-	lv_obj_set_size(r, LV_PCT(100), LV_SIZE_CONTENT);
-	lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(r, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_column(r, 16, 0);
-	lv_obj_set_style_pad_ver(r, ROW_PAD, 0);
-	label = lv_label_create(r);
-	lv_obj_set_width(label, 140);
-	lv_obj_set_style_text_font(label, UI_FONT_MID, 0);
-	lv_label_set_text(label, name);
-	return r;
+	if (i18n_count() > 1)
+		row_new(s, R_LANG, ROW_CHOICE, S_LANGUAGE);
+	row_new(s, R_DEVICE, ROW_INFO, S_DEVICE);
+	row_new(s, R_PLATFORM, ROW_INFO, S_PLATFORM);
+	row_new(s, R_BATTERY, ROW_INFO, S_BATTERY);
 }
 
-static lv_obj_t *slider(lv_obj_t *r, lv_event_cb_t cb, lv_obj_t **value)
-{
-	lv_obj_t *sl = lv_slider_create(r);
-	struct ui_frame frame;
+static const struct category categories[] = {
+	{ LV_SYMBOL_EYE_OPEN, S_SET_SCREEN, build_screen },
+#ifdef CONFIG_AUDIO
+	{ LV_SYMBOL_VOLUME_MAX, S_SET_SOUND, build_sound },
+#endif
+#if defined(CONFIG_WIFI) && defined(CONFIG_SCREEN_WIFI)
+	{ LV_SYMBOL_WIFI, S_SET_INTERNET, build_internet },
+#endif
+	{ LV_SYMBOL_LIST, S_SET_SYSTEM, build_system },
+};
 
-	lv_obj_set_width(sl, 180);
-	frame = ui_focus_style(sl);
-	/* room for the frame around the knob; it may use the row's empty padding */
-	lv_obj_set_style_margin_hor(sl, frame.hor, 0);
-	lv_obj_set_style_margin_ver(sl, LV_MAX(frame.ver - ROW_PAD, 0), 0);
-	lv_slider_set_range(sl, 0, 100 / STEP);
-	lv_obj_add_event_cb(sl, cb, LV_EVENT_VALUE_CHANGED, NULL);
-	*value = lv_label_create(r);
-	lv_obj_set_style_text_font(*value, UI_FONT_MID, 0);
-	return sl;
+#define N_CATS ((int)(sizeof(categories) / sizeof(categories[0])))
+_Static_assert(N_CATS <= (int)(sizeof(((struct settings *)0)->cats) / sizeof(lv_obj_t *)),
+	       "struct settings: more cats[]");
+
+static void settings_update(void *self, const struct gui_ctx *c, uint32_t changed);
+
+static void show_cat(struct settings *s, int i)
+{
+	lv_obj_remove_state(s->cats[s->cat], LV_STATE_CHECKED);
+	s->cat = kept_cat = i;
+	lv_obj_add_state(s->cats[i], LV_STATE_CHECKED);
+	lv_obj_clean(s->panel);		/* its rows leave the group too */
+	memset(s->rows, 0, sizeof(s->rows));
+	s->shown_brightness = -2;
+	s->shown_volume = -2;
+	categories[i].build(s);
+	lv_obj_scroll_to_y(s->panel, 0, LV_ANIM_OFF);
+	settings_update(s, view_ctx(), CTX_ALL);
 }
 
-static lv_obj_t *button(lv_obj_t *r, lv_event_cb_t cb, void *ud, lv_obj_t **label)
+static void cat_focused(struct settings *s, int i)
 {
-	lv_obj_t *btn = lv_button_create(r);
-
-	lv_obj_set_style_pad_ver(btn, 6, 0);
-	ui_focus_style(btn);
-	lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, ud);
-	*label = lv_label_create(btn);
-	lv_obj_set_style_text_font(*label, UI_FONT_MID, 0);
-	return btn;
+	if (i != s->cat)
+		show_cat(s, i);
+	if (row_next(s, NULL, 1))
+		footer_set(s->footer, "B", tr(S_BACK), "A", tr(S_OK), NULL);
+	else
+		footer_set(s->footer, "B", tr(S_BACK), NULL);
 }
 
+static int cat_index(lv_event_t *e)
+{
+	return (int)(intptr_t)lv_obj_get_user_data(lv_event_get_target_obj(e));
+}
+
+static void on_cat_focused(lv_event_t *e)
+{
+	cat_focused(lv_event_get_user_data(e), cat_index(e));
+}
+
+static void enter_panel(struct settings *s)
+{
+	lv_obj_t *first = row_next(s, NULL, 1);
+
+	if (first)
+		lv_group_focus_obj(first);
+}
+
+static void on_cat_key(lv_event_t *e)
+{
+	struct settings *s = lv_event_get_user_data(e);
+	int i = cat_index(e);
+
+	switch (lv_event_get_key(e)) {
+	case LV_KEY_UP:
+		if (i > 0)
+			lv_group_focus_obj(s->cats[i - 1]);
+		break;
+	case LV_KEY_DOWN:
+		if (i + 1 < N_CATS)
+			lv_group_focus_obj(s->cats[i + 1]);
+		break;
+	case LV_KEY_RIGHT:
+		enter_panel(s);
+		break;
+	default:
+		break;
+	}
+}
+
+static void on_cat_click(lv_event_t *e)
+{
+	enter_panel(lv_event_get_user_data(e));
+}
+
+static lv_obj_t *cat_new(struct settings *s, lv_obj_t *parent, int i)
+{
+	bool big = s->big;
+
+	lv_obj_t *o = lv_obj_create(parent), *label;
+
+	lv_obj_remove_style_all(o);
+	lv_obj_set_size(o, LV_PCT(100), s->row_h);	/* level with the rows */
+	lv_obj_set_user_data(o, (void *)(intptr_t)i);
+	lv_obj_set_flex_flow(o, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(o, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_style_pad_left(o, big ? 16 : 8, 0);
+	lv_obj_set_style_pad_column(o, big ? 14 : 6, 0);
+	lv_obj_set_style_radius(o, 8, 0);
+	lv_obj_set_scrollable(o, false);
+	lv_obj_set_style_text_font(o, UI_FONT_MID, 0);
+	lv_obj_set_style_text_color(o, lv_color_white(), 0);
+	/* the one shown: a bar at its left and the accent colour */
+	lv_obj_set_style_text_color(o, UI_COLOR_ACCENT, LV_STATE_CHECKED);
+	lv_obj_set_style_border_side(o, LV_BORDER_SIDE_LEFT, LV_STATE_CHECKED);
+	lv_obj_set_style_border_width(o, 4, LV_STATE_CHECKED);
+	lv_obj_set_style_border_color(o, UI_COLOR_ACCENT, LV_STATE_CHECKED);
+	lv_obj_set_style_bg_color(o, COLOR_FOCUS_BG, LV_STATE_FOCUSED);
+	lv_obj_set_style_bg_opa(o, LV_OPA_COVER, LV_STATE_FOCUSED);
+	lv_obj_set_style_outline_width(o, FOCUS_W, LV_STATE_FOCUSED);
+	lv_obj_set_style_outline_color(o, UI_COLOR_ACCENT, LV_STATE_FOCUSED);
+	lv_obj_set_style_outline_opa(o, LV_OPA_COVER, LV_STATE_FOCUSED);
+
+	label = lv_label_create(o);
+	lv_obj_set_width(label, big ? 26 : 20);
+	lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+	lv_label_set_text(label, categories[i].symbol);
+	label = lv_label_create(o);
+	lv_obj_set_flex_grow(label, 1);
+	lv_obj_set_height(label, lv_font_get_line_height(UI_FONT_MID));	/* one line, else "..." */
+	lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+	lv_label_set_text(label, tr(categories[i].name));
+
+	lv_group_add_obj(s->group, o);	/* the first one is focused here, without events */
+	lv_obj_add_event_cb(o, on_cat_focused, LV_EVENT_FOCUSED, s);
+	lv_obj_add_event_cb(o, on_cat_key, LV_EVENT_KEY, s);
+	lv_obj_add_event_cb(o, on_cat_click, LV_EVENT_CLICKED, s);
+	return o;
+}
+
+/* ---- the screen ---------------------------------------------------------- */
+
+static lv_obj_t *column(lv_obj_t *scr, int32_t x, int32_t y, int32_t w, int32_t h)
+{
+	lv_obj_t *o = lv_obj_create(scr);
+
+	lv_obj_remove_style_all(o);
+	lv_obj_set_pos(o, x, y);
+	lv_obj_set_size(o, w, h);
+	lv_obj_set_style_pad_all(o, SIDE_PAD, 0);
+	lv_obj_set_flex_flow(o, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_scrollbar_mode(o, LV_SCROLLBAR_MODE_OFF);
+	return o;
+}
+
+static lv_obj_t *line(lv_obj_t *scr, int32_t x, int32_t y, int32_t w, int32_t h)
+{
+	lv_obj_t *o = lv_obj_create(scr);
+
+	lv_obj_remove_style_all(o);
+	lv_obj_set_pos(o, x, y);
+	lv_obj_set_size(o, w, h);
+	lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+	lv_obj_set_style_bg_color(o, UI_COLOR_LINE, 0);
+	return o;
+}
+
+/*
+ * One margin at the sides (ui_margin(), as the header and the hints), the
+ * columns from under the header's line to over the hints' line with the
+ * same room above and below, the line between them in the middle of the gap.
+ */
 static void *settings_init(lv_obj_t *parent, lv_obj_t **root)
 {
 	struct settings *s = calloc(1, sizeof(*s));
-	lv_obj_t *scr, *body, *r, *hint, *label;
+	lv_display_t *disp = lv_display_get_default();
+	int32_t w = lv_display_get_horizontal_resolution(disp);
+	int32_t h = lv_display_get_vertical_resolution(disp);
+	bool big = w >= 640 && h >= 400;
+	int32_t margin = ui_margin(), header_h = big ? 60 : UI_STATUSBAR_H + 4;
+	int32_t side_w = big ? 230 : 138, gap = big ? 28 : 8, room = big ? 22 : 10;
+	int32_t top = header_h + room, col_h = h - footer_height() - room - top;
+	int32_t panel_x = margin + side_w + 2 * gap + 1;
+	lv_obj_t *scr, *side;
+	int i;
 
 	(void)parent;
 	if (!s)
 		return NULL;
-	s->shown_brightness = -2;
-	s->shown_volume = -2;
+	s->group = lv_group_get_default();
+	s->big = big;
+	s->row_h = big ? 64 : 44;
 	s->output = -1;
 	scr = lv_obj_create(NULL);
-	statusbar_create(scr, LV_SYMBOL_SETTINGS, tr(S_SETTINGS));
-	body = screen_body(scr);
-	lv_obj_set_style_pad_row(body, 2, 0);
+	screen_console_style(scr);
+	console_header(scr, LV_SYMBOL_SETTINGS, tr(S_SETTINGS), header_h);
+	line(scr, margin, header_h, w - 2 * margin, 1);
+	s->footer = footer_create(scr);
 
-	r = row(body, tr(S_BRIGHTNESS));
-	s->slider = slider(r, on_slider, &s->value);
-	lv_slider_set_range(s->slider, 1, 100 / STEP);
-	s->no_bl = lv_label_create(r);
-	lv_obj_set_style_text_color(s->no_bl, UI_COLOR_DIM, 0);
-	lv_label_set_text(s->no_bl, tr(S_NOT_AVAILABLE));
+	/* the columns reach SIDE_PAD out of their place: room for the focus frames */
+	side = column(scr, margin - SIDE_PAD, top - SIDE_PAD, side_w + 2 * SIDE_PAD,
+		      col_h + 2 * SIDE_PAD);
+	lv_obj_set_style_pad_row(side, big ? 8 : 4, 0);
+	lv_obj_set_scrollable(side, false);
+	line(scr, margin + side_w + gap, top, 1, col_h);
+	s->panel = column(scr, panel_x - SIDE_PAD, top - SIDE_PAD, w - margin - panel_x + 2 * SIDE_PAD,
+			  col_h + 2 * SIDE_PAD);
+	lv_obj_set_scroll_dir(s->panel, LV_DIR_VER);
 
-#ifdef CONFIG_AUDIO
-	s->vol_row = row(body, tr(S_VOLUME));
-	s->vol_slider = slider(s->vol_row, on_volume, &s->vol_value);
-	s->out_row = row(body, tr(S_OUTPUT));
-	button(s->out_row, on_output, s, &s->out_label);
-#endif
-
-	if (i18n_count() > 1) {
-		r = row(body, tr(S_LANGUAGE));
-		button(r, on_lang, NULL, &label);
-		lv_label_set_text(label, tr(S_LANG_NAME));
-	}
-
-#if defined(CONFIG_WIFI) && defined(CONFIG_SCREEN_WIFI)
-	s->wifi_row = row(body, tr(S_WIFI));
-	button(s->wifi_row, on_wifi, NULL, &s->wifi_label);
-#endif
-
-	hint = lv_label_create(body);
-	lv_obj_set_style_text_color(hint, UI_COLOR_DIM, 0);
-	lv_label_set_text_fmt(hint, LV_SYMBOL_LEFT " " LV_SYMBOL_RIGHT " %s", tr(S_CHANGE_BACK));
+	for (i = 0; i < N_CATS; i++)
+		s->cats[i] = cat_new(s, side, i);
+	s->cat = kept_cat < N_CATS ? kept_cat : 0;
+	show_cat(s, s->cat);
+	lv_group_focus_obj(s->cats[s->cat]);
+	cat_focused(s, s->cat);	/* no event if it was focused already */
+	if (kept_row >= 0 && row_shown(&s->rows[kept_row]))
+		lv_group_focus_obj(s->rows[kept_row].obj);
+	kept_row = -1;
+	port_input_set_2d(s->group);
 	*root = scr;
 	return s;
+}
+
+/* ---- what the context says ----------------------------------------------- */
+
+static void update_slider(struct row *r, bool has, int percent, int *shown)
+{
+	lv_obj_set_hidden(r->slider, !has);
+	if (!has) {
+		set_text(r->value, tr(S_NOT_AVAILABLE));
+		*shown = -2;
+	} else if (percent != *shown) {
+		*shown = percent;
+		show_slider(r, percent);	/* no VALUE_CHANGED, so no loop back */
+	}
 }
 
 static void update_audio(struct settings *s, const struct gui_ctx *c)
@@ -157,73 +556,106 @@ static void update_audio(struct settings *s, const struct gui_ctx *c)
 		S_OUT_AUTO, S_OUT_SPEAKER, S_OUT_HEADPHONES,
 	};
 	bool has = c->audio.available && c->audio.volume >= 0;
+	char text[64];
 
-	lv_obj_set_hidden(s->vol_row, !has);
-	lv_obj_set_hidden(s->out_row, !has || !c->audio.can_route);
-	if (has && c->audio.volume != s->shown_volume) {
-		s->shown_volume = c->audio.volume;
-		lv_slider_set_value(s->vol_slider, (c->audio.volume + STEP / 2) / STEP, LV_ANIM_OFF);
-		lv_label_set_text_fmt(s->vol_value, "%d%%", c->audio.volume);
-	}
-	/* "Auto" says where the sound goes now */
+	update_slider(&s->rows[R_VOLUME], has, c->audio.volume, &s->shown_volume);
+	lv_obj_set_hidden(s->rows[R_OUTPUT].obj, !has || !c->audio.can_route);
 	s->output = c->audio.output;
+	/* "Auto" says where the sound goes now */
 	if (c->audio.output == AUDIO_OUT_AUTO)
-		lv_label_set_text_fmt(s->out_label, tr(S_OUT_AUTO_NOW_FMT),
-				      tr(c->audio.headphones ? S_NOW_HEADPHONES : S_NOW_SPEAKER));
+		snprintf(text, sizeof(text), tr(S_OUT_AUTO_NOW_FMT),
+			 tr(c->audio.headphones ? S_NOW_HEADPHONES : S_NOW_SPEAKER));
 	else
-		lv_label_set_text(s->out_label, tr(out_names[c->audio.output]));
+		snprintf(text, sizeof(text), "%s", tr(out_names[c->audio.output]));
+	set_text(s->rows[R_OUTPUT].value, text);
 }
 
 static void update_wifi(struct settings *s, const struct gui_ctx *c)
 {
 	const char *text;
+	char buf[WIFI_SSID_MAX + 8];
+	bool ip = false;
 
-	if (!c->wifi.available)
+	if (!c->wifi.available) {
 		text = tr(S_WIFI_UNAVAILABLE);
-	else if (!c->wifi.enabled || c->wifi.link == WIFI_OFF)
+	} else if (!c->wifi.enabled || c->wifi.link == WIFI_OFF) {
 		text = tr(S_WIFI_OFF);
-	else if (c->wifi.link == WIFI_CONNECTED)
+	} else if (c->wifi.link == WIFI_CONNECTED) {
 		text = c->wifi.ssid;
-	else if (c->wifi.link == WIFI_CONNECTING)
+		ip = c->wifi.ip[0];
+	} else if (c->wifi.link == WIFI_CONNECTING) {
 		text = "...";
-	else
+	} else {
 		text = tr(S_WIFI_DISCONNECTED);
-	lv_label_set_text_fmt(s->wifi_label, "%s  " LV_SYMBOL_RIGHT, text);
+	}
+	snprintf(buf, sizeof(buf), "%s  " LV_SYMBOL_RIGHT, text);
+	set_text(s->rows[R_WIFI].value, buf);
+	lv_obj_set_hidden(s->rows[R_IP].obj, !ip);
+	if (ip)
+		set_text(s->rows[R_IP].value, c->wifi.ip);
+}
+
+static void update_system(struct settings *s, const struct gui_ctx *c)
+{
+	char text[64];
+	bool battery = c->power.available && c->power.present && c->power.capacity >= 0;
+
+	if (s->rows[R_LANG].obj)
+		set_text(s->rows[R_LANG].value, tr(S_LANG_NAME));
+	lv_obj_set_hidden(s->rows[R_DEVICE].obj, !c->system.model[0]);
+	set_text(s->rows[R_DEVICE].value, c->system.model);
+	set_text(s->rows[R_PLATFORM].value, c->system.platform);
+	lv_obj_set_hidden(s->rows[R_BATTERY].obj, !battery);
+	if (battery) {
+		if (c->power.charging)
+			snprintf(text, sizeof(text), "%d%%, %s", c->power.capacity, tr(S_CHARGING));
+		else
+			snprintf(text, sizeof(text), "%d%%", c->power.capacity);
+		set_text(s->rows[R_BATTERY].value, text);
+	}
 }
 
 static void settings_update(void *self, const struct gui_ctx *c, uint32_t changed)
 {
 	struct settings *s = self;
+	lv_obj_t *f;
 
-	if (changed & CTX_DISPLAY) {
-		bool has = c->display.has_backlight && c->display.brightness >= 0;
-
-		lv_obj_set_hidden(s->slider, !has);
-		lv_obj_set_hidden(s->no_bl, has);
-		if (has && c->display.brightness != s->shown_brightness) {
-			s->shown_brightness = c->display.brightness;
-			/* does not emit VALUE_CHANGED, so no loop back to control */
-			lv_slider_set_value(s->slider, (c->display.brightness + STEP / 2) / STEP,
-					    LV_ANIM_OFF);
-			lv_label_set_text_fmt(s->value, "%d%%", c->display.brightness);
-		}
-		if (!has)
-			lv_label_set_text(s->value, "");
-	}
-	if ((changed & CTX_AUDIO) && s->vol_row)
+	if (!c)
+		return;
+	if ((changed & CTX_DISPLAY) && s->rows[R_BRIGHTNESS].obj)
+		update_slider(&s->rows[R_BRIGHTNESS], c->display.has_backlight && c->display.brightness >= 0,
+			      c->display.brightness, &s->shown_brightness);
+	if ((changed & CTX_AUDIO) && s->rows[R_VOLUME].obj)
 		update_audio(s, c);
-	if ((changed & CTX_WIFI) && s->wifi_row)
+	if ((changed & CTX_WIFI) && s->rows[R_WIFI].obj)
 		update_wifi(s, c);
+	if ((changed & (CTX_SYSTEM | CTX_POWER | CTX_SETTINGS)) && s->rows[R_PLATFORM].obj)
+		update_system(s, c);
+	/* a row that went away: back to the categories */
+	f = lv_group_get_focused(s->group);
+	if (f && lv_obj_is_hidden(f))
+		focus_cat(s);
+	else if (f && lv_obj_get_parent(f) == s->panel && (changed & (CTX_DISPLAY | CTX_AUDIO)))
+		for (int i = 0; i < R_COUNT; i++)
+			if (s->rows[i].obj == f)
+				row_hints(&s->rows[i]);	/* a slider may have come or gone */
 }
 
 static void settings_deinit(void *self)
 {
-	free(self);
+	struct settings *s = self;
+
+	if (port_input_2d() == s->group)
+		port_input_set_2d(NULL);
+	/* LVGL deletes the children after this: none of them may take the
+	 * focus (and call us) as the one focused goes */
+	lv_group_remove_all_objs(s->group);
+	free(s);
 }
 
 const struct widget_ops settings_screen = {
 	.name = "settings",
-	.deps = CTX_DISPLAY | CTX_AUDIO | CTX_WIFI,
+	.deps = CTX_DISPLAY | CTX_AUDIO | CTX_WIFI | CTX_SYSTEM | CTX_POWER | CTX_SETTINGS,
 	.init = settings_init,
 	.update = settings_update,
 	.deinit = settings_deinit,
