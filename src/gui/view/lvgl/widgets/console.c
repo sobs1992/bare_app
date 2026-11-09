@@ -19,6 +19,7 @@
  * arrows) and what it does.
  */
 #include <stdarg.h>
+#include <string.h>
 
 #include "../widget.h"
 
@@ -156,6 +157,12 @@ const char *ui_button_name(enum gp_button b)
 	case GP_NONE:     return "\xe2\x80\x94";	/* — */
 	default:          return gp_button_name(b);
 	}
+}
+
+void ui_set_text(lv_obj_t *label, const char *text)
+{
+	if (strcmp(lv_label_get_text(label), text))
+		lv_label_set_text(label, text);
 }
 
 void screen_console_style(lv_obj_t *screen)

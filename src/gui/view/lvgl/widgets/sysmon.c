@@ -138,13 +138,6 @@ static void fmt_rate(char *buf, size_t size, uint32_t kbs)
 		fmt_fixed(buf, size, (kbs + 50) / 100, 1);
 }
 
-/* lv_label_set_text() redraws the label even when the text is the same */
-static void set_text(lv_obj_t *label, const char *text)
-{
-	if (strcmp(lv_label_get_text(label), text))
-		lv_label_set_text(label, text);
-}
-
 static void set_color(lv_obj_t *obj, bool hot)
 {
 	lv_color_t want = hot ? UI_COLOR_WARN : lv_color_white();
@@ -330,7 +323,7 @@ static void show_clusters(struct sysmon_view *m, const struct sysmon_info *in)
 			: snprintf(buf, sizeof(buf), "...");
 		if (c->mhz > 0)
 			snprintf(buf + len, sizeof(buf) - len, "  %d %s", c->mhz, "MHz");
-		set_text(r->value, buf);
+		ui_set_text(r->value, buf);
 		set_color(r->value, max >= HOT_LOAD);
 	}
 }
@@ -342,7 +335,7 @@ static void show_memory(struct sysmon_view *m, const struct sysmon_info *in)
 
 	if (m->layout.gpu) {
 		snprintf(buf, sizeof(buf), "%d / %d %s", in->gpu_mhz, in->gpu_max_mhz, "MHz");
-		set_text(m->gpu.value, buf);
+		ui_set_text(m->gpu.value, buf);
 		set_bar(m->gpu.bar[0], in->gpu_mhz * 100 / in->gpu_max_mhz, false);
 	}
 	len = snprintf(buf, sizeof(buf), "%u / %u %s", in->mem_used_mb, in->mem_total_mb,
@@ -350,7 +343,7 @@ static void show_memory(struct sysmon_view *m, const struct sysmon_info *in)
 	if (in->swap_total_mb)
 		snprintf(buf + len, sizeof(buf) - len, "  %s %u / %u", "swap",
 			 in->swap_used_mb, in->swap_total_mb);
-	set_text(m->ram.value, buf);
+	ui_set_text(m->ram.value, buf);
 	set_bar(m->ram.bar[0], in->mem_total_mb ? (int)(in->mem_used_mb * 100ULL / in->mem_total_mb) : 0,
 		in->mem_total_mb && in->mem_used_mb * 10ULL >= in->mem_total_mb * 9ULL);
 }
@@ -380,7 +373,7 @@ static void show_temps(struct sysmon_view *m, const struct sysmon_info *in)
 				temp_name(&in->temps[i]), num);
 		hot |= in->temps[i].mdeg >= HOT_MDEG;
 	}
-	set_text(m->temps.value, buf);
+	ui_set_text(m->temps.value, buf);
 	set_color(m->temps.value, hot);
 }
 
@@ -399,7 +392,7 @@ static void show_battery(struct sysmon_view *m, const struct sysmon_info *in)
 	else
 		snprintf(buf, sizeof(buf), "%s %s  %+d %s  %s %s", volts, "V", in->bat_ma,
 			 "mA", watts, "W");
-	set_text(m->battery.value, buf);
+	ui_set_text(m->battery.value, buf);
 	set_bar(m->battery.bar[0], in->bat_capacity, in->bat_capacity >= 0 && in->bat_capacity < 15);
 }
 
@@ -423,7 +416,7 @@ static void show_disks(struct sysmon_view *m, const struct sysmon_info *in)
 			snprintf(io, sizeof(io), "R %s  W %s MB/s", rd, wr);
 			snprintf(buf + len, sizeof(buf) - len, "%s", io);
 		}
-		set_text(m->disks[i].value, buf);
+		ui_set_text(m->disks[i].value, buf);
 		set_bar(m->disks[i].bar[0], used, used >= HOT_DISK);
 		if (!m->mounts[i])
 			continue;
@@ -433,7 +426,7 @@ static void show_disks(struct sysmon_view *m, const struct sysmon_info *in)
 			len += snprintf(buf + len, sizeof(buf) - len, "%s %s %s", k ? "," : "",
 					d->mounts[k].path, size);
 		}
-		set_text(m->mounts[i], buf);
+		ui_set_text(m->mounts[i], buf);
 	}
 }
 
@@ -675,14 +668,14 @@ static void show_frames(struct sysmon_view *m)
 	frames_take(m);
 	if (m->graph && m->layout.fps) {
 		frames_text(m, buf, sizeof(buf), false);
-		set_text(m->fps.value, buf);
+		ui_set_text(m->fps.value, buf);
 		lv_obj_invalidate(m->graph);
 	}
 	if (!m->frames_only)
 		return;
 	if (game) {
 		frames_text(m, buf, sizeof(buf), true);
-		set_text(m->mini_text, buf);
+		ui_set_text(m->mini_text, buf);
 		lv_obj_invalidate(m->mini_graph);
 	}
 	if (lv_obj_is_hidden(m->mini) == game) {
@@ -710,7 +703,7 @@ static void show_procs(struct sysmon_view *m, const struct sysmon_info *in)
 			snprintf(buf, sizeof(buf), "%d%%  %s", p->cpu, rss);
 		else
 			snprintf(buf, sizeof(buf), "...  %s", rss);
-		set_text(m->procs[i].value, buf);
+		ui_set_text(m->procs[i].value, buf);
 		set_bar(m->procs[i].bar[0], p->cpu, p->cpu >= HOT_LOAD);
 	}
 }
@@ -722,7 +715,7 @@ static void show_uptime(struct sysmon_view *m, const struct sysmon_info *in)
 
 	snprintf(t, sizeof(t), "%u:%02u:%02u", s / 3600, s / 60 % 60, s % 60);
 	snprintf(buf, sizeof(buf), "up %s", t);
-	set_text(m->head_up, buf);
+	ui_set_text(m->head_up, buf);
 }
 
 /* ---- widget ----------------------------------------------------------- */

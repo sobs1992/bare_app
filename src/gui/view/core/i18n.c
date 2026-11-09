@@ -19,8 +19,6 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_QUIT]            = { "Quit" RU("Выход") },
 	[S_BRIGHTNESS]      = { "Brightness" RU("Яркость") },
 	[S_NOT_AVAILABLE]   = { "not available" RU("недоступна") },
-	[S_TWICE_BACK]      = { "B twice: back" RU("B дважды: назад") },
-	[S_STICK_CAL_START] = { "A twice: calibrate the sticks" RU("A дважды: калибровка стиков") },
 	[S_STICK_CAL_REST]  = { "Let go of the sticks...\nB  cancel"
 				RU("Отпустите стики...\nB  отмена") },
 	[S_STICK_CAL_TURN]  = { "Turn the sticks along their edge, slowly, 2-3 times\n"

@@ -79,12 +79,6 @@ static int kept_row = -1;	/* the link row whose screen was opened: focused again
 
 /* ---- rows --------------------------------------------------------------- */
 
-static void set_text(lv_obj_t *label, const char *text)
-{
-	if (strcmp(lv_label_get_text(label), text))
-		lv_label_set_text(label, text);
-}
-
 static bool row_shown(const struct row *r)
 {
 	return r->obj && !lv_obj_is_hidden(r->obj);
@@ -116,7 +110,7 @@ static void show_slider(struct row *r, int percent)
 
 	lv_slider_set_value(r->slider, (percent + STEP / 2) / STEP, LV_ANIM_OFF);
 	snprintf(text, sizeof(text), "%d%%", percent);
-	set_text(r->value, text);
+	ui_set_text(r->value, text);
 }
 
 /* A or Left, Right (dir 0: A) on a row */
@@ -550,7 +544,7 @@ static void update_slider(struct row *r, bool has, int percent, int *shown)
 {
 	lv_obj_set_hidden(r->slider, !has);
 	if (!has) {
-		set_text(r->value, tr(S_NOT_AVAILABLE));
+		ui_set_text(r->value, tr(S_NOT_AVAILABLE));
 		*shown = -2;
 	} else if (percent != *shown) {
 		*shown = percent;
@@ -575,7 +569,7 @@ static void update_audio(struct settings *s, const struct gui_ctx *c)
 			 tr(c->audio.headphones ? S_NOW_HEADPHONES : S_NOW_SPEAKER));
 	else
 		snprintf(text, sizeof(text), "%s", tr(out_names[c->audio.output]));
-	set_text(s->rows[R_OUTPUT].value, text);
+	ui_set_text(s->rows[R_OUTPUT].value, text);
 }
 
 static void update_wifi(struct settings *s, const struct gui_ctx *c)
@@ -597,10 +591,10 @@ static void update_wifi(struct settings *s, const struct gui_ctx *c)
 		text = tr(S_WIFI_DISCONNECTED);
 	}
 	snprintf(buf, sizeof(buf), "%s  " LV_SYMBOL_RIGHT, text);
-	set_text(s->rows[R_WIFI].value, buf);
+	ui_set_text(s->rows[R_WIFI].value, buf);
 	lv_obj_set_hidden(s->rows[R_IP].obj, !ip);
 	if (ip)
-		set_text(s->rows[R_IP].value, c->wifi.ip);
+		ui_set_text(s->rows[R_IP].value, c->wifi.ip);
 }
 
 static void update_system(struct settings *s, const struct gui_ctx *c)
@@ -609,17 +603,17 @@ static void update_system(struct settings *s, const struct gui_ctx *c)
 	bool battery = c->power.available && c->power.present && c->power.capacity >= 0;
 
 	if (s->rows[R_LANG].obj)
-		set_text(s->rows[R_LANG].value, tr(S_LANG_NAME));
+		ui_set_text(s->rows[R_LANG].value, tr(S_LANG_NAME));
 	lv_obj_set_hidden(s->rows[R_DEVICE].obj, !c->system.model[0]);
-	set_text(s->rows[R_DEVICE].value, c->system.model);
-	set_text(s->rows[R_PLATFORM].value, c->system.platform);
+	ui_set_text(s->rows[R_DEVICE].value, c->system.model);
+	ui_set_text(s->rows[R_PLATFORM].value, c->system.platform);
 	lv_obj_set_hidden(s->rows[R_BATTERY].obj, !battery);
 	if (battery) {
 		if (c->power.charging)
 			snprintf(text, sizeof(text), "%d%%, %s", c->power.capacity, tr(S_CHARGING));
 		else
 			snprintf(text, sizeof(text), "%d%%", c->power.capacity);
-		set_text(s->rows[R_BATTERY].value, text);
+		ui_set_text(s->rows[R_BATTERY].value, text);
 	}
 }
 
@@ -639,7 +633,7 @@ static void update_stream(struct settings *s, const struct gui_ctx *c)
 		snprintf(text, sizeof(text), "rtsp://%s:8554/live%s%s",
 			 c->wifi.ip[0] ? c->wifi.ip : "<IP>", n ? "  " LV_SYMBOL_EYE_OPEN " " : "",
 			 n ? (n == 1 ? "1" : n == 2 ? "2" : n == 3 ? "3" : "4") : "");
-	set_text(s->rows[R_STREAM].value, text);
+	ui_set_text(s->rows[R_STREAM].value, text);
 }
 
 static void on_viewers(lv_timer_t *t)
@@ -654,7 +648,7 @@ static void on_viewers(lv_timer_t *t)
 static void update_games(struct settings *s, const struct gui_ctx *c)
 {
 	s->game_hint = c->settings.game_hint;
-	set_text(s->rows[R_GAME_HINT].value, tr(s->game_hint ? S_ON : S_OFF));
+	ui_set_text(s->rows[R_GAME_HINT].value, tr(s->game_hint ? S_ON : S_OFF));
 }
 
 static void settings_update(void *self, const struct gui_ctx *c, uint32_t changed)

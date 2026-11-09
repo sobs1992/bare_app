@@ -61,6 +61,7 @@ set(CORE_SOURCES
 	src/gui/notify.c
 	src/gui/control/control.c
 	src/gui/control/ctl_basic.c
+	src/gui/control/ctl_settings.c
 	src/gui/control/ctl_display.c
 	src/gui/control/ctl_power.c
 	src/gui/control/ctl_audio.c
@@ -68,6 +69,8 @@ set(CORE_SOURCES
 	src/gui/control/ctl_usb_disk.c
 	src/gui/view/core/i18n.c
 	src/gui/view/core/view.c
+	src/gui/view/core/view_input.c
+	src/gui/view/core/view_video.c
 )
 macro(add_if cond)
 	if(${cond})

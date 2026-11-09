@@ -45,6 +45,10 @@ void ui_body_area(lv_area_t *a);	/* between them, half a cell off each */
  * nothing types it */
 #define UI_LV_KEY_ALT 0x110000u
 
+/* lv_label_set_text() redraws the label even when the text is the same:
+ * this sets it only when it differs */
+void ui_set_text(lv_obj_t *label, const char *text);
+
 /* port_display.c: LVGL display drawing into the HAL UI layer */
 lv_display_t *port_display_init(struct hal_display *d);
 

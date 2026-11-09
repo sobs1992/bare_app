@@ -54,6 +54,17 @@
 через `signalfd` в потоке control. Если программа упадёт по SIGSEGV и т. п.,
 драйвер fbdev вернёт консоль в `KD_TEXT`.
 
+### Части ядра view
+
+Ядро view (`gui/view/core/`) — один поток, но три роли в трёх файлах с общим
+состоянием `struct view_state` (`view_priv.h`):
+
+| Файл | Что делает |
+|---|---|
+| `view.c` | поток: открывает дисплей и ввод, главный цикл, снимки контекста и подписки, уведомления, снимок экрана |
+| `view_input.c` | маршрут геймпада: кнопка питания (сон, выключение), комбинация выхода, удержание F5, громкость, затем захват экрана или UI-клавиши |
+| `view_video.c` | видеослой: источники (тестовая таблица, игры), времена кадров, трансляция экрана |
+
 ## Поток данных
 
 ```
@@ -93,6 +104,7 @@ control делится по областям данных, а не по видж
 | `ctl_audio` | `EV_MIXER_CHANGED`, `ACT_SET_VOLUME`, `ACT_VOLUME_STEP`, `ACT_SET_AUDIO_OUT` | `CTX_AUDIO`, `NOTIFY_VOLUME`; в режиме «авто» переключает выход по штекеру |
 | `ctl_wifi` | `EV_WIFI_*`, `ACT_WIFI_*` | `CTX_WIFI` (связь, адрес, сети рядом), уведомления о подключении и неверном ключе |
 | `ctl_usb_disk` | `ACT_OPEN_SCREEN`, `ACT_BACK`, `ACT_USB_DISK` | `CTX_USB_DISK`; открывает раздел с играми компьютеру командой платформы |
+| `ctl_settings` | `ACT_SET_LANG`, `ACT_GAME_PLAYED`, `ACT_SET_GAME_HINT`, `ACT_SET_STREAM`, `ACT_SET_CONTROL`, `ACT_RESET_CONTROLS` | `CTX_SETTINGS`: язык, порядок игр, подсказка при запуске, трансляция, своё управление игр; всё хранится в файле настроек |
 | `ctl_sysmon` | `ACT_SYSMON` | `CTX_SYSMON`: пока монитор открыт, раз в секунду замер `services/sysmon.c` |
 
 Каркас модуля: `struct control_ops { init, on_action, deinit }` (gui/control/control.h).
@@ -125,7 +137,8 @@ struct widget_ops {
 - **hal/hal.h** — интерфейсы: дисплей со слоями (`LAYER_VIDEO`, `LAYER_UI`,
   `LAYER_OSD`), ввод, питание, подсветка, микшер, Wi-Fi. Буфер слоя хранится в логической
   ориентации, формат (XRGB или ARGB) выбирает драйвер, поворот делает драйвер.
-  Необязательная операция `snapshot` пишет сложенные слои в PPM.
+  Необязательная операция `layers` отдаёт буферы слоёв в логической ориентации:
+  из них ядро view складывает снимок экрана и кадры трансляции (`media/shot.c`).
 - **drivers/** — реализации:
   - `display_drm` — DRM/KMS на голых ioctl ядра (без libdrm): UI на overlay-плоскости
     в ARGB, видео на primary, по два dumb-буфера на слой, nonblocking atomic commit
@@ -470,8 +483,8 @@ H.264 по RFC 6184 — одиночные NAL и FU-A, L16, RTCP SR + SDES; б�
 
 ## Снимки экрана
 
-`kill -USR1 <pid>` → control → уведомление `NOTIFY_SNAPSHOT` → ядро view вызывает
-`snapshot` дисплея. Файл берётся из `BARE_APP_SHOT`, по умолчанию
+`kill -USR1 <pid>` → control → уведомление `NOTIFY_SNAPSHOT` → ядро view берёт слои
+дисплея (`layers`) и складывает их в PPM (`shot_write_ppm()`). Файл берётся из `BARE_APP_SHOT`, по умолчанию
 `/tmp/bare_app.ppm`. С `BARE_APP_SHOT` снимок пишется и при выходе, до разборки UI.
 Это снимок буферов приложения, а не того, что реально на панели; что именно
 выводится, видно в `/sys/kernel/debug/dri/0/state`. `tools/oga.sh shot` делает
