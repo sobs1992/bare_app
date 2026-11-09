@@ -187,6 +187,8 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_RESET]           = { "Reset" RU("Сбросить") },
 	[S_DEFAULT]         = { "Default" RU("Как было") },
 	[S_CONTROLS_RESET_ALL] = { "All buttons as they were" RU("Все кнопки как были") },
+	[S_STREAM]          = { "Stream (RTSP)" RU("Трансляция (RTSP)") },
+	[S_STREAM_FAILED]   = { "did not start" RU("не запустилась") },
 };
 
 static int lang = LANG_EN;

@@ -67,8 +67,9 @@ struct hal_display_ops {
 	void (*layer_damage)(struct hal_layer *l, const struct hal_rect *r);
 	/* Show what was drawn: damaged areas reach the panel (rotated) */
 	void (*layer_submit)(struct hal_layer *l);
-	/* Optional: write the composed layers (logical orientation) as PPM */
-	int (*snapshot)(struct hal_display *d, const char *path);
+	/* Optional: the layers as drawn, in the logical orientation (video NULL
+	 * if there is none), for snapshots and the stream. View thread only. */
+	void (*layers)(struct hal_display *d, const struct hal_fb **ui, const struct hal_fb **video);
 };
 
 /* Drivers embed these as the first member of their own structs */
@@ -177,6 +178,8 @@ struct hal_pcm_ops {
 	/* 16-bit stereo; *rate is a wish, the driver puts what it took there */
 	void *(*open)(const void *params, int *rate);
 	int (*write)(void *h, const int16_t *frames, int count);	/* blocks */
+	/* A capture device (optional): count frames, blocks; -1 on an error */
+	int (*read)(void *h, int16_t *frames, int count);
 	void (*drain)(void *h);		/* returns when all is played */
 	void (*close)(void *h);
 };

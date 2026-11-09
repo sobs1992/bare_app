@@ -115,6 +115,33 @@ static int pcm_write(void *h, const int16_t *frames, int count)
 	return 0;
 }
 
+/* A capture device ("...c"): starts with the first read */
+static int pcm_read(void *h, int16_t *frames, int count)
+{
+	int fd = *(int *)h;
+
+	while (count > 0) {
+		struct snd_xferi x = { 0, frames, (snd_pcm_uframes_t)count };
+
+		if (ioctl(fd, SNDRV_PCM_IOCTL_READI_FRAMES, &x) < 0) {
+			if (errno == EAGAIN) {
+				struct pollfd pfd = { fd, POLLIN, 0 };
+
+				if (poll(&pfd, 1, 1000) == 0)
+					return -1;	/* nothing comes */
+				continue;
+			}
+			if (errno != EPIPE && errno != ESTRPIPE && errno != EINTR)
+				return -1;
+			ioctl(fd, SNDRV_PCM_IOCTL_PREPARE);	/* overrun */
+			continue;
+		}
+		frames += 2 * x.result;
+		count -= (int)x.result;
+	}
+	return 0;
+}
+
 static void pcm_drain(void *h)
 {
 	int fd = *(int *)h;
@@ -133,6 +160,7 @@ const struct hal_pcm_ops pcm_alsa = {
 	.name = "pcm-alsa",
 	.open = pcm_open,
 	.write = pcm_write,
+	.read = pcm_read,
 	.drain = pcm_drain,
 	.close = pcm_close,
 };

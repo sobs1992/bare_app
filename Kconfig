@@ -151,6 +151,17 @@ config SYSMON
 	  game...), on release. Reads procfs and sysfs once a second while
 	  shown.
 
+config STREAM
+	bool "Stream the screen and the sound (RTSP)"
+	depends on VIEW_LVGL
+	help
+	  An RTSP server at rtsp://<address>:8554/live, switched on in
+	  Settings > Internet: the screen as H.264 (OpenH264, BSD licence;
+	  needs its library and pkg-config file) and the sound of games as
+	  L16 over RTP/RTCP, UDP or interleaved in the RTSP connection. The
+	  games' sound comes through the ALSA loopback (snd-aloop) and goes
+	  on to the device. Open it in VLC, ffplay or mpv.
+
 config SETTINGS_FILE
 	bool "Keep settings between runs"
 	default y

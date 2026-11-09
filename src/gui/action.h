@@ -30,6 +30,7 @@ enum gui_action_type {
 	ACT_SET_GAME_HINT,	/* arg = 1 show the controls when a game starts, 0 not */
 	ACT_SET_CONTROL,	/* str = game_key(), arg = ACT_CONTROL_ARG(button, for the game) */
 	ACT_RESET_CONTROLS,	/* str = game_key(): its controls back to the default */
+	ACT_SET_STREAM,		/* arg = 1 stream the screen and the sound, 0 not */
 };
 
 /* ACT_SET_CONTROL: button of the device, enum gp_button it is for the game (GP_NONE: none) */

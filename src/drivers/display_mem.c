@@ -4,7 +4,6 @@
 #include <stdlib.h>
 
 #include "core/log.h"
-#include "shot.h"
 
 #define TAG "memdisp"
 
@@ -81,15 +80,13 @@ static void mem_close(struct hal_display *d)
 	mem_free(m);
 }
 
-#ifdef CONFIG_SNAPSHOT
-static int mem_snapshot(struct hal_display *d, const char *path)
+static void mem_layers(struct hal_display *d, const struct hal_fb **ui, const struct hal_fb **video)
 {
 	struct memdisp *m = (struct memdisp *)d;
 
-	return shot_write_ppm(path, &m->layers[LAYER_UI].fb,
-			      m->layers[LAYER_VIDEO].present ? &m->layers[LAYER_VIDEO].fb : NULL);
+	*ui = &m->layers[LAYER_UI].fb;
+	*video = m->layers[LAYER_VIDEO].present ? &m->layers[LAYER_VIDEO].fb : NULL;
 }
-#endif
 
 static void mem_info(struct hal_display *d, struct hal_display_info *info)
 {
@@ -132,7 +129,5 @@ const struct hal_display_ops display_mem = {
 	.layer_acquire = mem_acquire,
 	.layer_damage = mem_damage,
 	.layer_submit = mem_submit,
-#ifdef CONFIG_SNAPSHOT
-	.snapshot = mem_snapshot,
-#endif
+	.layers = mem_layers,
 };

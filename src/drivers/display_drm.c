@@ -16,7 +16,6 @@
 
 #include "blit.h"
 #include "console.h"
-#include "shot.h"
 #include "core/log.h"
 #include "core/mainloop.h"
 #include "core/util.h"
@@ -581,14 +580,15 @@ static void drm_close(struct hal_display *disp)
 	console_restore();
 }
 
-#ifdef CONFIG_SNAPSHOT
-static int drm_snapshot(struct hal_display *disp, const char *path)
+static struct hal_layer *drm_layer(struct hal_display *disp, enum layer_role role);
+
+static void drm_layers(struct hal_display *disp, const struct hal_fb **ui, const struct hal_fb **video)
 {
 	struct drmdisp *d = (struct drmdisp *)disp;
 
-	return shot_write_ppm(path, &d->layers[LAYER_UI].shadow, &d->layers[LAYER_VIDEO].shadow);
+	*ui = &d->layers[LAYER_UI].shadow;
+	*video = drm_layer(disp, LAYER_VIDEO) ? &d->layers[LAYER_VIDEO].shadow : NULL;
 }
-#endif
 
 static void drm_info(struct hal_display *disp, struct hal_display_info *info)
 {
@@ -642,7 +642,5 @@ const struct hal_display_ops display_drm = {
 	.layer_acquire = drm_acquire,
 	.layer_damage = drm_damage,
 	.layer_submit = drm_submit,
-#ifdef CONFIG_SNAPSHOT
-	.snapshot = drm_snapshot,
-#endif
+	.layers = drm_layers,
 };

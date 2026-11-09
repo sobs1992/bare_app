@@ -8,6 +8,7 @@
 
 #include "core/frametimes.h"
 #include "core/remap.h"
+#include "stream/rtp.h"
 #include "core/input.h"
 #include "core/joystick.h"
 #include "core/mainloop.h"
@@ -183,6 +184,67 @@ static void test_remap(void)
 	CHECK(gp_remap_parse(&m, "a=zz,qq=b,l1=r1,") == -1);
 	CHECK(gp_remap_apply(&m, GP_A) == GP_A && gp_remap_apply(&m, GP_L1) == GP_R1);
 	CHECK(gp_remap_parse(&m, NULL) == 0 && gp_remap_is_default(&m));
+}
+
+struct rtp_capture {
+	uint8_t pkt[16][RTP_HEADER + RTP_MAX_PAYLOAD];
+	size_t len[16];
+	int n;
+};
+
+static void rtp_capture(void *ud, const uint8_t *p, size_t len)
+{
+	struct rtp_capture *c = ud;
+
+	if (c->n < 16) {
+		memcpy(c->pkt[c->n], p, len);
+		c->len[c->n++] = len;
+	}
+}
+
+static void test_rtp(void)
+{
+	static uint8_t au[4000];
+	static struct rtp_capture c;
+	struct rtp_track t = { .ssrc = 0x11223344, .seq = 65535, .pt = 96 };
+	int16_t pcm[4] = { 1, -2, 256, -32768 };
+	uint8_t sr[64];
+	size_t n, i;
+
+	/* SPS (5 bytes), PPS (4), an IDR slice of 3000: three FU-A packets */
+	n = 0;
+	memcpy(au + n, "\0\0\0\1\x67\x42\xe0\x1f\x01", 9);
+	n += 9;
+	memcpy(au + n, "\0\0\0\1\x68\xce\x38\x80", 8);
+	n += 8;
+	memcpy(au + n, "\0\0\1\x65", 4);
+	n += 4;
+	for (i = 0; i < 2999; i++)
+		au[n++] = (uint8_t)(i % 251 + 1);
+	rtp_h264(&t, au, n, 90000, rtp_capture, &c);
+	CHECK(c.n == 5);
+	CHECK(c.len[0] == RTP_HEADER + 5 && c.pkt[0][RTP_HEADER] == 0x67 && !(c.pkt[0][1] & 0x80));
+	CHECK(c.len[1] == RTP_HEADER + 4 && c.pkt[1][RTP_HEADER] == 0x68);
+	CHECK(c.pkt[0][2] == 0xff && c.pkt[0][3] == 0xff && c.pkt[1][2] == 0 && c.pkt[1][3] == 0);
+	/* FU-A: indicator 0x7c (NRI of 0x65, type 28), S then E, marker on the last */
+	CHECK(c.pkt[2][RTP_HEADER] == 0x7c && c.pkt[2][RTP_HEADER + 1] == 0x85);
+	CHECK(c.pkt[3][RTP_HEADER + 1] == 0x05 && !(c.pkt[3][1] & 0x80));
+	CHECK(c.pkt[4][RTP_HEADER + 1] == 0x45 && (c.pkt[4][1] & 0x80));
+	CHECK(c.len[2] - RTP_HEADER - 2 + c.len[3] - RTP_HEADER - 2 + c.len[4] - RTP_HEADER - 2 == 2999);
+	CHECK(c.pkt[2][RTP_HEADER + 2] == 1 && c.pkt[4][c.len[4] - 1] == (uint8_t)(2998 % 251 + 1));
+	CHECK(c.pkt[0][4] == 0 && c.pkt[0][5] == 1 && c.pkt[0][6] == 0x5f && c.pkt[0][7] == 0x90);
+	CHECK(t.packets == 5);
+	/* L16: big-endian */
+	c.n = 0;
+	t.pt = 97;
+	rtp_l16(&t, pcm, 2, 480, rtp_capture, &c);
+	CHECK(c.n == 1 && c.len[0] == RTP_HEADER + 8);
+	CHECK(!memcmp(c.pkt[0] + RTP_HEADER, "\0\1\xff\xfe\x01\0\x80\0", 8));
+	/* SR + SDES: whole words, the length fields right */
+	n = rtcp_sr(&t, 1000000ULL * 1700000000, 1234, "bare_app", sr, sizeof(sr));
+	CHECK(n % 4 == 0 && n == 28 + 4 * (size_t)(sr[31] + 1));
+	CHECK(sr[1] == 200 && sr[3] == 6 && sr[29] == 202 && sr[37] == 8);
+	CHECK(sr[8] == 0xe8 && sr[9] == 0xfe && sr[10] == 0x6f && sr[11] == 0x80);	/* NTP seconds */
 }
 
 static void test_msgq(void)
@@ -783,6 +845,7 @@ int main(void)
 	test_damage();
 	test_frametimes();
 	test_remap();
+	test_rtp();
 	test_hid();
 #ifdef CONFIG_SYSMON
 	test_sysmon();

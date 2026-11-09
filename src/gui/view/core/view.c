@@ -16,7 +16,11 @@
 #include "hal/platform.h"
 #include "i18n.h"
 #include "media/mailbox.h"
+#include "media/shot.h"
 #include "media/testpattern.h"
+#ifdef CONFIG_STREAM
+#include "stream/stream.h"
+#endif
 
 #define TAG "view"
 #define MAX_SUBS 128
@@ -77,6 +81,10 @@ static struct {
 	} frame_stats;
 	view_video_end_cb video_end;
 	void *video_end_ud;
+#ifdef CONFIG_STREAM
+	struct ml_timer *stream_tick;	/* composes a frame for the stream */
+	char stream_play[32], stream_cap[32];	/* the loopback, "" none */
+#endif
 } v;
 
 /* ---- subscriptions ---------------------------------------------------- */
@@ -113,6 +121,8 @@ const struct gui_ctx *view_ctx(void)
 {
 	return &v.snap;
 }
+
+static const char *game_pcm(void);
 
 static void dispatch(uint32_t changed)
 {
@@ -791,7 +801,7 @@ int view_video_set(enum video_source src)
 #endif
 #ifdef HAVE_GAMES
 	case VIDEO_GAME: {
-		struct game_env env = { .pf = v.pf, .pcm = v.pf->game_pcm, .lang = i18n_lang() };
+		struct game_env env = { .pf = v.pf, .pcm = game_pcm(), .lang = i18n_lang() };
 
 		if (!v.game_sel.def) {
 			errno = EINVAL;
@@ -819,6 +829,74 @@ int view_video_set(enum video_source src)
 	return 0;
 }
 
+/* ---- the stream (stream/stream.h) ------------------------------------- */
+
+#ifdef CONFIG_STREAM
+#define STREAM_FPS 30
+#define STREAM_KBPS 3000
+#define STREAM_PORT 8554
+
+/* The screen as it is into the stream's frame, while somebody watches */
+static void on_stream_tick(void *ud)
+{
+	const struct hal_fb *ui, *video;
+	struct hal_fb *fb;
+
+	(void)ud;
+	if (!v.display->ops->layers || !(fb = stream_frame_begin()))
+		return;
+	v.display->ops->layers(v.display, &ui, &video);
+	shot_compose(fb, ui, video);
+	stream_frame_end();
+}
+
+/* The setting says it runs or not: start or stop it */
+static void stream_follow(void)
+{
+	struct hal_display_info di;
+	struct stream_config c = {
+		.fps = STREAM_FPS, .kbps = STREAM_KBPS, .port = STREAM_PORT,
+		.playback = v.pf->game_pcm,
+	};
+
+	if (v.snap.settings.stream == stream_running())
+		return;
+	if (!v.snap.settings.stream) {
+		mainloop_timer_cancel(v.ml, v.stream_tick);
+		v.stream_tick = NULL;
+		stream_stop();
+		v.stream_play[0] = v.stream_cap[0] = '\0';
+		return;
+	}
+	hal_display_info(v.display, &di);
+	c.width = di.width;
+	c.height = di.height;
+	/* games started from now on play into the loopback: the stream takes
+	 * their sound from there and passes it on to the device */
+	if (v.pf->game_pcm &&
+	    stream_loopback(v.stream_play, v.stream_cap, sizeof(v.stream_play)) == 0)
+		c.capture = v.stream_cap;
+	else
+		v.stream_play[0] = v.stream_cap[0] = '\0';
+	if (stream_start(&c) < 0) {
+		v.stream_play[0] = v.stream_cap[0] = '\0';
+		return;
+	}
+	v.stream_tick = mainloop_add_timer(v.ml, 1000 / STREAM_FPS, 1000 / STREAM_FPS, on_stream_tick,
+					   NULL);
+}
+#endif
+
+/* The ALSA device games play to: the stream's loopback while it runs */
+static const char *game_pcm(void)
+{
+#ifdef CONFIG_STREAM
+	if (stream_running() && v.stream_play[0])
+		return v.stream_play;
+#endif
+	return v.pf->game_pcm;
+}
+
 /* ---- loop ------------------------------------------------------------- */
 
 static void on_ctx(int fd, short revents, void *ud)
@@ -844,9 +922,12 @@ static void snapshot(bool on_request)
 			return;
 		path = "/tmp/bare_app.ppm";
 	}
-	if (v.display->ops->snapshot)
-		v.display->ops->snapshot(v.display, path);
-	else
+	if (v.display->ops->layers) {
+		const struct hal_fb *ui, *video;
+
+		v.display->ops->layers(v.display, &ui, &video);
+		shot_write_ppm(path, ui, video);
+	} else
 		LOGW(TAG, "display \"%s\" cannot take snapshots", v.display->ops->name);
 #else
 	(void)on_request;
@@ -880,6 +961,10 @@ static int prepare(void *ud)
 
 	(void)ud;
 	changed = ctx_snapshot(&v.snap);
+#ifdef CONFIG_STREAM
+	if (changed & CTX_SETTINGS)
+		stream_follow();
+#endif
 	if (changed)
 		dispatch(changed);
 	return v.be->process ? v.be->process() : -1;
@@ -978,6 +1063,11 @@ static void *view_thread(void *arg)
 		snapshot(false);
 		v.be->deinit();
 		view_video_set(VIDEO_NONE);
+#ifdef CONFIG_STREAM
+		if (v.stream_tick)
+			mainloop_timer_cancel(v.ml, v.stream_tick);
+		stream_stop();
+#endif
 	}
 	close_devices();
 	input_deinit();

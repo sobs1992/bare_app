@@ -31,6 +31,14 @@ if(CONFIG_DISPLAY_SDL)
 	endif()
 endif()
 
+if(CONFIG_STREAM)
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(OPENH264 IMPORTED_TARGET openh264)
+	if(NOT OPENH264_FOUND)
+		message(FATAL_ERROR "bare_app: STREAM needs OpenH264 (openh264.pc) or switch it off")
+	endif()
+endif()
+
 # ---- toolkit independent part: no LVGL include path here --------------------
 set(CORE_SOURCES
 	src/core/bus.c
@@ -87,7 +95,6 @@ if(CONFIG_PLATFORM_PC AND (CONFIG_AUDIO OR CONFIG_WIFI))
 	list(APPEND CORE_SOURCES src/drivers/sim.c)
 endif()
 add_if(CONFIG_VIDEO_TESTPATTERN src/media/mailbox.c src/media/testpattern.c)
-add_if(CONFIG_SNAPSHOT          src/drivers/shot.c)
 add_if(CONFIG_VIEW_HEADLESS     src/gui/view/headless/headless.c)
 add_if(CONFIG_GAME_DOOM         src/games/doom.c)
 add_if(CONFIG_GAME_HOMM3        src/games/homm3.c)
@@ -95,9 +102,13 @@ add_if(CONFIG_GAME_HALFLIFE     src/games/halflife.c)
 add_if(CONFIG_GAME_WINE         src/games/wine.c src/games/ini.c)
 add_if(CONFIG_GAME_NATIVE       src/games/native.c src/games/ini.c)
 add_if(CONFIG_SYSMON            src/services/sysmon.c src/gui/control/ctl_sysmon.c)
+add_if(CONFIG_STREAM            src/stream/stream.c src/stream/rtp.c src/stream/h264.c
+				src/media/mailbox.c src/drivers/pcm_alsa.c)
 # games.c also without games: the home screen's code asks it of the games
 # it has none of
 list(APPEND CORE_SOURCES src/games/games.c)
+# snapshots and the stream compose the layers
+list(APPEND CORE_SOURCES src/media/shot.c)
 add_if(CONFIG_GAMES             src/games/game_proc.c)
 if(CONFIG_DISPLAY_DRM OR CONFIG_DISPLAY_FBDEV)
 	list(APPEND CORE_SOURCES src/drivers/blit.c src/drivers/console.c)
@@ -108,7 +119,8 @@ if(CONFIG_INPUT_HOTPLUG OR CONFIG_POWER_UEVENT OR CONFIG_BUILD_TESTS)
 	list(APPEND CORE_SOURCES src/core/uevent.c)
 endif()
 if(CONFIG_BUILD_TESTS)
-	list(APPEND CORE_SOURCES src/media/mailbox.c)	# unit tested even when unused
+	# unit tested even when unused
+	list(APPEND CORE_SOURCES src/media/mailbox.c src/stream/rtp.c)
 endif()
 list(REMOVE_DUPLICATES CORE_SOURCES)
 
@@ -120,6 +132,9 @@ target_compile_options(bare_app_core PRIVATE ${WARN})
 target_link_libraries(bare_app_core PUBLIC Threads::Threads m)
 if(CONFIG_DISPLAY_SDL)
 	target_link_libraries(bare_app_core PUBLIC PkgConfig::SDL2)
+endif()
+if(CONFIG_STREAM)
+	target_link_libraries(bare_app_core PUBLIC PkgConfig::OPENH264)
 endif()
 
 # ---- LVGL view backend: the only target that sees LVGL ----------------------

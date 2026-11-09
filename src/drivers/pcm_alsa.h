@@ -1,4 +1,4 @@
-/* ALSA playback through the ioctls of the PCM device (no alsa-lib). */
+/* ALSA playback and capture through the ioctls of the PCM device (no alsa-lib). */
 #pragma once
 
 #include "hal/hal.h"

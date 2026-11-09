@@ -109,6 +109,7 @@ struct gui_ctx {
 		/* game_key()s of the games played, the latest first, "," between */
 		char recent[RECENT_MAX * 9];
 		bool game_hint;		/* the controls hint when a game starts */
+		bool stream;		/* the screen and the sound over RTSP (the view runs it) */
 		int ncontrols;
 		struct game_controls controls[CONTROLS_MAX];
 	} settings;

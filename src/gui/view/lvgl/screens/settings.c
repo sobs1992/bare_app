@@ -9,7 +9,8 @@
  *
  *   Screen    brightness (CTX_DISPLAY)
  *   Sound     volume, output (CTX_AUDIO)
- *   Internet  the Wi-Fi network: opens the Wi-Fi screen; the address (CTX_WIFI)
+ *   Internet  the Wi-Fi network: opens the Wi-Fi screen; the address (CTX_WIFI);
+ *             the stream on or off, its address and viewers (CONFIG_STREAM)
  *   Games     the controls hint when a game starts (CTX_SETTINGS)
  *   System    language (CTX_SETTINGS), device, platform (CTX_SYSTEM),
  *             battery (CTX_POWER)
@@ -24,13 +25,16 @@
 
 #include "../widget.h"
 #include "gui/action.h"
+#ifdef CONFIG_STREAM
+#include "stream/stream.h"
+#endif
 
 #define STEP 5		/* percent per slider step */
 #define SIDE_CELLS 7	/* the categories' column */
 #define ROW_CELLS 2	/* a category, a setting at least */
 
 enum row_id {
-	R_BRIGHTNESS, R_VOLUME, R_OUTPUT, R_WIFI, R_IP, R_GAME_HINT, R_LANG, R_DEVICE, R_PLATFORM,
+	R_BRIGHTNESS, R_VOLUME, R_OUTPUT, R_WIFI, R_IP, R_STREAM, R_GAME_HINT, R_LANG, R_DEVICE, R_PLATFORM,
 	R_BATTERY, R_COUNT
 };
 
@@ -66,6 +70,8 @@ struct settings {
 	int shown_brightness, shown_volume;	/* -2: nothing yet */
 	enum audio_output output;
 	bool game_hint;
+	bool stream;
+	lv_timer_t *viewers;	/* the stream's row: its viewers change */
 };
 
 static int kept_cat;	/* the category last shown */
@@ -147,6 +153,9 @@ static void row_change(struct row *r, int dir)
 		break;
 	case R_GAME_HINT:
 		gui_action_post(ACT_SET_GAME_HINT, !s->game_hint);
+		break;
+	case R_STREAM:
+		gui_action_post(ACT_SET_STREAM, !s->stream);
 		break;
 	case R_WIFI:
 		kept_row = R_WIFI;
@@ -308,6 +317,9 @@ static void build_internet(struct settings *s)
 
 	lv_obj_set_style_text_color(r->value, lv_color_white(), 0);
 	row_new(s, R_IP, ROW_INFO, S_IP_ADDRESS);
+#ifdef CONFIG_STREAM
+	row_new(s, R_STREAM, ROW_CHOICE, S_STREAM);
+#endif
 }
 #endif
 
@@ -346,6 +358,9 @@ _Static_assert(N_CATS <= (int)(sizeof(((struct settings *)0)->cats) / sizeof(lv_
 	       "struct settings: more cats[]");
 
 static void settings_update(void *self, const struct gui_ctx *c, uint32_t changed);
+#ifdef CONFIG_STREAM
+static void on_viewers(lv_timer_t *t);
+#endif
 
 static void show_cat(struct settings *s, int i)
 {
@@ -522,6 +537,9 @@ static void *settings_init(lv_obj_t *parent, lv_obj_t **root)
 		lv_group_focus_obj(s->rows[kept_row].obj);
 	kept_row = -1;
 	port_input_set_2d(s->group);
+#ifdef CONFIG_STREAM
+	s->viewers = lv_timer_create(on_viewers, 1000, s);
+#endif
 	*root = scr;
 	return s;
 }
@@ -605,6 +623,34 @@ static void update_system(struct settings *s, const struct gui_ctx *c)
 	}
 }
 
+#ifdef CONFIG_STREAM
+/* "Off", or where to open it and who watches */
+static void update_stream(struct settings *s, const struct gui_ctx *c)
+{
+	char text[96];
+	int n = stream_viewers();
+
+	s->stream = c->settings.stream;
+	if (!s->stream)
+		snprintf(text, sizeof(text), "%s", tr(S_OFF));
+	else if (!stream_running())
+		snprintf(text, sizeof(text), "%s", tr(S_STREAM_FAILED));
+	else
+		snprintf(text, sizeof(text), "rtsp://%s:8554/live%s%s",
+			 c->wifi.ip[0] ? c->wifi.ip : "<IP>", n ? "  " LV_SYMBOL_EYE_OPEN " " : "",
+			 n ? (n == 1 ? "1" : n == 2 ? "2" : n == 3 ? "3" : "4") : "");
+	set_text(s->rows[R_STREAM].value, text);
+}
+
+static void on_viewers(lv_timer_t *t)
+{
+	struct settings *s = lv_timer_get_user_data(t);
+
+	if (s->rows[R_STREAM].obj)
+		update_stream(s, view_ctx());
+}
+#endif
+
 static void update_games(struct settings *s, const struct gui_ctx *c)
 {
 	s->game_hint = c->settings.game_hint;
@@ -629,6 +675,10 @@ static void settings_update(void *self, const struct gui_ctx *c, uint32_t change
 		update_system(s, c);
 	if ((changed & CTX_SETTINGS) && s->rows[R_GAME_HINT].obj)
 		update_games(s, c);
+#ifdef CONFIG_STREAM
+	if ((changed & (CTX_SETTINGS | CTX_WIFI)) && s->rows[R_STREAM].obj)
+		update_stream(s, c);
+#endif
 	/* a row that went away: back to the categories */
 	f = lv_group_get_focused(s->group);
 	if (f && lv_obj_is_hidden(f))
@@ -643,6 +693,8 @@ static void settings_deinit(void *self)
 {
 	struct settings *s = self;
 
+	if (s->viewers)
+		lv_timer_delete(s->viewers);
 	if (port_input_2d() == s->group)
 		port_input_set_2d(NULL);
 	/* LVGL deletes the children after this: none of them may take the

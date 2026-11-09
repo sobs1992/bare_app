@@ -151,6 +151,14 @@ static void set_game_hint(bool on)
 	ctx_unlock(CTX_SETTINGS);
 }
 
+static void set_stream(bool on)
+{
+	struct gui_ctx *c = ctx_lock();
+
+	c->settings.stream = on;
+	ctx_unlock(CTX_SETTINGS);
+}
+
 /* ---- a game's own controls: "controls.<game_key()>" in the config ------ */
 
 #define CONTROLS_KEY "controls."
@@ -236,6 +244,7 @@ static int settings_init(const struct control_env *env)
 	set_lang(lang ? lang : "en");
 	set_recent(recent ? recent : "");
 	set_game_hint(config_get_int("game_hint", 0));
+	set_stream(config_get_int("stream", 0));
 	config_each(CONTROLS_KEY, load_controls, ctx_lock());
 	ctx_unlock(CTX_SETTINGS);
 	return 0;
@@ -248,6 +257,11 @@ static void settings_action(const struct gui_action *a)
 	if (a->type == ACT_SET_GAME_HINT) {
 		set_game_hint(a->arg);
 		config_set_int("game_hint", !!a->arg);
+		return;
+	}
+	if (a->type == ACT_SET_STREAM) {
+		set_stream(a->arg);
+		config_set_int("stream", !!a->arg);
 		return;
 	}
 	if (a->type == ACT_SET_CONTROL) {
