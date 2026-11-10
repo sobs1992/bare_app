@@ -55,9 +55,12 @@ struct input_test {
 	struct joy_cal_rec rec[INPUT_STICKS];
 };
 
+/* Positions count from inside the box's border (its content area, no
+ * padding): at 1 the dot touches the border from inside */
 static void place(const struct input_test *t, lv_obj_t *obj, int size, float x, float y)
 {
-	int half = (t->stick - size) / 2;
+	int32_t border = lv_obj_get_style_border_width(lv_obj_get_parent(obj), LV_PART_MAIN);
+	int half = (t->stick - 2 * border - size) / 2;
 
 	x = x < -1 ? -1 : x > 1 ? 1 : x;
 	y = y < -1 ? -1 : y > 1 ? 1 : y;
@@ -273,6 +276,19 @@ static void on_calibrate_button(struct input_test *t, const struct gp_event *ev)
 		save(t, true);
 }
 
+/* The buttons as pressed on the device: the left stick's directions
+ * (input core's virtual D-pad) do not light the D-pad, the stick has its
+ * own box */
+static void show_buttons(struct input_test *t)
+{
+	uint32_t pressed = input_buttons_physical();
+	int b;
+
+	for (b = 0; b < GP_COUNT; b++)
+		if (t->cell[b])
+			lv_obj_set_state(t->cell[b], LV_STATE_CHECKED, pressed & GP_BIT(b));
+}
+
 static void on_input(const struct gp_event *ev, void *ud)
 {
 	struct input_test *t = ud;
@@ -290,13 +306,8 @@ static void on_input(const struct gp_event *ev, void *ud)
 		on_calibrate_button(t, ev);
 		return;
 	}
-	if (!t->cell[ev->code])
-		;	/* not declared by the driver (e.g. the stick's virtual D-pad) */
-	else if (ev->pressed)
-		lv_obj_add_state(t->cell[ev->code], LV_STATE_CHECKED);
-	else
-		lv_obj_remove_state(t->cell[ev->code], LV_STATE_CHECKED);
-	if (!ev->pressed)
+	show_buttons(t);
+	if (!ev->pressed || ev->stick)
 		return;
 	if (ev->code == GP_B && double_tap(&t->last_b))
 		gui_action_post(ACT_BACK, 0);
@@ -416,7 +427,7 @@ static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 		if (!(present & GP_BIT(b)) || b == GP_POWER || !spots[b].w)
 			continue;
 		t->cell[b] = button_new(pad, b, q);
-		if (input_buttons() & GP_BIT(b))
+		if (input_buttons_physical() & GP_BIT(b))
 			lv_obj_add_state(t->cell[b], LV_STATE_CHECKED);
 	}
 

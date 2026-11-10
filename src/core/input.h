@@ -82,6 +82,7 @@ void input_report_mouse_move(int dx, int dy, int wheel);
 enum gp_button input_key_button(unsigned code);	/* GP_NONE: no button */
 
 uint32_t input_buttons(void);		/* GP_BIT() mask of pressed buttons */
+uint32_t input_buttons_physical(void);	/* ...less the left stick's directions */
 float input_axis(enum gp_axis a);	/* calibrated, -1..1 */
 
 /*

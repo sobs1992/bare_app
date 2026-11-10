@@ -332,6 +332,11 @@ uint32_t input_buttons(void)
 	return in.state;
 }
 
+uint32_t input_buttons_physical(void)
+{
+	return in.phys;
+}
+
 float input_axis(enum gp_axis a)
 {
 	return a >= 0 && a < GP_AXIS_COUNT ? in.axes[a] : 0;
