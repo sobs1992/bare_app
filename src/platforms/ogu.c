@@ -110,6 +110,7 @@ const struct platform platform_ogu = {
 		NULL },
 	.quit_combo = GP_BIT(GP_F6),
 	.poweroff = "/sbin/poweroff",	/* busybox: init runs rcK, then powers off */
+	.suspend = "/usr/sbin/pm-suspend",	/* the SDK's: suspend to idle, the power key wakes */
 	.usb_disk = "/usr/sbin/usb-disk",
 	.config_path = "/etc/bare_app.conf",
 };
