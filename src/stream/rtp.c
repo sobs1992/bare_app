@@ -113,6 +113,14 @@ void rtp_l16(struct rtp_track *t, const int16_t *frames, int count, uint32_t ts,
 	}
 }
 
+size_t rtp_mp2t(struct rtp_track *t, const uint8_t *ts_packets, size_t len, uint32_t ts, uint8_t *pkt)
+{
+	header(t, pkt, 0, ts);
+	memcpy(pkt + RTP_HEADER, ts_packets, len);
+	sent(t, len);
+	return RTP_HEADER + len;
+}
+
 static void put32(uint8_t *p, uint32_t v)
 {
 	p[0] = (uint8_t)(v >> 24);

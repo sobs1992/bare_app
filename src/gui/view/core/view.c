@@ -227,6 +227,9 @@ static void *view_thread(void *arg)
 			LOGE(TAG, "backend \"%s\" failed to start", vcore.be->name);
 	}
 	if (!vcore.status) {
+		/* the first snapshot took the settings in without a change to
+		 * follow: a stream switched on before starts here */
+		view_stream_follow();
 		mainloop_add_fd(vcore.ml, ctx_fd(), POLLIN, on_ctx, NULL);
 		mainloop_add_fd(vcore.ml, notify_fd(), POLLIN, on_notify, NULL);
 		mainloop_set_prepare(vcore.ml, prepare, NULL);

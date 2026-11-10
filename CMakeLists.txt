@@ -105,7 +105,7 @@ add_if(CONFIG_GAME_HALFLIFE     src/games/halflife.c)
 add_if(CONFIG_GAME_WINE         src/games/wine.c src/games/ini.c)
 add_if(CONFIG_GAME_NATIVE       src/games/native.c src/games/ini.c)
 add_if(CONFIG_SYSMON            src/services/sysmon.c src/gui/control/ctl_sysmon.c)
-add_if(CONFIG_STREAM            src/stream/stream.c src/stream/rtp.c src/stream/h264.c
+add_if(CONFIG_STREAM            src/stream/stream.c src/stream/rtp.c src/stream/ts.c src/stream/h264.c
 				src/media/mailbox.c src/drivers/pcm_alsa.c)
 # games.c also without games: the home screen's code asks it of the games
 # it has none of
@@ -123,7 +123,7 @@ if(CONFIG_INPUT_HOTPLUG OR CONFIG_POWER_UEVENT OR CONFIG_BUILD_TESTS)
 endif()
 if(CONFIG_BUILD_TESTS)
 	# unit tested even when unused
-	list(APPEND CORE_SOURCES src/media/mailbox.c src/stream/rtp.c)
+	list(APPEND CORE_SOURCES src/media/mailbox.c src/stream/rtp.c src/stream/ts.c)
 endif()
 list(REMOVE_DUPLICATES CORE_SOURCES)
 

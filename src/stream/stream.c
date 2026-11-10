@@ -29,6 +29,7 @@
 #include "h264.h"
 #include "media/mailbox.h"
 #include "rtp.h"
+#include "ts.h"
 
 #define TAG "stream"
 #define MAX_CLIENTS 4
@@ -37,10 +38,15 @@
 #define AUDIO_RATE 48000
 #define AUDIO_CHUNK 480		/* frames: 10 ms */
 #define SNDBUF (1 << 20)
-#define UDP_BASE 6970		/* video RTP, RTCP, audio RTP, RTCP */
+#define UDP_BASE 6970		/* video RTP, RTCP, audio RTP, RTCP, TS RTP, RTCP */
+#define TS_DELAY 9000		/* 90 kHz: the PTS ahead of the PCR */
 #define PATH "live"
 
-enum { TRACK_VIDEO, TRACK_AUDIO, TRACKS };
+/*
+ * TRACK_TS: both in an MPEG transport stream, for a player that SETUPs the
+ * aggregate URL instead of a track (VLC's SAT>IP module, see ts.h)
+ */
+enum { TRACK_VIDEO, TRACK_AUDIO, TRACK_TS, TRACKS };
 
 struct track_out {
 	bool set;		/* SETUP done */
@@ -75,6 +81,8 @@ static struct {
 	char sprop[512];	/* sprop-parameter-sets */
 	struct client clients[MAX_CLIENTS];
 	struct rtp_track track[TRACKS];
+	struct ts_mux ts;
+	uint64_t ts_audio_pts;	/* 90 kHz, of the next sound PES */
 	uint64_t t0;		/* now_us() of RTP time 0 */
 	bool want_idr;
 	bool audio_ok;		/* the capture device opened */
@@ -84,7 +92,7 @@ static struct {
 	uint64_t audio_at;	/* now_us() of audio_ts */
 	uint8_t frame[RTP_HEADER + RTP_MAX_PAYLOAD + 4];
 } st = { .lock = PTHREAD_MUTEX_INITIALIZER, .stop = -1, .listen = -1,
-	 .udp = { { -1, -1 }, { -1, -1 } } };
+	 .udp = { { -1, -1 }, { -1, -1 }, { -1, -1 } } };
 
 /* ---- the loopback --------------------------------------------------------- */
 
@@ -182,9 +190,15 @@ static uint64_t unix_us(void)
 	return (uint64_t)tv.tv_sec * 1000000 + (uint64_t)tv.tv_usec;
 }
 
+/* 90 kHz since t0 */
+static uint64_t clock90(uint64_t at)
+{
+	return (at - st.t0) * 9 / 100;
+}
+
 static uint32_t video_ts(uint64_t at)
 {
-	return (uint32_t)((at - st.t0) * 9 / 100);
+	return (uint32_t)clock90(at);
 }
 
 static uint32_t audio_ts_now(uint64_t now)
@@ -203,7 +217,7 @@ static void send_reports(void)
 
 		for (t = 0; c->fd >= 0 && c->playing && t < TRACKS; t++) {
 			struct dest d = { c, t, true };
-			uint32_t ts = t == TRACK_VIDEO ? video_ts(now) : audio_ts_now(now);
+			uint32_t ts = t == TRACK_AUDIO ? audio_ts_now(now) : video_ts(now);
 			size_t n;
 
 			if (!c->out[t].set)
@@ -212,6 +226,32 @@ static void send_reports(void)
 			if (n && room(c, t, n))
 				send_to(&d, buf, n);
 		}
+	}
+}
+
+/* A player of the transport stream plays (lock held) */
+static bool ts_playing(void)
+{
+	int i;
+
+	for (i = 0; i < MAX_CLIENTS; i++)
+		if (st.clients[i].fd >= 0 && st.clients[i].playing && st.clients[i].out[TRACK_TS].set)
+			return true;
+	return false;
+}
+
+/* A group of TS packets to its players as one RTP packet (lock held) */
+static void ts_send(void *ud, const uint8_t *packets, size_t len)
+{
+	size_t n = rtp_mp2t(&st.track[TRACK_TS], packets, len, *(const uint32_t *)ud, st.frame);
+	int i;
+
+	for (i = 0; i < MAX_CLIENTS; i++) {
+		struct client *c = &st.clients[i];
+		struct dest d = { c, TRACK_TS, false };
+
+		if (c->fd >= 0 && c->playing && c->out[TRACK_TS].set && room(c, TRACK_TS, n))
+			send_to(&d, st.frame, n);
 	}
 }
 
@@ -249,6 +289,17 @@ static void encode_and_send(void)
 			continue;
 		}
 		rtp_h264(&st.track[TRACK_VIDEO], au, size, video_ts(now), send_to, &d);
+	}
+	if (ts_playing()) {
+		uint64_t clock = clock90(now);
+		uint32_t rtp_time = (uint32_t)clock;
+		const uint8_t *params = NULL;
+		size_t params_size = 0;
+
+		if (idr && h264_params(st.enc, &params, &params_size) < 0)
+			params = NULL;
+		ts_video(&st.ts, au, size, idr, params, params_size, clock + TS_DELAY, clock, ts_send,
+			 &rtp_time);
 	}
 	pthread_mutex_unlock(&st.lock);
 }
@@ -372,7 +423,7 @@ static void describe(struct client *c, const char *cseq, const char *url)
 
 static void setup(struct client *c, const char *cseq, const char *url, const char *transport)
 {
-	int t = strstr(url, "track2") ? TRACK_AUDIO : TRACK_VIDEO;
+	int t = strstr(url, "/track2") ? TRACK_AUDIO : strstr(url, "/track1") ? TRACK_VIDEO : TRACK_TS;
 	struct track_out *o = &c->out[t];
 	char extra[256];
 	const char *p;
@@ -410,22 +461,31 @@ static void setup(struct client *c, const char *cseq, const char *url, const cha
 
 static void play(struct client *c, const char *cseq, const char *url)
 {
-	char extra[400];
+	static const char *const name[TRACKS] = { "/track1", "/track2", "" };
+	char extra[600];
 	uint64_t now = now_us();
-	int n;
+	const char *sep = "";
+	int n, t;
 
-	n = snprintf(extra, sizeof(extra), "Range: npt=0.000-\r\nRTP-Info: url=%s/track1;seq=%u;rtptime=%u",
-		     url, st.track[TRACK_VIDEO].seq, video_ts(now));
-	if (c->out[TRACK_AUDIO].set)
-		n += snprintf(extra + n, sizeof(extra) - (size_t)n, ",url=%s/track2;seq=%u;rtptime=%u", url,
-			      st.track[TRACK_AUDIO].seq, audio_ts_now(now));
+	n = snprintf(extra, sizeof(extra), "Range: npt=0.000-\r\nRTP-Info: ");
+	for (t = 0; t < TRACKS; t++) {
+		if (!c->out[t].set)
+			continue;
+		n += snprintf(extra + n, sizeof(extra) - (size_t)n, "%surl=%s%s;seq=%u;rtptime=%u", sep, url,
+			      name[t], st.track[t].seq, t == TRACK_AUDIO ? audio_ts_now(now) : video_ts(now));
+		sep = ",";
+	}
 	snprintf(extra + n, sizeof(extra) - (size_t)n, "\r\n");
 	reply(c, 200, "OK", cseq, extra, NULL);
 	if (!c->playing)
 		atomic_fetch_add(&st.viewers, 1);
 	c->playing = true;
 	st.want_idr = true;
-	LOGI(TAG, "%s plays (%s)", inet_ntoa(c->peer.sin_addr), c->out[TRACK_VIDEO].tcp ? "TCP" : "UDP");
+	if (c->out[TRACK_TS].set)
+		ts_restart(&st.ts);
+	t = c->out[TRACK_TS].set ? TRACK_TS : TRACK_VIDEO;
+	LOGI(TAG, "%s plays (%s%s)", inet_ntoa(c->peer.sin_addr), t == TRACK_TS ? "MPEG-TS, " : "",
+	     c->out[t].tcp ? "TCP" : "UDP");
 }
 
 static void client_close(struct client *c)
@@ -630,6 +690,17 @@ static void *audio_thread(void *ud)
 				rtp_l16(&st.track[TRACK_AUDIO], buf, AUDIO_CHUNK, st.audio_ts, send_to, &d);
 		}
 		st.audio_ts += AUDIO_CHUNK;
+		if (ts_playing()) {
+			uint64_t clock = clock90(st.audio_at);
+			uint32_t rtp_time = (uint32_t)clock;
+			int64_t off = (int64_t)(st.ts_audio_pts - clock);
+
+			/* the sound's own count of time, kept near the clock */
+			if (off < -TS_DELAY || off > TS_DELAY)
+				st.ts_audio_pts = clock;
+			ts_audio(&st.ts, buf, AUDIO_CHUNK, st.ts_audio_pts + TS_DELAY, clock, ts_send, &rtp_time);
+			st.ts_audio_pts += (uint64_t)AUDIO_CHUNK * 90000 / AUDIO_RATE;
+		}
 		pthread_mutex_unlock(&st.lock);
 		/* on to the device: opened when it is free (a UI sound has it) */
 		if (!st.play && st.cfg.playback && now_ms() >= pass_retry) {
@@ -694,7 +765,7 @@ int stream_start(const struct stream_config *cfg)
 	srand((unsigned)now_us());
 	for (t = 0; t < TRACKS; t++)
 		st.track[t] = (struct rtp_track){ .ssrc = (uint32_t)rand(), .seq = (uint16_t)rand(),
-						  .pt = (uint8_t)(96 + t) };
+						  .pt = (uint8_t)(t == TRACK_TS ? 33 : 96 + t) };
 	make_sprop();
 	st.t0 = now_us() - 1000000;	/* never 0 */
 	st.audio_ts = (uint32_t)rand();
@@ -712,6 +783,8 @@ int stream_start(const struct stream_config *cfg)
 			LOGW(TAG, "no sound in the stream: the loopback does not open");
 		}
 	}
+	ts_init(&st.ts, st.audio_ok);
+	st.ts_audio_pts = 0;
 	atomic_store(&st.running, true);
 	st.net_on = pthread_create(&st.net, NULL, net_thread, NULL) == 0;
 	if (!st.net_on)

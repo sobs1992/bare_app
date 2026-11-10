@@ -9,6 +9,7 @@
 #include "core/frametimes.h"
 #include "core/remap.h"
 #include "stream/rtp.h"
+#include "stream/ts.h"
 #include "core/input.h"
 #include "core/joystick.h"
 #include "core/mainloop.h"
@@ -245,6 +246,95 @@ static void test_rtp(void)
 	CHECK(n % 4 == 0 && n == 28 + 4 * (size_t)(sr[31] + 1));
 	CHECK(sr[1] == 200 && sr[3] == 6 && sr[29] == 202 && sr[37] == 8);
 	CHECK(sr[8] == 0xe8 && sr[9] == 0xfe && sr[10] == 0x6f && sr[11] == 0x80);	/* NTP seconds */
+}
+
+struct ts_capture {
+	uint8_t data[64 * TS_PACKET];
+	size_t len;
+	int groups;
+};
+
+static void ts_capture(void *ud, const uint8_t *p, size_t len)
+{
+	struct ts_capture *c = ud;
+
+	CHECK(len % TS_PACKET == 0 && len <= TS_GROUP * TS_PACKET);
+	if (c->len + len <= sizeof(c->data)) {
+		memcpy(c->data + c->len, p, len);
+		c->len += len;
+	}
+	c->groups++;
+}
+
+/* The payload of pid's packets from at, put together; their count */
+static int ts_payload(const struct ts_capture *c, int pid, uint8_t *out, size_t *len, bool *pcr)
+{
+	size_t i;
+	int n = 0, cc = -1;
+
+	*len = 0;
+	*pcr = false;
+	for (i = 0; i < c->len; i += TS_PACKET) {
+		const uint8_t *p = c->data + i;
+		size_t off = 4;
+
+		CHECK(p[0] == 0x47);
+		if (((p[1] & 0x1f) << 8 | p[2]) != pid)
+			continue;
+		if (cc >= 0)
+			CHECK((p[3] & 15) == ((cc + 1) & 15));
+		cc = p[3] & 15;
+		if (p[3] & 0x20) {
+			if (n == 0 && p[4] >= 7 && (p[5] & 0x10))
+				*pcr = true;
+			off += 1 + p[4];
+		}
+		memcpy(out + *len, p + off, TS_PACKET - off);
+		*len += TS_PACKET - off;
+		n++;
+	}
+	return n;
+}
+
+static void test_ts(void)
+{
+	static struct ts_capture c;
+	static uint8_t au[1000], pay[16 * TS_PACKET];
+	struct ts_mux m;
+	int16_t pcm[480 * 2];
+	size_t len, i;
+	bool pcr;
+	uint32_t crc = 0xffffffff;
+	int b;
+
+	ts_init(&m, true);
+	memcpy(au, "\0\0\0\1\x65", 5);	/* an IDR slice without SPS: the params go first */
+	for (i = 5; i < sizeof(au); i++)
+		au[i] = (uint8_t)i;
+	ts_video(&m, au, sizeof(au), true, (const uint8_t *)"\0\0\0\1\x67\x42", 6, 99000, 90000,
+		 ts_capture, &c);
+	/* PAT, PMT, then the PES: 14 + 6 (AUD) + 6 + 1000 bytes in 6 packets */
+	CHECK(c.len == 8 * TS_PACKET && c.groups == 2);
+	CHECK(c.data[1] == 0x40 && c.data[2] == 0 && c.data[5] == 0);	/* PAT */
+	for (i = 5; i < 5 + 16; i++)	/* its CRC checks out: 0 over the whole section */
+		for (crc ^= (uint32_t)c.data[i] << 24, b = 0; b < 8; b++)
+			crc = crc & 0x80000000 ? crc << 1 ^ 0x04c11db7 : crc << 1;
+	CHECK(crc == 0);
+	CHECK(ts_payload(&c, TS_PID_VIDEO, pay, &len, &pcr) == 6 && !pcr);	/* PCR on the sound */
+	CHECK(len == 14 + 6 + 6 + 1000);
+	CHECK(!memcmp(pay, "\0\0\1\xe0", 4) && pay[7] == 0x80 && pay[8] == 5);
+	CHECK(pay[9] == 0x21 && pay[13] == (uint8_t)(99000 << 1 | 1));	/* PTS 99000 */
+	CHECK(!memcmp(pay + 14, "\0\0\0\1\x09\xf0\0\0\0\1\x67\x42\0\0\0\1\x65", 17));
+	CHECK(!memcmp(pay + 26 + 5, au + 5, sizeof(au) - 5));
+	/* 10 ms of sound: one PES, 18 + 1920 bytes in 11 packets, the PCR in the first */
+	c.len = 0;
+	for (i = 0; i < 960; i++)
+		pcm[i] = (int16_t)(i * 7);
+	ts_audio(&m, pcm, 480, 99900, 90900, ts_capture, &c);
+	CHECK(ts_payload(&c, TS_PID_AUDIO, pay, &len, &pcr) == 11 && pcr && len == 18 + 1920);
+	CHECK(pay[3] == 0xbd && (pay[4] << 8 | pay[5]) == 3 + 5 + 4 + 1920);
+	CHECK((pay[14] << 8 | pay[15]) == 1920 && pay[16] == 0x31 && pay[17] == 0x40);
+	CHECK(pay[18 + 2 * 959] == (uint8_t)(959 * 7 >> 8) && pay[18 + 2 * 959 + 1] == (uint8_t)(959 * 7));
 }
 
 static void test_msgq(void)
@@ -846,6 +936,7 @@ int main(void)
 	test_frametimes();
 	test_remap();
 	test_rtp();
+	test_ts();
 	test_hid();
 #ifdef CONFIG_SYSMON
 	test_sysmon();
