@@ -442,8 +442,10 @@ control-модуль (секция контекста) → экраны.
 interleaved, PLAY, PAUSE, TEARDOWN, GET_PARAMETER; клиенты, потоки), `rtp.c` (пакеты
 H.264 по RFC 6184 — одиночные NAL и FU-A, L16, MP2T по RFC 2250, RTCP SR + SDES; без
 сети, покрыт тестом), `ts.c` (MPEG-TS: PAT/PMT, H.264 и Blu-ray LPCM в программе с
-регистрацией "HDMV", PCR на звуке; без сети, покрыт тестом), `h264.c` (OpenH264: XRGB →
-I420 BT.601, кадр → access unit в Annex B).
+регистрацией "HDMV", PCR на звуке; без сети, покрыт тестом), `h264.c` (кадр XRGB →
+access unit в Annex B: через `h264_v4l2.c`, если есть V4L2 mem2mem-кодер XBGR32 → H.264
+— на GO Ultra `meson-venc`, один кадр в работе, SPS/PPS из первого (чёрного) кадра для
+SDP; иначе OpenH264: XRGB → I420 BT.601).
 
 - Владеет трансляцией ядро view: по `settings.stream` контекста (`ACT_SET_STREAM`,
   `stream=` в конфиге) запускает и останавливает её, а таймер 30 раз в секунду, пока

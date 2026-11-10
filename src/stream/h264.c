@@ -6,10 +6,12 @@
 #include <wels/codec_api.h>
 
 #include "core/log.h"
+#include "h264_v4l2.h"
 
 #define TAG "h264"
 
 struct h264 {
+	struct h264_v4l2 *hw;		/* the hardware one if there is one */
 	ISVCEncoder *enc;
 	int width, height;
 	uint8_t *yuv;			/* I420 */
@@ -25,6 +27,11 @@ struct h264 *h264_new(int width, int height, int fps, int kbps)
 
 	if (!e || (width | height) & 1)
 		goto fail;
+	if (!getenv("BARE_APP_STREAM_SW")) {
+		e->hw = h264_v4l2_new(width, height, fps, kbps);
+		if (e->hw)
+			return e;
+	}
 	e->width = width;
 	e->height = height;
 	e->yuv = malloc((size_t)width * height * 3 / 2);
@@ -68,6 +75,7 @@ void h264_free(struct h264 *e)
 {
 	if (!e)
 		return;
+	h264_v4l2_free(e->hw);
 	if (e->enc) {
 		(*e->enc)->Uninitialize(e->enc);
 		WelsDestroySVCEncoder(e->enc);
@@ -111,6 +119,8 @@ int h264_params(struct h264 *e, const uint8_t **data, size_t *size)
 {
 	SFrameBSInfo info;
 
+	if (e->hw)
+		return h264_v4l2_params(e->hw, data, size);
 	memset(&info, 0, sizeof(info));
 	if ((*e->enc)->EncodeParameterSets(e->enc, &info) || collect(e, &info))
 		return -1;
@@ -121,6 +131,10 @@ int h264_params(struct h264 *e, const uint8_t **data, size_t *size)
 
 void h264_force_idr(struct h264 *e)
 {
+	if (e->hw) {
+		h264_v4l2_force_idr(e->hw);
+		return;
+	}
 	(*e->enc)->ForceIntraFrame(e->enc, true);
 }
 
@@ -163,6 +177,8 @@ int h264_encode(struct h264 *e, const struct hal_fb *frame, uint64_t ms, const u
 	SSourcePicture pic;
 	SFrameBSInfo info;
 
+	if (e->hw)
+		return h264_v4l2_encode(e->hw, frame, data, size, idr);
 	if (frame->width < e->width || frame->height < e->height)
 		return -1;
 	to_i420(e, frame);
