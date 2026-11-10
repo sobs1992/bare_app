@@ -75,6 +75,17 @@ static void on_click(lv_event_t *e)
 	}
 }
 
+/* LVGL does not scroll to what gets the focus by itself: a long list would
+ * leave the focused network under the footer */
+static void on_focused(lv_event_t *e)
+{
+	lv_obj_t *obj = lv_event_get_current_target(e);
+
+	/* the switch: its whole line, from the top */
+	lv_obj_scroll_to_view(obj == ((struct wifi_screen *)lv_event_get_user_data(e))->sw ?
+				      lv_obj_get_parent(obj) : obj, LV_ANIM_ON);
+}
+
 static void on_key(lv_event_t *e)
 {
 	struct wifi_screen *w = lv_event_get_user_data(e);
@@ -118,6 +129,7 @@ static void *wifi_init(lv_obj_t *parent, lv_obj_t **root)
 	w->sw = lv_switch_create(r);
 	lv_obj_set_size(w->sw, ui_px(50), ui_px(26));
 	ui_focus_style(w->sw);
+	lv_obj_add_event_cb(w->sw, on_focused, LV_EVENT_FOCUSED, w);
 	lv_obj_add_event_cb(w->sw, on_switch, LV_EVENT_VALUE_CHANGED, NULL);
 	w->status = lv_label_create(r);
 	lv_obj_set_flex_grow(w->status, 1);
@@ -138,6 +150,7 @@ static void *wifi_init(lv_obj_t *parent, lv_obj_t **root)
 		lv_group_add_obj(lv_group_get_default(), r);
 		lv_obj_add_event_cb(r, on_click, LV_EVENT_CLICKED, w);
 		lv_obj_add_event_cb(r, on_key, LV_EVENT_KEY, w);
+		lv_obj_add_event_cb(r, on_focused, LV_EVENT_FOCUSED, w);
 		label = w->names[i] = lv_label_create(r);
 		lv_obj_set_flex_grow(label, 1);
 		lv_obj_set_style_text_font(label, UI_FONT_MID, 0);

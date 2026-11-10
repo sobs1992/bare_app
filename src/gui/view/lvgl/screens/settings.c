@@ -266,8 +266,11 @@ static struct row *row_new(struct settings *s, enum row_id id, enum row_kind kin
 
 		lv_group_remove_obj(sl);	/* the row moves it */
 		lv_obj_set_clickable(sl, false);
-		/* in line with the text: the knob reaches into the row's padding */
+		/* as wide as the text, drawn a knob's half shorter at each
+		 * end: the knob reaches past the track's ends by that, and
+		 * stays clear of the focus frame */
 		lv_obj_set_size(sl, LV_PCT(100), ui_px(6));
+		lv_obj_set_style_transform_width(sl, -(ui_px(6) / 2 + ui_px(6)), 0);
 		lv_obj_set_style_margin_bottom(sl, ui_px(6), 0);
 		lv_obj_set_style_bg_color(sl, lv_color_lighten(UI_COLOR_LINE, LV_OPA_20), LV_PART_MAIN);
 		lv_obj_set_style_bg_color(sl, UI_COLOR_ACCENT, LV_PART_INDICATOR);

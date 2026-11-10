@@ -59,7 +59,7 @@ const struct hal_mixer_ops mixer_sim = {
 
 /* ---- Wi-Fi: made-up networks, answers after a short delay -------------- */
 
-#define SIM_NETS 4
+#define SIM_NETS 7	/* more than a screen holds */
 #define SCAN_MS 600
 #define CONNECT_MS 1200
 
@@ -68,6 +68,9 @@ static const struct hal_wifi_net sim_nets[SIM_NETS] = {
 	{ "Cafe guests", 64, false, false },
 	{ "Neighbour", 41, true, false },
 	{ "Printer-3F2A", 23, true, false },
+	{ "Office-5G", 19, true, false },
+	{ "Garage", 12, true, false },
+	{ "Upstairs", 8, false, false },
 };
 
 struct wsim {
