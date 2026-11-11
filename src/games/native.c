@@ -352,9 +352,12 @@ static struct game_proc *native_start(int i, const struct game_env *ge)
 		game_vars_add(&env, "SDL_BAREAPP_FILTER=%s", g->filter);
 	if (g->fps[0])
 		game_vars_add(&env, "SDL_BAREAPP_FPS=%s", g->fps);
+	/* not in args: argv points into it */
 	for (int k = 0; k < g->n_env; k++) {
-		expand(g->env[k], ge, data, g->dir, args, sizeof(args));
-		game_vars_add(&env, "%s", args);
+		char var[PATH_MAX];
+
+		expand(g->env[k], ge, data, g->dir, var, sizeof(var));
+		game_vars_add(&env, "%s", var);
 	}
 
 	struct game_spawn s = { .path = exe, .argv = argv, .env = env.v, .dir = cwd,
