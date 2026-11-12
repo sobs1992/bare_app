@@ -669,9 +669,12 @@ static void ms_text(char *buf, size_t size, uint32_t us)
 		snprintf(buf, size, "%u", (us + 500) / 1000);
 }
 
-/* "31 fps  99% 45 ms  worst 120 ms  2 hitches" of the last second and the graph */
+/* "31 fps  99% 45 ms  worst 120 ms  2 hitches" of the last second and the
+ * graph; on a narrow screen (the GO Advance's 480) without the hitches,
+ * which the graph shows red anyway, so that the line is not cut */
 static void frames_text(const struct sysmon_view *m, char *buf, size_t size, bool unit)
 {
+	bool narrow = lv_display_get_horizontal_resolution(lv_display_get_default()) < 600;
 	char p99[16], worst[16];
 	int len;
 
@@ -687,8 +690,11 @@ static void frames_text(const struct sysmon_view *m, char *buf, size_t size, boo
 		return;
 	ms_text(p99, sizeof(p99), m->span.p99_us);
 	ms_text(worst, sizeof(worst), m->span.worst_us);
-	snprintf(buf + len, size - len, "  99%% %s ms  worst %s ms  %u %s", p99, worst,
-		 m->span.hitches, m->span.hitches == 1 ? "hitch" : "hitches");
+	if (narrow)
+		snprintf(buf + len, size - len, "  99%% %s ms  worst %s ms", p99, worst);
+	else
+		snprintf(buf + len, size - len, "  99%% %s ms  worst %s ms  %u %s", p99, worst,
+			 m->span.hitches, m->span.hitches == 1 ? "hitch" : "hitches");
 }
 
 /* The frame times now: to the FPS row and the graphs */

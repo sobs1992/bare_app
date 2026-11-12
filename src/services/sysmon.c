@@ -347,7 +347,7 @@ static enum sysmon_disk_kind disk_kind(const struct sysmon *s, const char *name)
 }
 
 /* Whole disks with a device behind them: no loop, ram, zram, nor the eMMC's
- * boot and RPMB areas */
+ * boot and RPMB areas, nor SPI flash (mtdblock: the boot loader's) */
 static void find_disks(struct sysmon *s)
 {
 	char path[PATH_LEN];
@@ -362,7 +362,7 @@ static void find_disks(struct sysmon *s)
 	while ((de = readdir(d)) && s->ndisks < SYSMON_MAX_DISKS) {
 		const char *n = de->d_name;
 
-		if (n[0] == '.' || strstr(n, "boot") || strstr(n, "rpmb") ||
+		if (n[0] == '.' || strstr(n, "boot") || strstr(n, "rpmb") || !strncmp(n, "mtd", 3) ||
 		    strlen(n) >= SYSMON_NAME)
 			continue;
 		path_of(s, path, "/sys/block/%s%s", n, "/device");
@@ -571,8 +571,11 @@ static void sample_battery(struct sysmon *s, struct sysmon_info *out)
 	if (!out->battery)
 		return;
 	read_ll(s, &cap, dir, s->battery, "/capacity");
-	read_ll(s, &uv, dir, s->battery, "/voltage_now");
-	read_ll(s, &ua, dir, s->battery, "/current_now");
+	/* the RK817's driver has only the averages */
+	if (read_ll(s, &uv, dir, s->battery, "/voltage_now"))
+		read_ll(s, &uv, dir, s->battery, "/voltage_avg");
+	if (read_ll(s, &ua, dir, s->battery, "/current_now"))
+		read_ll(s, &ua, dir, s->battery, "/current_avg");
 	have_power = !read_ll(s, &uw, dir, s->battery, "/power_now");
 	read_text(s, status, sizeof(status), dir, s->battery, "/status");
 	/* drivers disagree on the sign: the status says which way it flows */
