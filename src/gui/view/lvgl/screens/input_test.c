@@ -13,6 +13,12 @@
  * (the sticks turned along it; the boxes draw what was reached). A saves,
  * Y goes back to no calibration, B cancels. The test then shows the
  * calibrated sticks: the edge is the box's circle.
+ *
+ * X pressed twice tunes the sticks: the dead zone and the sensitivity of
+ * each (core/input), in a panel over the middle buttons. Up and down pick
+ * a row, left and right change it at once (the dots show it), A saves
+ * with the calibration, Y sets the defaults, B cancels. The left stick
+ * stays a stick there, not a D-pad.
  */
 #include <math.h>
 #include <stdlib.h>
@@ -29,11 +35,21 @@
 #define SAMPLE_MS 20
 #define REST_MS 1000		/* held still that long: the rest position */
 #define REST_SPREAD 0.04f	/* ...moving less than that */
+#define DEADZONE_STEP 0.01f
+#define SENS_STEP 0.05f
+#define TUNE_FIELDS 2		/* a row per field of each stick: dead zone, sensitivity */
+
+/* The tuning panel in place of the middle buttons (hidden meanwhile):
+ * between the D-pad and X Y A B, from the top down to the values
+ * (quarter cells) */
+#define TUNE_X 26
+#define TUNE_W 37
+#define TUNE_H 31
 
 #define LEFT_STICK  (GP_BIT(GP_AXIS_LX) | GP_BIT(GP_AXIS_LY))
 #define RIGHT_STICK (GP_BIT(GP_AXIS_RX) | GP_BIT(GP_AXIS_RY))
 
-enum mode { MODE_TEST, MODE_REST, MODE_TURN };
+enum mode { MODE_TEST, MODE_REST, MODE_TURN, MODE_TUNE };
 
 /* MODE_REST: the window a stick stayed in */
 struct still {
@@ -47,12 +63,38 @@ struct input_test {
 	lv_obj_t *dot[INPUT_STICKS];	/* NULL: no such stick */
 	lv_obj_t *edge[INPUT_STICKS][JOY_CAL_BINS];
 	lv_obj_t *values, *hint, *footer;
-	uint32_t last_a, last_b;
+	uint32_t last_a, last_b, last_x;
+	/* MODE_TUNE: the panel, a row per stick and field (NULL: no such stick) */
+	lv_obj_t *tune, *row[INPUT_STICKS][TUNE_FIELDS], *row_value[INPUT_STICKS][TUNE_FIELDS];
+	int sel;			/* the row picked: stick * TUNE_FIELDS + field */
+	struct input_stick_tune before[INPUT_STICKS];	/* to cancel */
 	enum mode mode;
 	enum str_id note;		/* under the hint in MODE_TEST; S_COUNT: none */
 	lv_timer_t *timer;
 	struct still still[INPUT_STICKS];
 	struct joy_cal_rec rec[INPUT_STICKS];
+};
+
+/* Where each button is on the pad: x, y, width, height in quarter cells */
+static const struct {
+	int8_t x, y, w, h;
+	bool round;
+} spots[GP_COUNT] = {
+	/* the D-pad around 3.75 cells, X Y A B around 18.25: 1.75 cell buttons */
+	[GP_UP]    = { 12, 8, 7, 7, false },  [GP_DOWN]  = { 12, 22, 7, 7, false },
+	[GP_LEFT]  = { 5, 15, 7, 7, false },  [GP_RIGHT] = { 19, 15, 7, 7, false },
+	[GP_X]     = { 70, 8, 7, 7, true },   [GP_B]     = { 70, 22, 7, 7, true },
+	[GP_Y]     = { 63, 15, 7, 7, true },  [GP_A]     = { 77, 15, 7, 7, true },
+	/* the shoulders */
+	[GP_L2]    = { 0, 0, 10, 6, false },  [GP_L1]    = { 12, 0, 10, 6, false },
+	[GP_R1]    = { 66, 0, 10, 6, false }, [GP_R2]    = { 78, 0, 10, 6, false },
+	/* the middle */
+	[GP_VOL_DOWN] = { 31, 0, 8, 6, false }, [GP_MENU] = { 40, 0, 8, 6, false },
+	[GP_VOL_UP] = { 49, 0, 8, 6, false },
+	[GP_SELECT] = { 32, 8, 11, 6, false }, [GP_START] = { 45, 8, 11, 6, false },
+	[GP_F1]    = { 31, 16, 8, 6, false }, [GP_F2]    = { 40, 16, 8, 6, false },
+	[GP_F3]    = { 49, 16, 8, 6, false }, [GP_F4]    = { 31, 24, 8, 6, false },
+	[GP_F5]    = { 40, 24, 8, 6, false }, [GP_F6]    = { 49, 24, 8, 6, false },
 };
 
 /* Positions count from inside the box's border (its content area, no
@@ -75,7 +117,7 @@ static void place_dot(struct input_test *t, int stick)
 
 	if (!t->dot[stick])
 		return;
-	if (t->mode == MODE_TEST) {
+	if (t->mode == MODE_TEST || t->mode == MODE_TUNE) {
 		x = input_axis(stick ? GP_AXIS_RX : GP_AXIS_LX);
 		y = input_axis(stick ? GP_AXIS_RY : GP_AXIS_LY);
 	} else {
@@ -148,20 +190,56 @@ static void show_hint(struct input_test *t)
 		lv_label_set_text(t->hint, tr(S_STICK_CAL_REST));
 	else if (t->mode == MODE_TURN)
 		lv_label_set_text(t->hint, tr(S_STICK_CAL_TURN));
+	else if (t->mode == MODE_TUNE)
+		lv_label_set_text(t->hint, "");
 	else
 		lv_label_set_text(t->hint, t->note == S_COUNT ? "" : tr(t->note));
-	if (t->mode != MODE_TEST)
+	if (t->mode == MODE_TUNE)
+		footer_set(t->footer, LV_SYMBOL_LEFT LV_SYMBOL_RIGHT, tr(S_CHANGE), "Y", tr(S_DEFAULT),
+			   "A", tr(S_SAVE), "B", tr(S_CANCEL), NULL);
+	else if (t->mode != MODE_TEST)
 		footer_set(t->footer, "B", tr(S_CANCEL), NULL);
 	else if (t->dot[0] || t->dot[1])
-		footer_set(t->footer, "B\xc3\x97" "2", tr(S_BACK), "A\xc3\x97" "2", tr(S_CALIBRATE), NULL);
+		footer_set(t->footer, "B\xc3\x97" "2", tr(S_BACK), "A\xc3\x97" "2", tr(S_CALIBRATE),
+			   "X\xc3\x97" "2", tr(S_SETTINGS), NULL);
 	else
 		footer_set(t->footer, "B\xc3\x97" "2", tr(S_BACK), NULL);
+}
+
+/* The tuning panel's rows: the values now, the row picked */
+static void show_tune(struct input_test *t)
+{
+	char text[16];
+	int s, f, b;
+
+	if (!t->tune)
+		return;
+	lv_obj_set_hidden(t->tune, t->mode != MODE_TUNE);
+	for (b = 0; b < GP_COUNT; b++)
+		if (t->cell[b] && spots[b].x >= TUNE_X && spots[b].x + spots[b].w <= TUNE_X + TUNE_W)
+			lv_obj_set_hidden(t->cell[b], t->mode == MODE_TUNE);
+	if (t->mode != MODE_TUNE)
+		return;
+	for (s = 0; s < INPUT_STICKS; s++) {
+		struct input_stick_tune tune;
+
+		if (!t->row[s][0])
+			continue;
+		input_stick_tune(s, &tune);
+		for (f = 0; f < TUNE_FIELDS; f++) {
+			lv_snprintf(text, sizeof(text), "%d%%",
+				    (int)lrintf((f ? tune.sensitivity : tune.deadzone) * 100));
+			lv_label_set_text(t->row_value[s][f], text);
+			lv_obj_set_state(t->row[s][f], LV_STATE_CHECKED, t->sel == s * TUNE_FIELDS + f);
+		}
+	}
 }
 
 static void show(struct input_test *t)
 {
 	int s;
 
+	show_tune(t);
 	for (s = 0; s < INPUT_STICKS; s++) {
 		place_dot(t, s);
 		show_edge(t, s);
@@ -255,6 +333,90 @@ static void save(struct input_test *t, bool reset)
 	set_mode(t, MODE_TEST);
 }
 
+/* MODE_TUNE: the row picked moved by dir rows, skipping missing sticks */
+static void tune_pick(struct input_test *t, int dir)
+{
+	int n = INPUT_STICKS * TUNE_FIELDS, i, sel = t->sel;
+
+	for (i = 0; i < n; i++) {
+		sel = (sel + dir + n) % n;
+		if (t->row[sel / TUNE_FIELDS][sel % TUNE_FIELDS])
+			break;
+	}
+	t->sel = sel;
+}
+
+/* MODE_TUNE: the row picked up or down a step */
+static void tune_change(struct input_test *t, int dir)
+{
+	int s = t->sel / TUNE_FIELDS;
+	struct input_stick_tune tune;
+
+	input_stick_tune(s, &tune);
+	if (t->sel % TUNE_FIELDS)
+		tune.sensitivity = roundf(tune.sensitivity / SENS_STEP + (float)dir) * SENS_STEP;
+	else
+		tune.deadzone = roundf(tune.deadzone / DEADZONE_STEP + (float)dir) * DEADZONE_STEP;
+	input_set_stick_tune(s, &tune);	/* it keeps them in range */
+}
+
+static void tune_begin(struct input_test *t)
+{
+	int s;
+
+	for (s = 0; s < INPUT_STICKS; s++)
+		input_stick_tune(s, &t->before[s]);
+	if (!t->row[t->sel / TUNE_FIELDS][t->sel % TUNE_FIELDS])
+		tune_pick(t, 1);
+	t->note = S_COUNT;
+	set_mode(t, MODE_TUNE);
+}
+
+static void tune_end(struct input_test *t, bool keep)
+{
+	int s;
+
+	if (keep) {
+		t->note = input_save_calibration() ? S_STICK_CAL_NOT_SAVED : S_STICK_TUNE_SAVED;
+	} else {
+		for (s = 0; s < INPUT_STICKS; s++)
+			input_set_stick_tune(s, &t->before[s]);
+	}
+	set_mode(t, MODE_TEST);
+}
+
+static void on_tune_button(struct input_test *t, const struct gp_event *ev)
+{
+	int s;
+
+	if (!ev->pressed || ev->stick)
+		return;		/* the left stick is under test, not a D-pad */
+	switch (ev->code) {
+	case GP_UP:
+	case GP_DOWN:
+		tune_pick(t, ev->code == GP_UP ? -1 : 1);
+		break;
+	case GP_LEFT:
+	case GP_RIGHT:
+		tune_change(t, ev->code == GP_LEFT ? -1 : 1);
+		break;
+	case GP_Y:
+		if (ev->repeat)
+			return;
+		for (s = 0; s < INPUT_STICKS; s++)
+			input_set_stick_tune(s, NULL);
+		break;
+	case GP_A:
+	case GP_B:
+		if (!ev->repeat)
+			tune_end(t, ev->code == GP_A);
+		return;
+	default:
+		return;
+	}
+	show(t);
+}
+
 static bool double_tap(uint32_t *last)
 {
 	uint32_t now = (uint32_t)now_ms();
@@ -294,10 +456,16 @@ static void on_input(const struct gp_event *ev, void *ud)
 	struct input_test *t = ud;
 
 	if (ev->type == GP_EV_AXIS) {
-		if (t->mode == MODE_TEST) {
+		if (t->mode == MODE_TEST || t->mode == MODE_TUNE) {
 			place_dot(t, ev->code == GP_AXIS_RX || ev->code == GP_AXIS_RY);
 			show_values(t);
 		}
+		return;
+	}
+	if (t->mode == MODE_TUNE) {
+		if (!ev->repeat)
+			show_buttons(t);
+		on_tune_button(t, ev);
 		return;
 	}
 	if (ev->repeat)
@@ -317,6 +485,8 @@ static void on_input(const struct gp_event *ev, void *ud)
 		t->timer = lv_timer_create(on_sample, SAMPLE_MS, t);
 		set_mode(t, MODE_REST);
 	}
+	if (ev->code == GP_X && double_tap(&t->last_x) && t->tune)
+		tune_begin(t);
 }
 
 /* A stick: a round box at (x, y) cells of the pad, its edge dots, its dot */
@@ -350,28 +520,6 @@ static void stick_box(struct input_test *t, lv_obj_t *pad, int32_t x, int32_t y,
 	lv_obj_set_style_bg_color(*dot, UI_COLOR_ON, 0);
 }
 
-/* Where each button is on the pad: x, y, width, height in quarter cells */
-static const struct {
-	int8_t x, y, w, h;
-	bool round;
-} spots[GP_COUNT] = {
-	/* the D-pad around 3.75 cells, X Y A B around 18.25: 1.75 cell buttons */
-	[GP_UP]    = { 12, 8, 7, 7, false },  [GP_DOWN]  = { 12, 22, 7, 7, false },
-	[GP_LEFT]  = { 5, 15, 7, 7, false },  [GP_RIGHT] = { 19, 15, 7, 7, false },
-	[GP_X]     = { 70, 8, 7, 7, true },   [GP_B]     = { 70, 22, 7, 7, true },
-	[GP_Y]     = { 63, 15, 7, 7, true },  [GP_A]     = { 77, 15, 7, 7, true },
-	/* the shoulders */
-	[GP_L2]    = { 0, 0, 10, 6, false },  [GP_L1]    = { 12, 0, 10, 6, false },
-	[GP_R1]    = { 66, 0, 10, 6, false }, [GP_R2]    = { 78, 0, 10, 6, false },
-	/* the middle */
-	[GP_VOL_DOWN] = { 31, 0, 8, 6, false }, [GP_MENU] = { 40, 0, 8, 6, false },
-	[GP_VOL_UP] = { 49, 0, 8, 6, false },
-	[GP_SELECT] = { 32, 8, 11, 6, false }, [GP_START] = { 45, 8, 11, 6, false },
-	[GP_F1]    = { 31, 16, 8, 6, false }, [GP_F2]    = { 40, 16, 8, 6, false },
-	[GP_F3]    = { 49, 16, 8, 6, false }, [GP_F4]    = { 31, 24, 8, 6, false },
-	[GP_F5]    = { 40, 24, 8, 6, false }, [GP_F6]    = { 49, 24, 8, 6, false },
-};
-
 static lv_obj_t *button_new(lv_obj_t *pad, enum gp_button b, int32_t q)
 {
 	lv_obj_t *cell = lv_obj_create(pad), *label;
@@ -390,6 +538,60 @@ static lv_obj_t *button_new(lv_obj_t *pad, enum gp_button b, int32_t q)
 	lv_label_set_text(label, ui_button_name(b));
 	lv_obj_center(label);
 	return cell;
+}
+
+/* MODE_TUNE's panel (TUNE_*): a heading per stick, a row per field */
+static void tune_panel(struct input_test *t, lv_obj_t *pad, int32_t q)
+{
+	static const enum str_id fields[TUNE_FIELDS] = { S_DEAD_ZONE, S_SENSITIVITY };
+	lv_obj_t *panel = lv_obj_create(pad);
+	int s, f;
+
+	lv_obj_remove_style_all(panel);
+	lv_obj_set_pos(panel, TUNE_X * q, 0);
+	lv_obj_set_size(panel, TUNE_W * q, TUNE_H * q);
+	lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+	lv_obj_set_style_pad_row(panel, ui_px(1), 0);
+	lv_obj_set_scrollable(panel, false);
+	for (s = 0; s < INPUT_STICKS; s++) {
+		lv_obj_t *head;
+
+		if (!t->dot[s])
+			continue;
+		head = lv_label_create(panel);
+		lv_obj_set_style_pad_left(head, ui_px(4), 0);
+		lv_obj_set_style_text_font(head, UI_FONT_SMALL, 0);
+		lv_obj_set_style_text_color(head, UI_COLOR_DIM, 0);
+		lv_label_set_text(head, tr(s ? S_RIGHT_STICK : S_LEFT_STICK));
+		for (f = 0; f < TUNE_FIELDS; f++) {
+			lv_obj_t *row = lv_obj_create(panel), *name, *value;
+
+			lv_obj_remove_style_all(row);
+			lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+			lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+			lv_obj_set_style_pad_hor(row, ui_px(4), 0);
+			lv_obj_set_style_pad_ver(row, ui_px(1), 0);
+			lv_obj_set_style_pad_column(row, ui_px(4), 0);
+			lv_obj_set_style_radius(row, ui_px(6), 0);
+			lv_obj_set_style_bg_color(row, UI_COLOR_ON, LV_STATE_CHECKED);
+			lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_CHECKED);
+			lv_obj_set_scrollable(row, false);
+			name = lv_label_create(row);
+			lv_obj_set_style_text_font(name, UI_FONT_SMALL, 0);
+			lv_obj_set_flex_grow(name, 1);
+			/* one line, cut with dots if it must */
+			lv_obj_set_height(name, lv_font_get_line_height(UI_FONT_SMALL));
+			lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+			lv_label_set_text(name, tr(fields[f]));
+			value = lv_label_create(row);
+			lv_obj_set_style_text_font(value, UI_FONT_SMALL, 0);
+			t->row[s][f] = row;
+			t->row_value[s][f] = value;
+		}
+	}
+	lv_obj_set_hidden(panel, true);
+	t->tune = panel;
 }
 
 static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
@@ -437,6 +639,8 @@ static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 		stick_box(t, pad, 15 * q - t->stick / 2, stick_y, &t->dot[0], t->edge[0]);
 	if (axes & RIGHT_STICK)
 		stick_box(t, pad, 73 * q - t->stick / 2, stick_y, &t->dot[1], t->edge[1]);
+	if (t->dot[0] || t->dot[1])
+		tune_panel(t, pad, q);
 
 	/* the values and what to do, in the middle under the buttons */
 	text = lv_obj_create(pad);
@@ -464,7 +668,11 @@ static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 static void input_test_deinit(void *self)
 {
 	struct input_test *t = self;
+	int s;
 
+	if (t->mode == MODE_TUNE)	/* left without saving */
+		for (s = 0; s < INPUT_STICKS; s++)
+			input_set_stick_tune(s, &t->before[s]);
 	view_input_release(self);
 	if (t->timer)
 		lv_timer_delete(t->timer);

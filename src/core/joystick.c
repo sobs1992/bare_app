@@ -84,6 +84,18 @@ void joy_stick_apply(const struct joy_stick_cal *c, float deadzone, float x, flo
 	*out_y = uy / len * r;
 }
 
+void joy_stick_gain(float gain, float *x, float *y)
+{
+	float r = hypotf(*x, *y) * gain;
+
+	if (r <= 0)
+		return;
+	if (r > 1)
+		gain /= r;	/* the same direction on the edge */
+	*x *= gain;
+	*y *= gain;
+}
+
 int joy_stick_format(const struct joy_stick_cal *c, char *buf, size_t size)
 {
 	int n = snprintf(buf, size, "%.4f %.4f %.4f %.4f %.4f %.4f", (double)c->cx, (double)c->cy,

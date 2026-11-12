@@ -113,6 +113,20 @@ static void test_joystick(void)
 	joy_stick_apply(&sc, 0.15f, 0.1f, -0.95f, &x, &y);
 	CHECK(NEAR(x, 0) && NEAR(y, -1));
 
+	/* sensitivity: scaled, cut at the edge in the same direction */
+	x = 0.3f, y = -0.4f;
+	joy_stick_gain(1.5f, &x, &y);
+	CHECK(NEAR(x, 0.45f) && NEAR(y, -0.6f));
+	x = 0.6f, y = 0.8f;
+	joy_stick_gain(2, &x, &y);
+	CHECK(NEAR(x, 0.6f) && NEAR(y, 0.8f));
+	x = 1, y = 0;
+	joy_stick_gain(0.5f, &x, &y);
+	CHECK(NEAR(x, 0.5f) && NEAR(y, 0));
+	x = y = 0;
+	joy_stick_gain(2, &x, &y);
+	CHECK(x == 0 && y == 0);
+
 	/* settings file text */
 	CHECK(joy_stick_format(&sc, buf, sizeof(buf)) > 0);
 	CHECK(joy_stick_parse(buf, &back));
@@ -564,6 +578,47 @@ static void test_input(void)
 	mainloop_run(ml);
 	CHECK(seen.down == 1 && seen.up == 1);
 	CHECK(seen.repeats >= 3 && seen.repeats <= 5);
+
+	/* a stick's dead zone and sensitivity, kept in range, from and to the file */
+	{
+		const char *path = "test_sticks.conf";
+		struct input_stick_tune t = { .deadzone = 0.2f, .sensitivity = 2 };
+		FILE *f;
+
+		input_set_stick_tune(1, &t);
+		input_report_axis(GP_AXIS_RX, 0.1f);	/* in the dead zone */
+		CHECK(NEAR(input_axis(GP_AXIS_RX), 0));
+		input_report_axis(GP_AXIS_RX, 0.4f);	/* (0.4 - 0.2) / 0.8 * 2 */
+		CHECK(NEAR(input_axis(GP_AXIS_RX), 0.5f));
+		input_report_axis(GP_AXIS_RX, 0.9f);	/* cut at the edge */
+		CHECK(NEAR(input_axis(GP_AXIS_RX), 1));
+		t.deadzone = 3, t.sensitivity = 0;
+		input_set_stick_tune(1, &t);
+		input_stick_tune(1, &t);
+		CHECK(NEAR(t.deadzone, INPUT_DEADZONE_MAX) && NEAR(t.sensitivity, INPUT_SENS_MIN));
+
+		f = fopen(path, "w");
+		CHECK(f != NULL);
+		if (f) {
+			fputs("left.deadzone = 0.07\nleft.sensitivity = 1.25\nright.bogus = 1\n", f);
+			fclose(f);
+		}
+		CHECK(input_load_calibration(path) == 0);
+		input_stick_tune(0, &t);
+		CHECK(NEAR(t.deadzone, 0.07f) && NEAR(t.sensitivity, 1.25f));
+		input_set_stick_tune(0, NULL);	/* the default: cfg's dead zone */
+		input_stick_tune(0, &t);
+		CHECK(NEAR(t.deadzone, cfg.stick_deadzone) && NEAR(t.sensitivity, 1));
+		t.deadzone = 0.3f;
+		input_set_stick_tune(0, &t);
+		CHECK(input_save_calibration() == 0);
+		input_set_stick_tune(0, NULL);
+		CHECK(input_load_calibration(path) == 0);
+		input_stick_tune(0, &t);
+		CHECK(NEAR(t.deadzone, 0.3f));
+		unlink(path);
+		input_report_axis(GP_AXIS_RX, 0);
+	}
 
 	input_deinit();
 	mainloop_free(ml);

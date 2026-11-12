@@ -32,6 +32,9 @@ struct joy_stick_cal {
 void joy_stick_default(struct joy_stick_cal *c, float rest_x, float rest_y);
 void joy_stick_apply(const struct joy_stick_cal *c, float deadzone, float x, float y,
 		     float *out_x, float *out_y);
+/* Sensitivity: a stick's position (out of joy_stick_apply()) times gain,
+ * cut at the unit circle */
+void joy_stick_gain(float gain, float *x, float *y);
 
 /* "cx cy xn xp yn yp edge0 .. edge15", for a settings file */
 int joy_stick_format(const struct joy_stick_cal *c, char *buf, size_t size);

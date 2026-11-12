@@ -187,6 +187,12 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_CONTROLS_RESET_ALL] = { "All buttons as they were" RU("Все кнопки как были") },
 	[S_STREAM]          = { "Stream (RTSP)" RU("Трансляция (RTSP)") },
 	[S_STREAM_FAILED]   = { "did not start" RU("не запустилась") },
+	[S_LEFT_STICK]      = { "Left stick" RU("Левый стик") },
+	[S_RIGHT_STICK]     = { "Right stick" RU("Правый стик") },
+	[S_DEAD_ZONE]       = { "Dead zone" RU("Мёртвая зона") },
+	[S_SENSITIVITY]     = { "Sensitivity" RU("Чувствительность") },
+	[S_SAVE]            = { "Save" RU("Сохранить") },
+	[S_STICK_TUNE_SAVED] = { "Stick settings saved" RU("Настройки стиков сохранены") },
 };
 
 static int lang = LANG_EN;

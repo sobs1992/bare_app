@@ -52,7 +52,7 @@ struct input_config {
 	uint32_t repeat_period_ms;
 	float stick_press;	/* stick deflection that presses a direction */
 	float stick_release;	/* ...and releases it (hysteresis) */
-	float stick_deadzone;	/* round, 0..1 of the calibrated reach */
+	float stick_deadzone;	/* round, 0..1 of the calibrated reach: the default */
 };
 
 void input_init(struct mainloop *ml, const struct input_config *cfg, input_cb cb, void *ud);
@@ -88,7 +88,8 @@ float input_axis(enum gp_axis a);	/* calibrated, -1..1 */
 /*
  * Stick calibration: stick 0 is the left one (LX/LY), 1 the right one.
  * Without one (NULL) the stick's rest position and the driver's range are
- * used. The file has a line per calibrated stick: "left = <joy_stick_format()>".
+ * used. The file has a line per calibrated stick: "left = <joy_stick_format()>",
+ * and its dead zone and sensitivity (input_set_stick_tune()).
  */
 #define INPUT_STICKS 2
 void input_raw_stick(int stick, float *x, float *y);	/* before calibration */
@@ -96,6 +97,25 @@ bool input_calibration(int stick, struct joy_stick_cal *c);	/* false: none, c th
 void input_set_calibration(int stick, const struct joy_stick_cal *c);
 int input_load_calibration(const char *path);	/* "~/" is $HOME; NULL: memory only */
 int input_save_calibration(void);		/* to the file loaded from */
+
+/*
+ * Dead zone and sensitivity of each stick, set in the input test and
+ * saved with the calibration ("left.deadzone = 0.15", "left.sensitivity =
+ * 1.00"). The dead zone is round, a part of the calibrated reach; the
+ * sensitivity multiplies the position past it (joy_stick_gain()). Games
+ * and the stick's D-pad get the result.
+ */
+#define INPUT_DEADZONE_MAX 0.5f
+#define INPUT_SENS_MIN 0.5f
+#define INPUT_SENS_MAX 2.0f
+
+struct input_stick_tune {
+	float deadzone, sensitivity;
+};
+
+void input_stick_tune(int stick, struct input_stick_tune *t);
+void input_stick_tune_default(struct input_stick_tune *t);
+void input_set_stick_tune(int stick, const struct input_stick_tune *t);	/* NULL: default */
 
 /* What the hardware has: drivers declare it when a device appears */
 void input_declare(uint32_t buttons, uint32_t axes);	/* GP_BIT() masks, added up */

@@ -44,6 +44,7 @@ static struct {
 	struct {
 		bool set;
 		struct joy_stick_cal cal;
+		struct input_stick_tune tune;
 	} stick[INPUT_STICKS];
 	char cal_path[256];
 	uint32_t buttons_present, axes_present;
@@ -122,11 +123,15 @@ void input_init(struct mainloop *ml, const struct input_config *cfg, input_cb cb
 		.stick_deadzone = 0.15f,
 	};
 
+	int s;
+
 	memset(&in, 0, sizeof(in));
 	in.ml = ml;
 	in.cfg = cfg ? *cfg : def;
 	in.cb = cb;
 	in.ud = ud;
+	for (s = 0; s < INPUT_STICKS; s++)
+		input_stick_tune_default(&in.stick[s].tune);
 }
 
 void input_deinit(void)
@@ -185,8 +190,9 @@ static void update_stick(int s)
 	struct joy_stick_cal def;
 	float x, y;
 
-	joy_stick_apply(stick_cal(s, &def), in.cfg.stick_deadzone, in.raw[2 * s], in.raw[2 * s + 1],
-			&x, &y);
+	joy_stick_apply(stick_cal(s, &def), in.stick[s].tune.deadzone, in.raw[2 * s],
+			in.raw[2 * s + 1], &x, &y);
+	joy_stick_gain(in.stick[s].tune.sensitivity, &x, &y);
 	set_axis(2 * s, x);
 	set_axis(2 * s + 1, y);
 	if (s == 0)
@@ -250,7 +256,63 @@ void input_set_calibration(int stick, const struct joy_stick_cal *c)
 	update_stick(stick);
 }
 
+static float clampf(float v, float lo, float hi)
+{
+	return v < lo ? lo : v > hi ? hi : v;
+}
+
+void input_stick_tune_default(struct input_stick_tune *t)
+{
+	t->deadzone = clampf(in.cfg.stick_deadzone, 0, INPUT_DEADZONE_MAX);
+	t->sensitivity = 1;
+}
+
+void input_stick_tune(int stick, struct input_stick_tune *t)
+{
+	if (stick < 0 || stick >= INPUT_STICKS)
+		input_stick_tune_default(t);
+	else
+		*t = in.stick[stick].tune;
+}
+
+void input_set_stick_tune(int stick, const struct input_stick_tune *t)
+{
+	struct input_stick_tune *to;
+
+	if (stick < 0 || stick >= INPUT_STICKS)
+		return;
+	to = &in.stick[stick].tune;
+	if (!t) {
+		input_stick_tune_default(to);
+	} else {
+		to->deadzone = clampf(t->deadzone, 0, INPUT_DEADZONE_MAX);
+		to->sensitivity = clampf(t->sensitivity, INPUT_SENS_MIN, INPUT_SENS_MAX);
+	}
+	update_stick(stick);
+}
+
 static const char *const stick_names[INPUT_STICKS] = { "left", "right" };
+
+/* "left.deadzone = 0.15": a stick's dead zone or sensitivity */
+static bool load_tune_line(int s, const char *field, const char *value)
+{
+	struct input_stick_tune t = in.stick[s].tune;
+	char *end;
+	float v = strtof(value, &end);
+
+	while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')
+		end++;
+	if (end == value || *end)
+		return false;
+	if (!strcmp(field, "deadzone"))
+		t.deadzone = v;
+	else if (!strcmp(field, "sensitivity"))
+		t.sensitivity = v;
+	else
+		return false;
+	input_set_stick_tune(s, &t);
+	return true;
+}
 
 int input_load_calibration(const char *path)
 {
@@ -274,7 +336,7 @@ int input_load_calibration(const char *path)
 		return errno == ENOENT ? 0 : -1;
 	}
 	while (fgets(line, sizeof(line), f)) {
-		char *eq = strchr(line, '='), *key = line;
+		char *eq = strchr(line, '='), *key = line, *dot;
 		struct joy_stick_cal c;
 		int s;
 
@@ -285,9 +347,17 @@ int input_load_calibration(const char *path)
 			key++;
 		for (char *e = eq; e > key && e[-1] == ' '; )
 			*--e = '\0';
+		dot = strchr(key, '.');
+		if (dot)
+			*dot = '\0';
 		for (s = 0; s < INPUT_STICKS; s++)
 			if (!strcmp(key, stick_names[s]))
 				break;
+		if (dot) {
+			if (s == INPUT_STICKS || !load_tune_line(s, dot + 1, eq + 1))
+				LOGW(TAG, "%s: bad line \"%s.%s\"", in.cal_path, key, dot + 1);
+			continue;
+		}
 		if (s == INPUT_STICKS || !joy_stick_parse(eq + 1, &c)) {
 			LOGW(TAG, "%s: bad line \"%s\"", in.cal_path, key);
 			continue;
@@ -313,9 +383,13 @@ int input_save_calibration(void)
 		return -1;
 	}
 	fputs("# bare_app stick calibration, written by the input test\n", f);
-	for (s = 0; s < INPUT_STICKS; s++)
+	for (s = 0; s < INPUT_STICKS; s++) {
 		if (in.stick[s].set && joy_stick_format(&in.stick[s].cal, buf, sizeof(buf)) > 0)
 			fprintf(f, "%s = %s\n", stick_names[s], buf);
+		fprintf(f, "%s.deadzone = %.2f\n%s.sensitivity = %.2f\n", stick_names[s],
+			(double)in.stick[s].tune.deadzone, stick_names[s],
+			(double)in.stick[s].tune.sensitivity);
+	}
 	if (fflush(f) || fsync(fileno(f)))
 		err = -1;
 	if (fclose(f) || err || rename(tmp, in.cal_path)) {
