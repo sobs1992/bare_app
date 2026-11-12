@@ -123,6 +123,39 @@ static void test_joystick(void)
 	x = 1, y = 0;
 	joy_stick_gain(0.5f, &x, &y);
 	CHECK(NEAR(x, 0.5f) && NEAR(y, 0));
+
+	/* snap-back, a reading every 10 ms */
+	{
+		struct joy_snap sn = { 0 };
+		unsigned long long t = 0;
+		int i;
+		bool held = false;
+
+		/* held down, let go: 1 -> 0.3 in 40 ms, then creeping to 0 */
+		for (i = 0; i < 20; i++, t += 10)
+			CHECK(!joy_snap_update(&sn, t, 1));
+		CHECK(!joy_snap_update(&sn, t += 10, 0.8f));
+		CHECK(!joy_snap_update(&sn, t += 10, 0.6f));
+		joy_snap_update(&sn, t += 10, 0.45f);
+		CHECK(joy_snap_update(&sn, t += 10, 0.3f));	/* fell fast: at rest */
+		for (i = 0; i < 100; i++)			/* the slow creep stays at rest */
+			CHECK(joy_snap_update(&sn, t += 10, 0.3f - 0.003f * (float)i));
+		CHECK(joy_snap_update(&sn, t += 10, 0.05f));	/* noise near the low */
+		CHECK(!joy_snap_update(&sn, t += 10, 0.5f));	/* pushed out again */
+
+		/* brought back slowly by hand: never "at rest" early */
+		for (i = 0; i < 20; i++, t += 10)
+			joy_snap_update(&sn, t, 1);
+		for (i = 0; i <= 100; i++)
+			held |= joy_snap_update(&sn, t += 10, 1 - 0.01f * (float)i);
+		CHECK(!held);
+
+		/* flicked across: at rest a moment, then the other side counts */
+		for (i = 0; i < 20; i++, t += 10)
+			joy_snap_update(&sn, t, 1);
+		CHECK(joy_snap_update(&sn, t += 10, 0.1f));
+		CHECK(!joy_snap_update(&sn, t += 10, 0.9f));
+	}
 	x = y = 0;
 	joy_stick_gain(2, &x, &y);
 	CHECK(x == 0 && y == 0);

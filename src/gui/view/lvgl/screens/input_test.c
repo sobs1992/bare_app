@@ -14,8 +14,8 @@
  * Y goes back to no calibration, B cancels. The test then shows the
  * calibrated sticks: the edge is the box's circle.
  *
- * X pressed twice tunes the sticks: the dead zone and the sensitivity of
- * each (core/input), in a panel over the middle buttons. Up and down pick
+ * X pressed twice tunes the sticks: the dead zone, the sensitivity and
+ * snap-back of each (core/input), in a panel over the middle buttons. Up and down pick
  * a row, left and right change it at once (the dots show it), A saves
  * with the calibration, Y sets the defaults, B cancels. The left stick
  * stays a stick there, not a D-pad.
@@ -37,14 +37,15 @@
 #define REST_SPREAD 0.04f	/* ...moving less than that */
 #define DEADZONE_STEP 0.01f
 #define SENS_STEP 0.05f
-#define TUNE_FIELDS 2		/* a row per field of each stick: dead zone, sensitivity */
+#define TUNE_FIELDS 3		/* a row per field of each stick: dead zone, sensitivity, snap-back */
 
 /* The tuning panel in place of the middle buttons (hidden meanwhile):
- * between the D-pad and X Y A B, from the top down to the values
+ * between the D-pad and X Y A B, from the top down as far as its rows
+ * need; the values move down under it when it is longer (two sticks)
  * (quarter cells) */
 #define TUNE_X 26
 #define TUNE_W 37
-#define TUNE_H 31
+#define TEXT_Y 32		/* the values and the hint */
 
 #define LEFT_STICK  (GP_BIT(GP_AXIS_LX) | GP_BIT(GP_AXIS_LY))
 #define RIGHT_STICK (GP_BIT(GP_AXIS_RX) | GP_BIT(GP_AXIS_RY))
@@ -63,6 +64,8 @@ struct input_test {
 	lv_obj_t *dot[INPUT_STICKS];	/* NULL: no such stick */
 	lv_obj_t *edge[INPUT_STICKS][JOY_CAL_BINS];
 	lv_obj_t *values, *hint, *footer;
+	lv_obj_t *text;			/* the box of values and hint */
+	int32_t q, body_h;
 	uint32_t last_a, last_b, last_x;
 	/* MODE_TUNE: the panel, a row per stick and field (NULL: no such stick) */
 	lv_obj_t *tune, *row[INPUT_STICKS][TUNE_FIELDS], *row_value[INPUT_STICKS][TUNE_FIELDS];
@@ -218,6 +221,16 @@ static void show_tune(struct input_test *t)
 	for (b = 0; b < GP_COUNT; b++)
 		if (t->cell[b] && spots[b].x >= TUNE_X && spots[b].x + spots[b].w <= TUNE_X + TUNE_W)
 			lv_obj_set_hidden(t->cell[b], t->mode == MODE_TUNE);
+	if (t->text) {
+		int32_t y = TEXT_Y * t->q;
+
+		if (t->mode == MODE_TUNE) {
+			lv_obj_update_layout(t->tune);
+			y = LV_MAX(y, lv_obj_get_y(t->tune) + lv_obj_get_height(t->tune) + t->q);
+		}
+		lv_obj_set_pos(t->text, 29 * t->q, y);
+		lv_obj_set_height(t->text, LV_MAX(t->body_h - y, 0));
+	}
 	if (t->mode != MODE_TUNE)
 		return;
 	for (s = 0; s < INPUT_STICKS; s++) {
@@ -227,8 +240,11 @@ static void show_tune(struct input_test *t)
 			continue;
 		input_stick_tune(s, &tune);
 		for (f = 0; f < TUNE_FIELDS; f++) {
-			lv_snprintf(text, sizeof(text), "%d%%",
-				    (int)lrintf((f ? tune.sensitivity : tune.deadzone) * 100));
+			if (f == 2)
+				lv_snprintf(text, sizeof(text), "%s", tr(tune.snapback ? S_ON : S_OFF));
+			else
+				lv_snprintf(text, sizeof(text), "%d%%",
+					    (int)lrintf((f ? tune.sensitivity : tune.deadzone) * 100));
 			lv_label_set_text(t->row_value[s][f], text);
 			lv_obj_set_state(t->row[s][f], LV_STATE_CHECKED, t->sel == s * TUNE_FIELDS + f);
 		}
@@ -353,7 +369,9 @@ static void tune_change(struct input_test *t, int dir)
 	struct input_stick_tune tune;
 
 	input_stick_tune(s, &tune);
-	if (t->sel % TUNE_FIELDS)
+	if (t->sel % TUNE_FIELDS == 2)
+		tune.snapback = !tune.snapback;
+	else if (t->sel % TUNE_FIELDS)
 		tune.sensitivity = roundf(tune.sensitivity / SENS_STEP + (float)dir) * SENS_STEP;
 	else
 		tune.deadzone = roundf(tune.deadzone / DEADZONE_STEP + (float)dir) * DEADZONE_STEP;
@@ -543,13 +561,13 @@ static lv_obj_t *button_new(lv_obj_t *pad, enum gp_button b, int32_t q)
 /* MODE_TUNE's panel (TUNE_*): a heading per stick, a row per field */
 static void tune_panel(struct input_test *t, lv_obj_t *pad, int32_t q)
 {
-	static const enum str_id fields[TUNE_FIELDS] = { S_DEAD_ZONE, S_SENSITIVITY };
+	static const enum str_id fields[TUNE_FIELDS] = { S_DEAD_ZONE, S_SENSITIVITY, S_SNAPBACK };
 	lv_obj_t *panel = lv_obj_create(pad);
 	int s, f;
 
 	lv_obj_remove_style_all(panel);
 	lv_obj_set_pos(panel, TUNE_X * q, 0);
-	lv_obj_set_size(panel, TUNE_W * q, TUNE_H * q);
+	lv_obj_set_size(panel, TUNE_W * q, LV_SIZE_CONTENT);
 	lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 	lv_obj_set_style_pad_row(panel, ui_px(1), 0);
@@ -645,8 +663,11 @@ static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 	/* the values and what to do, in the middle under the buttons */
 	text = lv_obj_create(pad);
 	lv_obj_remove_style_all(text);
-	lv_obj_set_pos(text, 29 * q, 32 * q);
-	lv_obj_set_size(text, 30 * q, lv_area_get_height(&body) - 32 * q);
+	lv_obj_set_pos(text, 29 * q, TEXT_Y * q);
+	lv_obj_set_size(text, 30 * q, lv_area_get_height(&body) - TEXT_Y * q);
+	t->text = text;
+	t->q = q;
+	t->body_h = lv_area_get_height(&body);
 	lv_obj_set_flex_flow(text, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_flex_align(text, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	if (axes & (LEFT_STICK | RIGHT_STICK)) {

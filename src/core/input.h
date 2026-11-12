@@ -101,9 +101,11 @@ int input_save_calibration(void);		/* to the file loaded from */
 /*
  * Dead zone and sensitivity of each stick, set in the input test and
  * saved with the calibration ("left.deadzone = 0.15", "left.sensitivity =
- * 1.00"). The dead zone is round, a part of the calibrated reach; the
- * sensitivity multiplies the position past it (joy_stick_gain()). Games
- * and the stick's D-pad get the result.
+ * 1.00", "left.snapback = 1"). The dead zone is round, a part of the
+ * calibrated reach; the sensitivity multiplies the position past it
+ * (joy_stick_gain()); snap-back puts a stick that creeps home slowly after
+ * being let go at rest at once (joy_snap_update()). Games and the stick's
+ * D-pad get the result.
  */
 #define INPUT_DEADZONE_MAX 0.5f
 #define INPUT_SENS_MIN 0.5f
@@ -111,6 +113,7 @@ int input_save_calibration(void);		/* to the file loaded from */
 
 struct input_stick_tune {
 	float deadzone, sensitivity;
+	bool snapback;
 };
 
 void input_stick_tune(int stick, struct input_stick_tune *t);

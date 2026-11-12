@@ -1,6 +1,7 @@
 #include "input.h"
 
 #include <errno.h>
+#include <math.h>
 #include <linux/input-event-codes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +46,7 @@ static struct {
 		bool set;
 		struct joy_stick_cal cal;
 		struct input_stick_tune tune;
+		struct joy_snap snap;
 	} stick[INPUT_STICKS];
 	char cal_path[256];
 	uint32_t buttons_present, axes_present;
@@ -192,6 +194,8 @@ static void update_stick(int s)
 
 	joy_stick_apply(stick_cal(s, &def), in.stick[s].tune.deadzone, in.raw[2 * s],
 			in.raw[2 * s + 1], &x, &y);
+	if (joy_snap_update(&in.stick[s].snap, now_ms(), hypotf(x, y)) && in.stick[s].tune.snapback)
+		x = y = 0;
 	joy_stick_gain(in.stick[s].tune.sensitivity, &x, &y);
 	set_axis(2 * s, x);
 	set_axis(2 * s + 1, y);
@@ -265,6 +269,7 @@ void input_stick_tune_default(struct input_stick_tune *t)
 {
 	t->deadzone = clampf(in.cfg.stick_deadzone, 0, INPUT_DEADZONE_MAX);
 	t->sensitivity = 1;
+	t->snapback = false;
 }
 
 void input_stick_tune(int stick, struct input_stick_tune *t)
@@ -287,13 +292,14 @@ void input_set_stick_tune(int stick, const struct input_stick_tune *t)
 	} else {
 		to->deadzone = clampf(t->deadzone, 0, INPUT_DEADZONE_MAX);
 		to->sensitivity = clampf(t->sensitivity, INPUT_SENS_MIN, INPUT_SENS_MAX);
+		to->snapback = t->snapback;
 	}
 	update_stick(stick);
 }
 
 static const char *const stick_names[INPUT_STICKS] = { "left", "right" };
 
-/* "left.deadzone = 0.15": a stick's dead zone or sensitivity */
+/* "left.deadzone = 0.15": a stick's dead zone, sensitivity or snap-back */
 static bool load_tune_line(int s, const char *field, const char *value)
 {
 	struct input_stick_tune t = in.stick[s].tune;
@@ -308,6 +314,8 @@ static bool load_tune_line(int s, const char *field, const char *value)
 		t.deadzone = v;
 	else if (!strcmp(field, "sensitivity"))
 		t.sensitivity = v;
+	else if (!strcmp(field, "snapback"))
+		t.snapback = v != 0;
 	else
 		return false;
 	input_set_stick_tune(s, &t);
@@ -386,9 +394,10 @@ int input_save_calibration(void)
 	for (s = 0; s < INPUT_STICKS; s++) {
 		if (in.stick[s].set && joy_stick_format(&in.stick[s].cal, buf, sizeof(buf)) > 0)
 			fprintf(f, "%s = %s\n", stick_names[s], buf);
-		fprintf(f, "%s.deadzone = %.2f\n%s.sensitivity = %.2f\n", stick_names[s],
-			(double)in.stick[s].tune.deadzone, stick_names[s],
-			(double)in.stick[s].tune.sensitivity);
+		fprintf(f, "%s.deadzone = %.2f\n%s.sensitivity = %.2f\n%s.snapback = %d\n",
+			stick_names[s], (double)in.stick[s].tune.deadzone, stick_names[s],
+			(double)in.stick[s].tune.sensitivity, stick_names[s],
+			in.stick[s].tune.snapback);
 	}
 	if (fflush(f) || fsync(fileno(f)))
 		err = -1;

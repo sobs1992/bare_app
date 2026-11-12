@@ -36,6 +36,31 @@ void joy_stick_apply(const struct joy_stick_cal *c, float deadzone, float x, flo
  * cut at the unit circle */
 void joy_stick_gain(float gain, float *x, float *y);
 
+/*
+ * Snap-back: a stick whose spring is weak jumps most of the way home when
+ * let go, then creeps the rest slowly, and a game keeps moving all that
+ * while. joy_snap_update() takes each new distance from the rest position
+ * (calibrated, 0..1) with its time; after a fast fall towards the rest
+ * position (JOY_SNAP_DROP within JOY_SNAP_WINDOW_MS, ending below
+ * JOY_SNAP_LEFT of where it fell from) it says "at rest" (true) until the
+ * stick goes out again JOY_SNAP_REARM past the nearest point since.
+ */
+#define JOY_SNAP_WINDOW_MS 150
+#define JOY_SNAP_DROP 0.35f
+#define JOY_SNAP_LEFT 0.6f
+#define JOY_SNAP_REARM 0.08f
+#define JOY_SNAP_SAMPLES 32
+
+struct joy_snap {
+	bool held;		/* the fall was seen: at rest */
+	float low;		/* nearest to the rest position since */
+	unsigned head, count;
+	float r[JOY_SNAP_SAMPLES];
+	unsigned long long t[JOY_SNAP_SAMPLES];
+};
+
+bool joy_snap_update(struct joy_snap *s, unsigned long long now_ms, float r);
+
 /* "cx cy xn xp yn yp edge0 .. edge15", for a settings file */
 int joy_stick_format(const struct joy_stick_cal *c, char *buf, size_t size);
 bool joy_stick_parse(const char *s, struct joy_stick_cal *c);

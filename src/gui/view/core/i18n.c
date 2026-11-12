@@ -191,6 +191,7 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_RIGHT_STICK]     = { "Right stick" RU("Правый стик") },
 	[S_DEAD_ZONE]       = { "Dead zone" RU("Мёртвая зона") },
 	[S_SENSITIVITY]     = { "Sensitivity" RU("Чувствительность") },
+	[S_SNAPBACK]        = { "Snap back" RU("Возврат в центр") },
 	[S_SAVE]            = { "Save" RU("Сохранить") },
 	[S_STICK_TUNE_SAVED] = { "Stick settings saved" RU("Настройки стиков сохранены") },
 };

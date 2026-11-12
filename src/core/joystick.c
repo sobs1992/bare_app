@@ -96,6 +96,41 @@ void joy_stick_gain(float gain, float *x, float *y)
 	*y *= gain;
 }
 
+bool joy_snap_update(struct joy_snap *s, unsigned long long now_ms, float r)
+{
+	float peak = r;
+	unsigned i;
+
+	s->head = (s->head + 1) % JOY_SNAP_SAMPLES;
+	s->r[s->head] = r;
+	s->t[s->head] = now_ms;
+	if (s->count < JOY_SNAP_SAMPLES)
+		s->count++;
+	if (s->held) {
+		if (r <= s->low + JOY_SNAP_REARM) {
+			if (r < s->low)
+				s->low = r;
+			return true;
+		}
+		s->held = false;	/* pushed out again */
+	}
+	/* the farthest point of the last moments, this one included */
+	for (i = 1; i < s->count; i++) {
+		unsigned k = (s->head + JOY_SNAP_SAMPLES - i) % JOY_SNAP_SAMPLES;
+
+		if (now_ms - s->t[k] > JOY_SNAP_WINDOW_MS)
+			break;
+		if (s->r[k] > peak)
+			peak = s->r[k];
+	}
+	if (peak - r >= JOY_SNAP_DROP && r < peak * JOY_SNAP_LEFT) {
+		s->held = true;
+		s->low = r;
+		return true;
+	}
+	return false;
+}
+
 int joy_stick_format(const struct joy_stick_cal *c, char *buf, size_t size)
 {
 	int n = snprintf(buf, size, "%.4f %.4f %.4f %.4f %.4f %.4f", (double)c->cx, (double)c->cy,
