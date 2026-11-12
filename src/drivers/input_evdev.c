@@ -51,12 +51,38 @@ struct evdev {
 	int retries;
 };
 
+/*
+ * The name of eventN from sysfs: 1 = it is want, 0 = another one, -1 = no
+ * sysfs. Opening a device to ask it starts it: an adc-joystick powers up
+ * the SARADC for ~25 ms each time, and each lookup went through the
+ * devices before the one it wanted.
+ */
+static int sysfs_name_is(int i, const char *want)
+{
+	char path[64], name[128];
+	FILE *f;
+	size_t n;
+
+	snprintf(path, sizeof(path), "/sys/class/input/event%d/device/name", i);
+	f = fopen(path, "re");
+	if (!f)
+		return -1;
+	n = fread(name, 1, sizeof(name) - 1, f);
+	fclose(f);
+	while (n > 0 && name[n - 1] == '\n')
+		n--;
+	name[n] = '\0';
+	return !strcmp(name, want);
+}
+
 static int open_by_name(const char *want, char *path, size_t size)
 {
 	char name[128];
 	int i, fd;
 
 	for (i = 0; i < 64; i++) {
+		if (sysfs_name_is(i, want) == 0)
+			continue;
 		snprintf(path, size, "/dev/input/event%d", i);
 		fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 		if (fd < 0)
