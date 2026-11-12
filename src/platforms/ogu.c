@@ -110,7 +110,9 @@ const struct platform platform_ogu = {
 		NULL },
 	.quit_combo = GP_BIT(GP_F6),
 	.poweroff = "/sbin/poweroff",	/* busybox: init runs rcK, then powers off */
-	.suspend = "/usr/sbin/pm-suspend",	/* the SDK's: suspend to idle, the power key wakes */
+	/* the SDK's: hibernate (RAM to the eMMC, off; the power key starts it
+	 * and it resumes), without its swap file suspend to idle */
+	.suspend = "/usr/sbin/pm-hibernate",
 	.usb_disk = "/usr/sbin/usb-disk",
 	.config_path = "/etc/bare_app.conf",
 };
