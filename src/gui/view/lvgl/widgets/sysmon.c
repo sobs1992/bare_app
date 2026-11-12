@@ -12,12 +12,13 @@
  *
  * Frame times are the view's own: when each frame of the game was shown
  * in the video layer, or made unchanged (view_video_frame_times()). The
- * graph is a line over the last GRAPH_SPAN_US, a point per pixel column:
- * a frame holds the columns from the frame before it to itself at the
- * height of the time it took, so a stall is a wide plateau. The scale
- * grows from 50 ms to 100 or 200 ms when frames take that long; longer
- * ones stay at the top. Hitches (core/frametimes.h) are in the warning
- * colour, the dashed lines are 60 and 30 frames a second. A game that
+ * graph is the frame rate over the last GRAPH_SPAN_US, a point per pixel
+ * column: the rate of the frames over GRAPH_WINDOW_US up to the column,
+ * each weighted by the time it held the screen, so a stall is a dip as
+ * wide as it lasted. The scale grows from 75 fps to 150 or 300 when a
+ * game runs that fast; faster stays at the top. Hitches
+ * (core/frametimes.h) are in the warning colour, the dashed lines are 30
+ * and 60 frames a second. A game that
  * does not say when its frame did not change (view_video_paced()) sends
  * nothing over a still picture: a gap over FRAMETIMES_IDLE_US is a pause
  * for it, a dim stretch at the bottom, out of the numbers, and "still"
@@ -46,7 +47,8 @@
 #define MAX_ROWS (SYSMON_MAX_CLUSTERS + 5 + SYSMON_MAX_DISKS + SYSMON_MAX_PROCS)
 #define GRAPH_H 56
 #define GRAPH_SPAN_US 10000000ULL	/* the width of a graph */
-#define GRAPH_TOPS_US { 50000, 100000, 200000 }	/* the scales; longer frames are cut */
+#define GRAPH_TOPS_FPS { 75, 150, 300 }	/* the scales (60 fps under the top); faster is cut */
+#define GRAPH_WINDOW_US 200000ULL	/* a column's rate is over this long up to it */
 #define GRAPH_MAX_W 1024
 #define TICK_MS 250			/* the graphs move on */
 #define MINI_W 340
@@ -435,24 +437,25 @@ static void show_disks(struct sysmon_view *m, const struct sysmon_info *in)
 #define COL_NONE (-1)		/* no frame there yet */
 #define COL_IDLE (-2)		/* a pause of a game with a still picture */
 
-/* The scale for frames up to worst_us */
-static uint32_t graph_top(uint32_t worst_us)
+/* The scale (frames a second * 10) for rates up to max_x10: a tenth over
+ * a scale still fits it, cut at the top */
+static int32_t graph_top(int32_t max_x10)
 {
-	static const uint32_t tops[] = GRAPH_TOPS_US;
+	static const int32_t tops[] = GRAPH_TOPS_FPS;
 	unsigned i;
 
 	for (i = 0; i + 1 < sizeof(tops) / sizeof(tops[0]); i++)
-		if (worst_us <= tops[i] - tops[i] / 10)
+		if (max_x10 <= tops[i] * 11)
 			break;
-	return tops[i];
+	return tops[i] * 10;
 }
 
-/* y of a frame time in the content area c, cut at the top */
-static int32_t graph_y(const lv_area_t *c, int32_t us, uint32_t top)
+/* y of a rate (frames a second * 10) in the content area c, cut at the top */
+static int32_t graph_y(const lv_area_t *c, int32_t fps_x10, int32_t top)
 {
 	int32_t h = lv_area_get_height(c) - 2;	/* the line is 2 px: inside */
 
-	return c->y2 - 1 - (int32_t)((int64_t)LV_MIN((uint32_t)us, top) * h / top);
+	return c->y2 - 1 - (int32_t)((int64_t)LV_MIN(fps_x10, top) * h / top);
 }
 
 static void graph_line(lv_layer_t *layer, lv_point_precise_t *p, int n, lv_color_t color)
@@ -470,7 +473,7 @@ static void graph_line(lv_layer_t *layer, lv_point_precise_t *p, int n, lv_color
 	lv_draw_line(layer, &dsc);
 }
 
-/* A dim straight line: the 60 and 30 fps marks (dashed), a pause */
+/* A dim straight line: the 30 and 60 fps marks (dashed), a pause */
 static void graph_flat(lv_layer_t *layer, int32_t x1, int32_t x2, int32_t y, bool dashed)
 {
 	lv_draw_line_dsc_t dsc;
@@ -492,33 +495,106 @@ static void graph_flat(lv_layer_t *layer, int32_t x1, int32_t x2, int32_t y, boo
 	lv_draw_line(layer, &dsc);
 }
 
+/* An interval between two frames shown */
+struct ival {
+	uint64_t t0, t1;
+	uint32_t d;
+	bool pause, hot;
+};
+
+/*
+ * The rate of each column x (frames a second * 10) into col[], COL_*:
+ * the mean of 1 / frame time over GRAPH_WINDOW_US up to the end of the
+ * column, each frame weighted by the time it held the screen there, out
+ * of the pauses. A frame of 200 ms is 5 fps over its columns; jitter of
+ * frames around 60 fps averages out. The column is a hitch or a pause
+ * when the interval at its end is. Returns the highest rate.
+ */
+static int32_t graph_rates(const struct sysmon_view *m, int32_t w, int32_t *col, bool *hot)
+{
+	static struct ival iv[FRAMETIMES_MAX];
+	uint32_t median = m->span.median_us, idle = m->paced ? 0 : FRAMETIMES_IDLE_US;
+	uint64_t from = m->now - GRAPH_SPAN_US;
+	unsigned i, n = 0, lo = 0, cover = 0;
+	int32_t x, max = 0;
+
+	for (i = 1; i <= m->nt && n < FRAMETIMES_MAX; i++) {
+		struct ival *v = &iv[n];
+
+		v->t0 = m->t[i - 1];
+		v->t1 = i < m->nt ? m->t[i] : m->now;
+		if (v->t1 <= v->t0 || v->t1 + GRAPH_WINDOW_US <= from)
+			continue;
+		v->d = (uint32_t)LV_MIN(v->t1 - v->t0, UINT32_MAX);
+		v->pause = idle && v->d > idle;
+		v->hot = !v->pause && frametimes_is_hitch(v->d, median);
+		/* the frame being waited for: only once it is late or a pause */
+		if (i == m->nt && !v->hot && !v->pause)
+			break;
+		n++;
+	}
+	for (x = 0; x < w; x++) {
+		uint64_t t = from + (uint64_t)(x + 1) * GRAPH_SPAN_US / (uint64_t)w;
+		uint64_t start = t - GRAPH_WINDOW_US, sum = 0, time = 0;
+
+		col[x] = COL_NONE;
+		hot[x] = false;
+		while (lo < n && iv[lo].t1 <= start)
+			lo++;
+		while (cover < n && iv[cover].t1 < t)
+			cover++;
+		if (cover >= n || iv[cover].t0 >= t)
+			continue;	/* no frame yet, or none since the last one */
+		if (iv[cover].pause) {
+			col[x] = COL_IDLE;
+			continue;
+		}
+		for (i = lo; i < n && iv[i].t0 < t; i++) {
+			uint64_t a = LV_MAX(iv[i].t0, start), b = LV_MIN(iv[i].t1, t);
+
+			if (iv[i].pause || b <= a)
+				continue;
+			sum += (b - a) * 10000000ULL / iv[i].d;
+			time += b - a;
+		}
+		if (!time)
+			continue;
+		col[x] = (int32_t)((sum + time / 2) / time);
+		hot[x] = iv[cover].hot;
+		max = LV_MAX(max, col[x]);
+	}
+	return max;
+}
+
 static void graph_draw(lv_event_t *e)
 {
-	static int32_t col[GRAPH_MAX_W];	/* frame time of each column (us), COL_* */
+	static int32_t col[GRAPH_MAX_W];	/* frames a second * 10 of each column, COL_* */
 	static bool hot[GRAPH_MAX_W];
 	static lv_point_precise_t pts[GRAPH_MAX_W + 1];
+	static const int32_t marks[] = { 30, 60 };
 	struct sysmon_view *m = lv_event_get_user_data(e);
 	lv_layer_t *layer = lv_event_get_layer(e);
 	lv_obj_t *obj = lv_event_get_current_target(e);
-	uint32_t median = m->span.median_us, idle = m->paced ? 0 : FRAMETIMES_IDLE_US;
-	uint32_t top = graph_top(m->span.worst_us);
-	lv_area_t c;
-	int32_t w, x, n;
-	uint64_t from;
+	int32_t top, w, x, n;
+	lv_area_t c, g;		/* the content area, the line's: under the scale */
 	unsigned i;
 
 	lv_obj_get_content_coords(obj, &c);
+	g = c;
+	g.y1 += lv_font_get_line_height(SYSMON_FONT);
 	w = LV_MIN(lv_area_get_width(&c), GRAPH_MAX_W);
-	if (w <= 1 || lv_area_get_height(&c) <= 4 || !m->now)
+	if (w <= 1 || lv_area_get_height(&g) <= 4 || !m->now)
 		return;
-	for (i = 1; i <= 2; i++)
-		graph_flat(layer, c.x1, c.x1 + w - 1, graph_y(&c, 16667 * (int32_t)i, top), true);
+	top = graph_top(graph_rates(m, w, col, hot));
+	for (i = 0; i < sizeof(marks) / sizeof(marks[0]); i++)
+		if (marks[i] * 10 < top)
+			graph_flat(layer, c.x1, c.x1 + w - 1, graph_y(&g, marks[i] * 10, top), true);
 	{	/* the scale at the top right */
 		lv_draw_label_dsc_t ld;
 		lv_area_t a = { c.x1, c.y1 + 1, c.x1 + w - 4, c.y1 + 1 + lv_font_get_line_height(SYSMON_FONT) };
 		char text[16];
 
-		snprintf(text, sizeof(text), "%u ms", (unsigned)(top / 1000));
+		snprintf(text, sizeof(text), "%d fps", (int)(top / 10));
 		lv_draw_label_dsc_init(&ld);
 		ld.text = text;
 		ld.text_local = 1;
@@ -529,33 +605,6 @@ static void graph_draw(lv_event_t *e)
 		lv_draw_label(layer, &ld, &a);
 	}
 
-	from = m->now - GRAPH_SPAN_US;
-	for (x = 0; x < w; x++) {
-		col[x] = COL_NONE;
-		hot[x] = false;
-	}
-#define COL(t) ((t) <= from ? 0 : (int32_t)LV_MIN((int64_t)(((t) - from) * w / GRAPH_SPAN_US), w - 1))
-	for (i = 1; i <= m->nt; i++) {
-		uint64_t t0 = m->t[i - 1], t1 = i < m->nt ? m->t[i] : m->now;
-		uint32_t d = t1 > t0 ? (uint32_t)LV_MIN(t1 - t0, UINT32_MAX) : 0;
-		bool pause = idle && d > idle, is_hot = !pause && frametimes_is_hitch(d, median);
-
-		if (t1 <= from)
-			continue;
-		/* the frame being waited for: only once it is late or a pause */
-		if (i == m->nt && !is_hot && !pause)
-			break;
-		for (x = COL(t0); x <= COL(t1); x++) {
-			if (pause) {
-				if (col[x] == COL_NONE)
-					col[x] = COL_IDLE;
-			} else if ((int32_t)d > col[x]) {
-				col[x] = (int32_t)d;
-				hot[x] = is_hot;
-			}
-		}
-	}
-#undef COL
 	/* a polyline per stretch of one colour; pauses break it */
 	for (x = 0; x < w;) {
 		bool h = hot[x];
@@ -576,10 +625,10 @@ static void graph_draw(lv_event_t *e)
 		/* from the last point of the stretch before: no gap in the line */
 		if (x > 0 && col[x - 1] >= 0) {
 			pts[n].x = c.x1 + x - 1;
-			pts[n++].y = graph_y(&c, col[x - 1], top);
+			pts[n++].y = graph_y(&g, col[x - 1], top);
 		}
 		for (; x < w && col[x] >= 0 && hot[x] == h; x++) {
-			int32_t y = graph_y(&c, col[x], top);
+			int32_t y = graph_y(&g, col[x], top);
 
 			/* a run of one height: one segment */
 			if (n >= 2 && pts[n - 1].y == y && pts[n - 2].y == y) {
