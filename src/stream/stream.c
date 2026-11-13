@@ -38,6 +38,9 @@
 #define AUDIO_RATE 48000
 #define AUDIO_CHUNK 480		/* frames: 10 ms */
 #define SNDBUF (1 << 20)
+/* UDP: a frame goes out at once, a key frame or a new picture in a few
+ * hundred packets; the default room (~90 of them) dropped some */
+#define UDP_SNDBUF (2 << 20)
 #define UDP_BASE 6970		/* video RTP, RTCP, audio RTP, RTCP, TS RTP, RTCP */
 #define TS_DELAY 9000		/* 90 kHz: the PTS ahead of the PCR */
 #define PATH "live"
@@ -108,6 +111,8 @@ static struct {
 	atomic_int kbps_now;	/* the same, for other threads */
 	uint64_t rate_cut_ms, rate_up_ms, idr_ms, stats_ms;
 	unsigned encoded;	/* frames since stats_ms */
+	unsigned unsent;	/* UDP packets the socket had no room for, since stats_ms */
+	bool cut;		/* ...some of the frame being sent */
 	bool audio_ok;		/* the capture device opened */
 	void *cap, *play;	/* PCM handles */
 	struct pcm_alsa_params cap_params, play_params;
@@ -186,8 +191,11 @@ static void send_to(void *ud, const uint8_t *pkt, size_t len)
 	} else {
 		const struct sockaddr_in *to = d->rtcp ? &o->rtcp : &o->rtp;
 
-		sendto(st.udp[d->track][d->rtcp], pkt, len, MSG_DONTWAIT, (const struct sockaddr *)to,
-		       sizeof(*to));
+		if (sendto(st.udp[d->track][d->rtcp], pkt, len, MSG_DONTWAIT, (const struct sockaddr *)to,
+			   sizeof(*to)) < 0 && (errno == EAGAIN || errno == ENOBUFS) && !d->rtcp) {
+			st.unsent++;
+			st.cut = true;
+		}
 	}
 }
 
@@ -415,7 +423,10 @@ static void log_reports(void)
 	}
 	LOGI(TAG, "%dx%d, %u.%u frames/s encoded, %d kbit/s", st.enc_width, st.enc_height,
 	     st.encoded * 1000 / STATS_MS, st.encoded * 10000 / STATS_MS % 10, st.kbps);
+	if (st.unsent)
+		LOGW(TAG, "%u packets not sent: no room in the socket", st.unsent);
 	st.encoded = 0;
+	st.unsent = 0;
 }
 
 /* The encoder for frames of another size (lock held) */
@@ -495,6 +506,15 @@ static void encode_and_send(void)
 			params = NULL;
 		ts_video(&st.ts, au, size, idr, params, params_size, clock + TS_DELAY, clock, ts_send,
 			 &rtp_time);
+	}
+	if (st.cut) {
+		/* the players got a broken picture: a key frame, less to send */
+		st.cut = false;
+		rate_down("packets not sent: the link is slower than the stream");
+		if (now / 1000 - st.idr_ms >= IDR_MIN_MS) {
+			st.idr_ms = now / 1000;
+			st.want_idr = true;
+		}
 	}
 	pthread_mutex_unlock(&st.lock);
 }
@@ -944,7 +964,11 @@ static int udp_socket(int port)
 {
 	struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons((uint16_t)port) };
 	int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+	int buf = UDP_SNDBUF;
 
+	/* past net.core.wmem_max when it may (root) */
+	if (fd >= 0 && setsockopt(fd, SOL_SOCKET, SO_SNDBUFFORCE, &buf, sizeof(buf)) < 0)
+		setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &buf, sizeof(buf));
 	if (fd >= 0 && bind(fd, (struct sockaddr *)&a, sizeof(a)) < 0) {
 		LOGW(TAG, "UDP port %d: %s", port, strerror(errno));
 		close(fd);

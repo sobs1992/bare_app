@@ -44,6 +44,7 @@ struct game_proc {
 	unsigned full_front;	/* the game's own picture held */
 	struct hal_fb full_fb;
 	uint64_t full_ms;	/* now_ms() it came, 0 none */
+	uint64_t frame_ms;	/* now_ms() of the last frame (or "the same") */
 	unsigned front;		/* buffer the view thread reads */
 	struct hal_fb fb;
 	bool ended;
@@ -235,6 +236,8 @@ void game_proc_want_full(struct game_proc *g, bool want)
 {
 	if (g->shm->full_width && atomic_load(&g->shm->full_want) != want)
 		atomic_store(&g->shm->full_want, want);
+	if (!want)
+		g->full_ms = 0;	/* what it gave before is old when asked again */
 }
 
 const struct hal_fb *game_proc_full(struct game_proc *g)
@@ -255,8 +258,14 @@ const struct hal_fb *game_proc_full(struct game_proc *g)
 		};
 		g->full_ms = now;
 	}
-	return g->full_ms && now - g->full_ms < 1000 && g->full_fb.width && g->full_fb.height ?
-		       &g->full_fb : NULL;
+	/*
+	 * The last one while the game draws nothing (loading, a new screen):
+	 * the stream keeps its size. A game that draws its frames for a second
+	 * without one has stopped giving it (a view no bigger than the frame).
+	 */
+	if (!g->full_ms || g->frame_ms > g->full_ms + 1000)
+		return NULL;
+	return g->full_fb.width && g->full_fb.height ? &g->full_fb : NULL;
 }
 
 int game_proc_fd(struct game_proc *g)
@@ -274,6 +283,7 @@ const struct hal_fb *game_proc_frame(struct game_proc *g, bool *ended, bool *sam
 		n = recv(g->sock, &m, sizeof(m), 0);
 		if (n == (ssize_t)sizeof(m) && m.type == GAME_MSG_FRAME && (m.flags & GAME_FRAME_SAME)) {
 			*same = g->paced = true;
+			g->frame_ms = now_ms();
 			continue;
 		}
 		if (n > 0)
@@ -288,6 +298,7 @@ const struct hal_fb *game_proc_frame(struct game_proc *g, bool *ended, bool *sam
 	if (!(atomic_load(&g->shm->middle) & GAME_SHM_FRESH))
 		return NULL;
 	g->front = atomic_exchange(&g->shm->middle, g->front) & ~GAME_SHM_FRESH;
+	g->frame_ms = now_ms();
 	g->fb.pixels = game_shm_frame(g->shm, g->front);
 	return &g->fb;
 }
