@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <wels/codec_api.h>
 
@@ -24,6 +25,8 @@ struct h264 *h264_new(int width, int height, int fps, int kbps)
 	struct h264 *e = calloc(1, sizeof(*e));
 	SEncParamExt p;
 	int fmt = videoFormatI420;
+	long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+	int threads = cpus < 1 ? 1 : cpus > 4 ? 4 : (int)cpus;
 
 	if (!e || (width | height) & 1)
 		goto fail;
@@ -38,7 +41,10 @@ struct h264 *h264_new(int width, int height, int fps, int kbps)
 	if (!e->yuv || WelsCreateSVCEncoder(&e->enc) || !e->enc)
 		goto fail;
 	(*e->enc)->GetDefaultParams(e->enc, &p);
-	p.iUsageType = SCREEN_CONTENT_REAL_TIME;	/* menus and games alike */
+	/* Not SCREEN_CONTENT_REAL_TIME: its analysis of each frame runs on one
+	 * thread and took 82 ms of a 960x640 frame on the GO Advance's A35s,
+	 * the camera mode 25 ms on four threads (slices, below) */
+	p.iUsageType = CAMERA_VIDEO_REAL_TIME;
 	p.iPicWidth = width;
 	p.iPicHeight = height;
 	p.iTargetBitrate = kbps * 1000;
@@ -48,7 +54,7 @@ struct h264 *h264_new(int width, int height, int fps, int kbps)
 	p.uiIntraPeriod = (unsigned)fps * 2;	/* a viewer joining sees a picture soon */
 	p.eSpsPpsIdStrategy = CONSTANT_ID;
 	p.bEnableFrameSkip = true;
-	p.iMultipleThreadIdc = 2;
+	p.iMultipleThreadIdc = threads;
 	p.iSpatialLayerNum = 1;
 	p.iTemporalLayerNum = 1;
 	p.iComplexityMode = LOW_COMPLEXITY;
@@ -57,14 +63,15 @@ struct h264 *h264_new(int width, int height, int fps, int kbps)
 	p.sSpatialLayers[0].fFrameRate = (float)fps;
 	p.sSpatialLayers[0].iSpatialBitrate = p.iTargetBitrate;
 	p.sSpatialLayers[0].iMaxSpatialBitrate = p.iMaxBitrate;
-	/* RTP packets of their own: slices up to a packet where it can */
-	p.sSpatialLayers[0].sSliceArgument.uiSliceMode = SM_SINGLE_SLICE;
+	/* A slice a thread: one slice is one thread's work */
+	p.sSpatialLayers[0].sSliceArgument.uiSliceMode = threads > 1 ? SM_FIXEDSLCNUM_SLICE : SM_SINGLE_SLICE;
+	p.sSpatialLayers[0].sSliceArgument.uiSliceNum = (unsigned)threads;
 	if ((*e->enc)->InitializeExt(e->enc, &p)) {
 		LOGE(TAG, "the encoder takes no %dx%d at %d kbit/s", width, height, kbps);
 		goto fail;
 	}
 	(*e->enc)->SetOption(e->enc, ENCODER_OPTION_DATAFORMAT, &fmt);
-	LOGI(TAG, "%dx%d, %d fps, %d kbit/s", width, height, fps, kbps);
+	LOGI(TAG, "%dx%d, %d fps, %d kbit/s, %d threads", width, height, fps, kbps, threads);
 	return e;
 fail:
 	h264_free(e);
@@ -136,6 +143,20 @@ void h264_force_idr(struct h264 *e)
 		return;
 	}
 	(*e->enc)->ForceIntraFrame(e->enc, true);
+}
+
+void h264_set_bitrate(struct h264 *e, int kbps)
+{
+	SBitrateInfo b = { SPATIAL_LAYER_ALL, kbps * 1500 };
+
+	if (e->hw) {
+		h264_v4l2_set_bitrate(e->hw, kbps);
+		return;
+	}
+	/* the ceiling first: the target may not go over it */
+	(*e->enc)->SetOption(e->enc, ENCODER_OPTION_MAX_BITRATE, &b);
+	b.iBitrate = kbps * 1000;
+	(*e->enc)->SetOption(e->enc, ENCODER_OPTION_BITRATE, &b);
 }
 
 /* BT.601, studio range, a 2x2 block's colour from its average */

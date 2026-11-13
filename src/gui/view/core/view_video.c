@@ -425,16 +425,49 @@ int view_video_set(enum video_source src)
 #define STREAM_KBPS 3000
 #define STREAM_PORT 8554
 
-/* The screen as it is into the stream's frame, while somebody watches */
+/* The game's own picture (game_ipc.h) can be bigger than the screen */
+#define STREAM_MAX_WIDTH 1280
+#define STREAM_MAX_HEIGHT 960
+
+/* The picture of a game in front as it drew it, before it was taken down to
+ * the screen, if it gives one (VCMI); NULL otherwise */
+static const struct hal_fb *game_full(bool watched)
+{
+#ifdef HAVE_GAMES
+	if (!vcore.video_game)
+		return NULL;
+	game_proc_want_full(vcore.video_game, watched && view_game_in_front());
+	return watched && view_game_in_front() ? game_proc_full(vcore.video_game) : NULL;
+#else
+	(void)watched;
+	return NULL;
+#endif
+}
+
+/* The screen as it is into the stream's frame, while somebody watches; a
+ * game in front as it drew it when it says (bare_app's own overlays, as
+ * the frame rate, are not in it then) */
 static void on_stream_tick(void *ud)
 {
-	const struct hal_fb *ui, *video;
+	const struct hal_fb *ui, *video, *full = game_full(stream_viewers() > 0);
 	struct hal_fb *fb;
+	int y;
 
 	(void)ud;
-	if (!vcore.display->ops->layers || !(fb = stream_frame_begin()))
+	if (full) {
+		if (!(fb = stream_frame_begin(full->width, full->height)))
+			return;
+		for (y = 0; y < fb->height; y++)
+			memcpy((uint8_t *)fb->pixels + (size_t)y * fb->stride,
+			       (const uint8_t *)full->pixels + (size_t)y * full->stride, (size_t)fb->width * 4);
+		stream_frame_end();
+		return;
+	}
+	if (!vcore.display->ops->layers || !stream_viewers())
 		return;
 	vcore.display->ops->layers(vcore.display, &ui, &video);
+	if (!(fb = stream_frame_begin(ui->width, ui->height)))
+		return;
 	shot_compose(fb, ui, video);
 	stream_frame_end();
 }
@@ -444,6 +477,7 @@ void view_stream_follow(void)
 {
 	struct hal_display_info di;
 	struct stream_config c = {
+		.max_width = STREAM_MAX_WIDTH, .max_height = STREAM_MAX_HEIGHT,
 		.fps = STREAM_FPS, .kbps = STREAM_KBPS, .port = STREAM_PORT,
 		.playback = vcore.pf->game_pcm,
 	};

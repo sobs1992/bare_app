@@ -150,7 +150,8 @@ int main(int argc, char **argv)
 	mainloop_add_fd(ml, sfd, POLLIN, on_signal, ml);
 
 #ifdef CONFIG_SETTINGS_FILE
-	config_open(ml, pf->config_path);
+	/* BARE_APP_CONFIG: another settings file (tests: pc-mem has none) */
+	config_open(ml, getenv("BARE_APP_CONFIG") ? getenv("BARE_APP_CONFIG") : pf->config_path);
 #else
 	config_open(ml, NULL);		/* settings live in memory only */
 #endif

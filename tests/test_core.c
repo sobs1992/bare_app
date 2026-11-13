@@ -295,6 +295,52 @@ static void test_rtp(void)
 	CHECK(sr[8] == 0xe8 && sr[9] == 0xfe && sr[10] == 0x6f && sr[11] == 0x80);	/* NTP seconds */
 }
 
+/* What players send back: RR (+ SDES), SR with a block, BYE, PLI, junk */
+static void test_rtcp_in(void)
+{
+	/* RR from 0x1234 about 0xcafe0001: 25% lost (64/256), -1 in all,
+	 * highest 0x10005, jitter 900, LSR 0x00010000, DLSR 0x8000 (0.5 s) */
+	static const uint8_t rr_sdes[] = {
+		0x81, 201, 0, 7, 0, 0, 0x12, 0x34,
+		0xca, 0xfe, 0, 1, 64, 0xff, 0xff, 0xff, 0, 1, 0, 5, 0, 0, 3, 0x84,
+		0, 1, 0, 0, 0, 0, 0x80, 0,
+		0x81, 202, 0, 2, 0, 0, 0x12, 0x34, 1, 2, 'p', 'c',
+	};
+	static const uint8_t sr_block[] = {
+		0x81, 200, 0, 12, 0, 0, 0x12, 0x34,
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+		0xca, 0xfe, 0, 2, 3, 0, 0, 7, 0, 0, 0, 9, 0, 0, 0, 90, 0, 0, 0, 0, 0, 0, 0, 0,
+	};
+	static const uint8_t bye_pli[] = {
+		0x81, 206, 0, 2, 0, 0, 0x12, 0x34, 0xca, 0xfe, 0, 1,
+		0x81, 203, 0, 1, 0, 0, 0x12, 0x34,
+	};
+	static const uint8_t cut[] = { 0x81, 201, 0, 7, 0, 0, 0x12, 0x34, 0xca, 0xfe };
+	static const uint8_t rtp[] = { 0x80, 96, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1 };
+	struct rtcp_info in;
+	struct rtcp_block b = { .dlsr = 0x8000 };	/* 0.5 s at the player */
+	uint64_t at;
+
+	CHECK(rtcp_parse(rr_sdes, sizeof(rr_sdes), &in));
+	CHECK(in.blocks == 1 && !in.bye && !in.key_frame);
+	CHECK(in.block[0].ssrc == 0xcafe0001 && in.block[0].fraction == 64 && in.block[0].lost == -1);
+	CHECK(in.block[0].highest == 0x10005 && in.block[0].jitter == 900);
+	CHECK(in.block[0].lsr == 0x10000 && in.block[0].dlsr == 0x8000);
+	CHECK(rtcp_parse(sr_block, sizeof(sr_block), &in));
+	CHECK(in.blocks == 1 && in.block[0].ssrc == 0xcafe0002 && in.block[0].fraction == 3 &&
+	      in.block[0].lost == 7 && in.block[0].jitter == 90 && !in.block[0].lsr);
+	CHECK(rtcp_parse(bye_pli, sizeof(bye_pli), &in));
+	CHECK(in.blocks == 0 && in.bye && in.key_frame);
+	CHECK(!rtcp_parse(cut, sizeof(cut), &in));	/* says 32 bytes, has 10 */
+	CHECK(!rtcp_parse(rtp, sizeof(rtp), &in));
+	/* the round trip: now - LSR - DLSR */
+	at = 1000000ULL * 1700000000;
+	b.lsr = rtcp_ntp_mid(at) - 0x18000;	/* our SR left 1.5 s ago */
+	CHECK(rtcp_rtt_ms(&b, at) == 1000);
+	b.lsr = 0;
+	CHECK(rtcp_rtt_ms(&b, at) == -1);
+}
+
 struct ts_capture {
 	uint8_t data[64 * TS_PACKET];
 	size_t len;
@@ -1024,6 +1070,7 @@ int main(void)
 	test_frametimes();
 	test_remap();
 	test_rtp();
+	test_rtcp_in();
 	test_ts();
 	test_hid();
 #ifdef CONFIG_SYSMON

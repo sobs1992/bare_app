@@ -219,6 +219,11 @@ void h264_v4l2_force_idr(struct h264_v4l2 *e)
 	set_ctrl(e, V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME, 0);
 }
 
+void h264_v4l2_set_bitrate(struct h264_v4l2 *e, int kbps)
+{
+	set_ctrl(e, V4L2_CID_MPEG_VIDEO_BITRATE, kbps * 1000);
+}
+
 const char *h264_v4l2_name(const struct h264_v4l2 *e)
 {
 	return e->name;

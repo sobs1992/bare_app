@@ -41,6 +41,17 @@
 #define UDP_BASE 6970		/* video RTP, RTCP, audio RTP, RTCP, TS RTP, RTCP */
 #define TS_DELAY 9000		/* 90 kHz: the PTS ahead of the PCR */
 #define PATH "live"
+#define SESSION_TIMEOUT 60	/* s, the Session header's */
+#define SILENT_MS (2 * SESSION_TIMEOUT * 1000)	/* no request, no RTCP: the player is gone */
+/* The bit rate follows the players: a quarter down on losses (or a TCP
+ * player that falls behind), at most once a second, down to a quarter of
+ * the one set; an eighth of it up again after 5 s without */
+#define RATE_MIN_PART 4
+#define RATE_LOSS 5		/* of 256 lost since the last report: 2% */
+#define RATE_HOLD_MS 1000
+#define RATE_UP_MS 5000
+#define IDR_MIN_MS 1000		/* between key frames the players ask for */
+#define STATS_MS 10000		/* the players' reports into the log */
 
 /*
  * TRACK_TS: both in an MPEG transport stream, for a player that SETUPs the
@@ -53,6 +64,12 @@ struct track_out {
 	bool tcp;
 	int channel;		/* interleaved: RTP, RTCP is the next one */
 	struct sockaddr_in rtp, rtcp;	/* UDP */
+	/* the player's last receiver report about it */
+	bool reported;
+	uint8_t fraction;	/* lost of 256 */
+	int32_t lost;
+	uint32_t jitter;	/* RTP time units */
+	int rtt_ms;		/* -1 unknown */
 };
 
 struct client {
@@ -61,7 +78,8 @@ struct client {
 	size_t in_len;
 	uint32_t session;
 	bool playing;
-	bool broken;		/* a TCP write failed half way: dropped */
+	bool broken;		/* a TCP write failed half way, or BYE: dropped */
+	uint64_t seen_ms;	/* now_ms() of its last request or RTCP */
 	struct sockaddr_in peer;
 	struct track_out out[TRACKS];
 };
@@ -85,6 +103,11 @@ static struct {
 	uint64_t ts_audio_pts;	/* 90 kHz, of the next sound PES */
 	uint64_t t0;		/* now_us() of RTP time 0 */
 	bool want_idr;
+	int enc_width, enc_height;	/* of the encoder's frames */
+	int kbps;		/* aimed at now */
+	atomic_int kbps_now;	/* the same, for other threads */
+	uint64_t rate_cut_ms, rate_up_ms, idr_ms, stats_ms;
+	unsigned encoded;	/* frames since stats_ms */
 	bool audio_ok;		/* the capture device opened */
 	void *cap, *play;	/* PCM handles */
 	struct pcm_alsa_params cap_params, play_params;
@@ -255,6 +278,171 @@ static void ts_send(void *ud, const uint8_t *packets, size_t len)
 	}
 }
 
+static void make_sprop(void);
+
+/* ---- what the players say (RTCP) -------------------------------------- */
+
+static void rate_set(int kbps, const char *why)
+{
+	int low = st.cfg.kbps / RATE_MIN_PART;
+
+	kbps = kbps < low ? low : kbps > st.cfg.kbps ? st.cfg.kbps : kbps;
+	if (kbps == st.kbps)
+		return;
+	st.kbps = kbps;
+	atomic_store(&st.kbps_now, kbps);
+	if (st.enc)
+		h264_set_bitrate(st.enc, kbps);
+	LOGI(TAG, "%d kbit/s: %s", kbps, why);
+}
+
+static void rate_down(const char *why)
+{
+	uint64_t now = now_ms();
+
+	if (now - st.rate_cut_ms < RATE_HOLD_MS)
+		return;
+	st.rate_cut_ms = st.rate_up_ms = now;
+	rate_set(st.kbps - st.kbps / 4, why);
+}
+
+/* Up again a step at a time after a while without losses */
+static void rate_maybe_up(void)
+{
+	uint64_t now = now_ms();
+
+	if (st.kbps >= st.cfg.kbps || now - st.rate_up_ms < RATE_UP_MS)
+		return;
+	st.rate_up_ms = now;
+	rate_set(st.kbps + (st.cfg.kbps + 7) / 8, "no losses");
+}
+
+/* An RTCP packet of a player about track t (lock held) */
+static void rtcp_in(struct client *c, int t, const uint8_t *buf, size_t len)
+{
+	struct rtcp_info info;
+	struct track_out *o = &c->out[t];
+	uint64_t wall = unix_us(), now = now_ms();
+	int i;
+
+	if (!rtcp_parse(buf, len, &info)) {
+		LOGD(TAG, "%s: %zu bytes on the RTCP of track %d, not RTCP", inet_ntoa(c->peer.sin_addr), len, t);
+		return;
+	}
+	LOGD(TAG, "%s: RTCP of track %d, %d report blocks%s%s", inet_ntoa(c->peer.sin_addr), t, info.blocks,
+	     info.bye ? ", BYE" : "", info.key_frame ? ", key frame wanted" : "");
+	c->seen_ms = now;
+	for (i = 0; i < info.blocks; i++) {
+		const struct rtcp_block *b = &info.block[i];
+
+		if (b->ssrc != st.track[t].ssrc)
+			continue;
+		o->reported = true;
+		o->fraction = b->fraction;
+		o->lost = b->lost;
+		o->jitter = b->jitter;
+		o->rtt_ms = rtcp_rtt_ms(b, wall);
+		if (t != TRACK_AUDIO && b->fraction >= RATE_LOSS)
+			rate_down("the player loses packets");
+	}
+	if (info.key_frame && now - st.idr_ms >= IDR_MIN_MS) {
+		st.idr_ms = now;
+		st.want_idr = true;
+	}
+	if (info.bye) {
+		LOGI(TAG, "%s says bye", inet_ntoa(c->peer.sin_addr));
+		c->broken = true;
+	}
+}
+
+/* RTCP that came to the UDP port of track t: from the player of that address */
+static void rtcp_udp(int t, int fd)
+{
+	uint8_t buf[1500];
+	struct sockaddr_in from;
+	socklen_t len = sizeof(from);
+	ssize_t n;
+	int i;
+
+	while ((n = recvfrom(fd, buf, sizeof(buf), MSG_DONTWAIT, (struct sockaddr *)&from, &len)) > 0) {
+		struct client *any = NULL;
+
+		for (i = 0; i < MAX_CLIENTS; i++) {
+			struct client *c = &st.clients[i];
+			const struct track_out *o = &c->out[t];
+
+			if (c->fd < 0 || !o->set || o->tcp || o->rtcp.sin_addr.s_addr != from.sin_addr.s_addr)
+				continue;
+			any = c;
+			if (o->rtcp.sin_port == from.sin_port)
+				break;	/* the very one; else another player of the same address */
+		}
+		if (any)
+			rtcp_in(i < MAX_CLIENTS ? &st.clients[i] : any, t, buf, (size_t)n);
+		len = sizeof(from);
+	}
+}
+
+static void log_reports(void)
+{
+	static const char *const name[TRACKS] = { "video", "sound", "MPEG-TS" };
+	char line[320];
+	int i, t, n;
+
+	for (i = 0; i < MAX_CLIENTS; i++) {
+		const struct client *c = &st.clients[i];
+		int rate = 0;
+
+		if (c->fd < 0 || !c->playing)
+			continue;
+		n = snprintf(line, sizeof(line), "%s:", inet_ntoa(c->peer.sin_addr));
+		for (t = 0; t < TRACKS; t++) {
+			const struct track_out *o = &c->out[t];
+
+			if (!o->set || !o->reported || n >= (int)sizeof(line))
+				continue;
+			rate = t == TRACK_AUDIO ? AUDIO_RATE / 1000 : 90;
+			n += snprintf(line + n, sizeof(line) - (size_t)n,
+				      " %s lost %d.%d%% (%d in all), jitter %u ms", name[t],
+				      o->fraction * 100 / 256, o->fraction * 1000 / 256 % 10,
+				      o->lost > 0 ? (int)o->lost : 0,	/* duplicates make it negative */
+				      o->jitter / (unsigned)rate);
+			if (o->rtt_ms >= 0 && n < (int)sizeof(line))
+				n += snprintf(line + n, sizeof(line) - (size_t)n, ", round trip %d ms", o->rtt_ms);
+		}
+		if (rate)
+			LOGI(TAG, "%s", line);
+	}
+	LOGI(TAG, "%dx%d, %u.%u frames/s encoded, %d kbit/s", st.enc_width, st.enc_height,
+	     st.encoded * 1000 / STATS_MS, st.encoded * 10000 / STATS_MS % 10, st.kbps);
+	st.encoded = 0;
+}
+
+/* The encoder for frames of another size (lock held) */
+static int encoder_size(int width, int height)
+{
+	struct h264 *e;
+
+	width &= ~1;
+	height &= ~1;
+	if (st.enc && width == st.enc_width && height == st.enc_height)
+		return 0;
+	e = h264_new(width, height, st.cfg.fps, st.kbps);
+	if (!e) {
+		LOGW(TAG, "no encoder for %dx%d", width, height);
+		return -1;
+	}
+	if (st.enc)
+		LOGI(TAG, "frames of %dx%d now", width, height);
+	h264_free(st.enc);
+	st.enc = e;
+	st.enc_width = width;
+	st.enc_height = height;
+	make_sprop();
+	st.want_idr = false;	/* it starts with one, its parameters in front */
+	return 0;
+}
+
 static void encode_and_send(void)
 {
 	struct hal_fb *fb;
@@ -267,6 +455,11 @@ static void encode_and_send(void)
 	fb = mailbox_take(st.mb);
 	if (!fb)
 		return;
+	pthread_mutex_lock(&st.lock);
+	i = encoder_size(fb->width, fb->height);
+	pthread_mutex_unlock(&st.lock);
+	if (i < 0)
+		return;
 	if (st.want_idr) {
 		h264_force_idr(st.enc);
 		st.want_idr = false;
@@ -275,6 +468,7 @@ static void encode_and_send(void)
 		LOGW(TAG, "a frame failed to encode");
 		return;
 	}
+	st.encoded++;
 	if (!size)
 		return;
 	pthread_mutex_lock(&st.lock);
@@ -286,6 +480,7 @@ static void encode_and_send(void)
 			continue;
 		if (!room(c, TRACK_VIDEO, size + size / RTP_MAX_PAYLOAD * 20 + 64)) {
 			st.want_idr = true;	/* a frame missed: start over from a key frame */
+			rate_down("a TCP player falls behind");
 			continue;
 		}
 		rtp_h264(&st.track[TRACK_VIDEO], au, size, video_ts(now), send_to, &d);
@@ -387,7 +582,8 @@ static void reply(struct client *c, int code, const char *what, const char *cseq
 	n = snprintf(out, sizeof(out), "RTSP/1.0 %d %s\r\nCSeq: %s\r\nServer: bare_app\r\n%s",
 		     code, what, cseq, extra ? extra : "");
 	if (c->session)
-		n += snprintf(out + n, sizeof(out) - (size_t)n, "Session: %08X;timeout=60\r\n", c->session);
+		n += snprintf(out + n, sizeof(out) - (size_t)n, "Session: %08X;timeout=%d\r\n", c->session,
+			      SESSION_TIMEOUT);
 	if (body)
 		n += snprintf(out + n, sizeof(out) - (size_t)n,
 			      "Content-Type: application/sdp\r\nContent-Length: %zu\r\n", strlen(body));
@@ -508,6 +704,7 @@ static bool request(struct client *c, char *req)
 
 	if (sscanf(req, "%15s %255s", method, url) != 2)
 		return false;
+	c->seen_ms = now_ms();	/* any request keeps the session alive */
 	header(req, "CSeq", cseq, sizeof(cseq));
 	LOGD(TAG, "%s %s", method, url);
 	/* the aggregate URL: what it was asked as, without a track */
@@ -548,7 +745,7 @@ static bool request(struct client *c, char *req)
 }
 
 /* What came on a client's connection: requests, and the player's own
- * interleaved RTCP ($ frames), skipped */
+ * interleaved RTCP ($ frames) */
 static void client_input(struct client *c)
 {
 	ssize_t n = recv(c->fd, c->in + c->in_len, sizeof(c->in) - 1 - c->in_len, MSG_DONTWAIT);
@@ -571,6 +768,9 @@ static void client_input(struct client *c)
 			used = 4 + ((size_t)(uint8_t)c->in[2] << 8 | (uint8_t)c->in[3]);
 			if (used > c->in_len)
 				break;
+			for (int t = 0; t < TRACKS; t++)
+				if (c->out[t].set && c->out[t].tcp && (uint8_t)c->in[1] == c->out[t].channel + 1)
+					rtcp_in(c, t, (const uint8_t *)c->in + 4, used - 4);
 		} else {
 			c->in[c->in_len] = '\0';
 			end = strstr(c->in, "\r\n\r\n");
@@ -611,6 +811,7 @@ static void accept_client(void)
 	memset(&st.clients[i], 0, sizeof(st.clients[i]));
 	st.clients[i].fd = fd;
 	st.clients[i].peer = peer;
+	st.clients[i].seen_ms = now_ms();
 	LOGI(TAG, "%s connected", inet_ntoa(peer.sin_addr));
 }
 
@@ -626,7 +827,7 @@ static void *net_thread(void *ud)
 		pfd[n++] = (struct pollfd){ st.stop, POLLIN, 0 };
 		pfd[n++] = (struct pollfd){ st.listen, POLLIN, 0 };
 		pfd[n++] = (struct pollfd){ mailbox_fd(st.mb), POLLIN, 0 };
-		for (t = 0; t < TRACKS; t++)	/* the players' RTCP: read and dropped */
+		for (t = 0; t < TRACKS; t++)	/* RTP (nothing comes, dropped), RTCP */
 			for (i = 0; i < 2; i++)
 				pfd[n++] = (struct pollfd){ st.udp[t][i], POLLIN, 0 };
 		for (i = 0; i < MAX_CLIENTS; i++)
@@ -638,23 +839,39 @@ static void *net_thread(void *ud)
 		pthread_mutex_lock(&st.lock);
 		if (pfd[1].revents)
 			accept_client();
-		for (i = 0; i < 2 * TRACKS; i++)
-			if (pfd[3 + i].revents) {
-				uint8_t junk[1500];
+		for (i = 0; i < 2 * TRACKS; i++) {
+			uint8_t junk[1500];
 
-				recv(pfd[3 + i].fd, junk, sizeof(junk), MSG_DONTWAIT);
-			}
+			if (!pfd[3 + i].revents)
+				continue;
+			if (i & 1)
+				rtcp_udp(i / 2, pfd[3 + i].fd);
+			else
+				while (recv(pfd[3 + i].fd, junk, sizeof(junk), MSG_DONTWAIT) > 0)
+					;
+		}
 		for (i = 0; i < MAX_CLIENTS; i++) {
 			struct client *c = &st.clients[i];
 
 			if (c->fd >= 0 && pfd[3 + 2 * TRACKS + i].revents && pfd[3 + 2 * TRACKS + i].fd == c->fd)
 				client_input(c);
+			if (c->fd >= 0 && now_ms() - c->seen_ms > SILENT_MS) {
+				LOGI(TAG, "%s: not a word for %d s", inet_ntoa(c->peer.sin_addr), SILENT_MS / 1000);
+				c->broken = true;
+			}
 			if (c->fd >= 0 && c->broken)
 				client_close(c);
 		}
 		if (now_ms() - last_sr >= SR_MS) {
 			last_sr = now_ms();
 			send_reports();
+		}
+		if (atomic_load(&st.viewers)) {
+			rate_maybe_up();
+			if (now_ms() - st.stats_ms >= STATS_MS) {
+				st.stats_ms = now_ms();
+				log_reports();
+			}
 		}
 		pthread_mutex_unlock(&st.lock);
 		if (pfd[2].revents)
@@ -745,10 +962,18 @@ int stream_start(const struct stream_config *cfg)
 	if (atomic_load(&st.running))
 		return 0;
 	st.cfg = *cfg;
+	if (st.cfg.max_width < cfg->width || st.cfg.max_height < cfg->height) {
+		st.cfg.max_width = cfg->width;
+		st.cfg.max_height = cfg->height;
+	}
 	for (i = 0; i < MAX_CLIENTS; i++)
 		st.clients[i].fd = -1;
-	st.enc = h264_new(cfg->width & ~1, cfg->height & ~1, cfg->fps, cfg->kbps);
-	st.mb = mailbox_new(cfg->width, cfg->height);
+	st.kbps = cfg->kbps;
+	atomic_store(&st.kbps_now, cfg->kbps);
+	st.rate_cut_ms = st.rate_up_ms = st.idr_ms = st.stats_ms = 0;
+	encoder_size(cfg->width, cfg->height);
+	/* frames of any size up to the biggest: memory a frame touches only */
+	st.mb = mailbox_new(st.cfg.max_width, st.cfg.max_height);
 	st.stop = eventfd(0, EFD_CLOEXEC);
 	st.listen = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (!st.enc || !st.mb || st.stop < 0 || st.listen < 0)
@@ -832,6 +1057,7 @@ void stream_stop(void)
 	st.listen = st.stop = -1;
 	h264_free(st.enc);
 	st.enc = NULL;
+	st.enc_width = st.enc_height = 0;
 	if (st.mb)
 		mailbox_free(st.mb);
 	st.mb = NULL;
@@ -848,11 +1074,21 @@ int stream_viewers(void)
 	return atomic_load(&st.viewers);
 }
 
-struct hal_fb *stream_frame_begin(void)
+int stream_kbps(void)
 {
+	return atomic_load(&st.kbps_now);
+}
+
+struct hal_fb *stream_frame_begin(int width, int height)
+{
+	struct hal_fb *fb;
+
 	if (!atomic_load(&st.running) || !atomic_load(&st.viewers))
 		return NULL;
-	return mailbox_begin(st.mb);
+	fb = mailbox_begin(st.mb);
+	fb->width = width < st.cfg.max_width ? width : st.cfg.max_width;
+	fb->height = height < st.cfg.max_height ? height : st.cfg.max_height;
+	return fb;
 }
 
 void stream_frame_end(void)

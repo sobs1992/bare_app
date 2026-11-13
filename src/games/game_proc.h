@@ -38,6 +38,13 @@ int game_proc_fd(struct game_proc *g);
 const struct hal_fb *game_proc_frame(struct game_proc *g, bool *ended, bool *same);
 /* The game has said a frame did not change: a gap in its frames is a stall */
 bool game_proc_paced(const struct game_proc *g);
+/*
+ * The game's own picture, before it was taken down to the frame (game_ipc.h,
+ * for the stream): asked for while want, and the newest one, NULL when the
+ * game gave none in the last second (it has none, or was not asked).
+ */
+void game_proc_want_full(struct game_proc *g, bool want);
+const struct hal_fb *game_proc_full(struct game_proc *g);
 /* Buttons (auto-repeats are not sent) and axes; keys and the mouse to a
  * game that takes them */
 void game_proc_input(struct game_proc *g, const struct gp_event *ev);

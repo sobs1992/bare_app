@@ -129,14 +129,102 @@ static void put32(uint8_t *p, uint32_t v)
 	p[3] = (uint8_t)v;
 }
 
+static uint32_t get32(const uint8_t *p)
+{
+	return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
+}
+
+/* NTP: seconds since 1900, the fraction in 1/2^32 */
+static void ntp(uint64_t unix_us, uint64_t *sec, uint32_t *frac)
+{
+	*sec = unix_us / 1000000 + 2208988800ULL;
+	*frac = (uint32_t)(((unix_us % 1000000) << 32) / 1000000);
+}
+
+uint32_t rtcp_ntp_mid(uint64_t unix_us)
+{
+	uint64_t sec;
+	uint32_t frac;
+
+	ntp(unix_us, &sec, &frac);
+	return (uint32_t)(sec << 16) | frac >> 16;
+}
+
+int rtcp_rtt_ms(const struct rtcp_block *b, uint64_t unix_us)
+{
+	uint32_t rtt;
+
+	if (!b->lsr)
+		return -1;
+	rtt = rtcp_ntp_mid(unix_us) - b->lsr - b->dlsr;
+	if (rtt > 65536u * 10)	/* over 10 s: a clock gone wrong, not a round trip */
+		return -1;
+	return (int)((uint64_t)rtt * 1000 / 65536);
+}
+
+static void blocks(struct rtcp_info *o, const uint8_t *p, int count, const uint8_t *end)
+{
+	for (; count > 0 && p + 24 <= end; count--, p += 24) {
+		struct rtcp_block *b;
+		int32_t lost = (int32_t)(get32(p + 4) & 0xffffff);
+
+		if (o->blocks == RTCP_BLOCKS)
+			return;
+		b = &o->block[o->blocks++];
+		b->ssrc = get32(p);
+		b->fraction = p[4];
+		b->lost = lost & 0x800000 ? lost - 0x1000000 : lost;	/* 24-bit signed */
+		b->highest = get32(p + 8);
+		b->jitter = get32(p + 12);
+		b->lsr = get32(p + 16);
+		b->dlsr = get32(p + 20);
+	}
+}
+
+bool rtcp_parse(const uint8_t *buf, size_t len, struct rtcp_info *out)
+{
+	const uint8_t *p = buf, *end = buf + len;
+
+	memset(out, 0, sizeof(*out));
+	if (len < 4 || (buf[0] >> 6) != 2 || buf[1] < 192 || buf[1] > 223)
+		return false;	/* RTP, or not ours at all */
+	while (p + 4 <= end) {
+		size_t plen = 4 + 4 * ((size_t)p[2] << 8 | p[3]);
+		const uint8_t *next = p + plen;
+		int count = p[0] & 0x1f;
+
+		if ((p[0] >> 6) != 2 || next > end)
+			return false;
+		switch (p[1]) {
+		case 200:	/* SR: the sender's info, then its report blocks */
+			blocks(out, p + 28, count, next);
+			break;
+		case 201:	/* RR */
+			blocks(out, p + 8, count, next);
+			break;
+		case 203:	/* BYE */
+			out->bye = true;
+			break;
+		case 206:	/* payload-specific feedback: 1 PLI, 4 FIR */
+			if (count == 1 || count == 4)
+				out->key_frame = true;
+			break;
+		default:	/* SDES, APP, NACKs and the rest */
+			break;
+		}
+		p = next;
+	}
+	return true;
+}
+
 size_t rtcp_sr(const struct rtp_track *t, uint64_t unix_us, uint32_t ts, const char *cname,
 	       uint8_t *buf, size_t size)
 {
-	/* NTP: seconds since 1900, the fraction in 1/2^32 */
-	uint64_t sec = unix_us / 1000000 + 2208988800ULL;
-	uint32_t frac = (uint32_t)(((unix_us % 1000000) << 32) / 1000000);
+	uint64_t sec;
+	uint32_t frac;
 	size_t clen = strlen(cname), sdes = 4 + 4 + 2 + clen, pad;
 
+	ntp(unix_us, &sec, &frac);
 	if (clen > 255)
 		return 0;
 	pad = (4 - (sdes + 1) % 4) % 4 + 1;	/* the end item and up to a word */

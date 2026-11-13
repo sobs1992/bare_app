@@ -323,6 +323,7 @@ cd build-host && ctest                 # юнит-тесты и smoke-тест �
 ./bare_app                             # симулятор в окне
 echo "down a wait:500 f6" | BARE_APP_SHOT=shot.ppm ./bare_app -p pc-mem   # сценарий кнопок, снимок экрана
 BARE_APP_SIZE=854x480 ./bare_app -p pc-mem   # экран другого размера (GO Ultra)
+echo stream=1 > s.conf; BARE_APP_CONFIG=s.conf ./bare_app -p pc-mem   # с файлом настроек: здесь стрим
 ```
 
 На ODROID-GO Advance через консоль (`scripts/oga-serial.py` SDK, плата на `/dev/ttyUSB0`).

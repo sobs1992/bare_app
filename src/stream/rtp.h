@@ -9,10 +9,14 @@
  * - L16 (RFC 3551): 16-bit stereo samples, big-endian.
  * - MP2T (RFC 2250): transport stream packets, one packet built for all.
  * - RTCP: a sender report (RFC 3550) with the NTP time and the RTP time of
- *   the same moment and the counts sent, and an SDES CNAME.
+ *   the same moment and the counts sent, and an SDES CNAME; and what the
+ *   players send back (rtcp_parse()): their receiver reports (losses,
+ *   jitter, the round trip), BYE, and the requests for a key frame of
+ *   RFC 4585/5104 (PLI, FIR).
  */
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -40,3 +44,29 @@ size_t rtp_mp2t(struct rtp_track *t, const uint8_t *ts_packets, size_t len, uint
 /* The sender report of t for wall time unix_us (gettimeofday) = RTP time ts; its length, 0 if size is short */
 size_t rtcp_sr(const struct rtp_track *t, uint64_t unix_us, uint32_t ts, const char *cname,
 	       uint8_t *buf, size_t size);
+
+/* A report block of a receiver (RFC 3550 6.4.1) about one of our sources */
+struct rtcp_block {
+	uint32_t ssrc;		/* the source it is about */
+	uint8_t fraction;	/* lost since the last report, of 256 */
+	int32_t lost;		/* cumulative */
+	uint32_t highest;	/* extended highest sequence number received */
+	uint32_t jitter;	/* in RTP time units */
+	uint32_t lsr, dlsr;	/* our last SR (middle of its NTP time), the delay since, 1/65536 s */
+};
+
+#define RTCP_BLOCKS 8
+
+struct rtcp_info {
+	int blocks;
+	struct rtcp_block block[RTCP_BLOCKS];
+	bool bye;		/* the player leaves */
+	bool key_frame;		/* PLI or FIR: it wants a key frame */
+};
+
+/* A compound RTCP packet from a player: false if it is not one */
+bool rtcp_parse(const uint8_t *buf, size_t len, struct rtcp_info *out);
+/* The middle 32 bits of the NTP time of unix_us, as an SR's LSR is */
+uint32_t rtcp_ntp_mid(uint64_t unix_us);
+/* The round trip of a report block received at unix_us, ms; -1 when unknown */
+int rtcp_rtt_ms(const struct rtcp_block *b, uint64_t unix_us);

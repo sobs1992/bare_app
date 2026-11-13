@@ -19,6 +19,8 @@ void h264_free(struct h264 *e);
 /* The SPS and PPS as Annex B; 0 or -1 */
 int h264_params(struct h264 *e, const uint8_t **data, size_t *size);
 void h264_force_idr(struct h264 *e);
+/* The bit rate aimed at from the next frame on */
+void h264_set_bitrate(struct h264 *e, int kbps);
 /*
  * One frame: data and size of the access unit (Annex B), valid until the next
  * call; size 0 when the encoder skipped the frame. -1 on an error.

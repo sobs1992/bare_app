@@ -17,6 +17,7 @@ struct h264_v4l2 *h264_v4l2_new(int width, int height, int fps, int kbps);
 void h264_v4l2_free(struct h264_v4l2 *e);
 int h264_v4l2_params(struct h264_v4l2 *e, const uint8_t **data, size_t *size);
 void h264_v4l2_force_idr(struct h264_v4l2 *e);
+void h264_v4l2_set_bitrate(struct h264_v4l2 *e, int kbps);
 int h264_v4l2_encode(struct h264_v4l2 *e, const struct hal_fb *frame, const uint8_t **data,
 		     size_t *size, int *idr);
 /* the device, for the log */

@@ -24,6 +24,16 @@
  * buffer with 'middle'; GAME_SHM_FRESH marks a published frame not taken yet.
  * The producer starts with buffer 0, 'middle' holds 1, the app holds 2.
  *
+ * The game's own picture (optional), for the stream: a game that draws
+ * bigger than the frame and takes it down to the screen (VCMI's 800x600
+ * on the 480x320 frame of the GO Advance) can hand over what it drew as
+ * well. The app makes room for three of them after the frames, up to
+ * full_width x full_height (0: none), and sets full_want while it takes
+ * them; the game then publishes one before each frame it publishes,
+ * triple buffered as the frames ('full_middle', the same start), the
+ * size of each in full_size[] (width | height << 16), full_width * 4
+ * bytes a row, at game_shm_full().
+ *
  * It is compiled into games under their own licences (GPL, LGPL, zlib), so
  * unlike the rest of bare_app this header is under the MIT licence.
  *
@@ -54,16 +64,27 @@ struct game_shm {
 	uint32_t magic;
 	uint32_t width, height, stride;	/* written by the app before the start */
 	GAME_ATOMIC(uint32_t) middle;	/* buffer index | GAME_SHM_FRESH */
+	/* the game's own picture: room (app, before the start), wanted (app) */
+	uint32_t full_width, full_height;
+	GAME_ATOMIC(uint32_t) full_want;
+	GAME_ATOMIC(uint32_t) full_middle;	/* as middle */
+	GAME_ATOMIC(uint32_t) full_size[3];	/* game: width | height << 16 */
 };
 
 static inline size_t game_shm_size(const struct game_shm *s)
 {
-	return GAME_SHM_HEADER + 3 * (size_t)s->height * s->stride;
+	return GAME_SHM_HEADER + 3 * (size_t)s->height * s->stride +
+	       3 * (size_t)s->full_width * s->full_height * 4;
 }
 
 static inline void *game_shm_frame(struct game_shm *s, unsigned i)
 {
 	return (uint8_t *)s + GAME_SHM_HEADER + i * (size_t)s->height * s->stride;
+}
+
+static inline void *game_shm_full(struct game_shm *s, unsigned i)
+{
+	return (uint8_t *)game_shm_frame(s, 3) + i * (size_t)s->full_width * s->full_height * 4;
 }
 
 enum game_msg_type {

@@ -3,7 +3,8 @@
  * draws a frame of one colour 60 times a second (another colour while A
  * is held), says on stderr what it gets, ends with status 0 on B and 3 on
  * X, and when bare_app goes away. Y makes one frame 150 ms late (a hitch
- * for the frame time graph).
+ * for the frame time graph). While bare_app wants the game's own picture
+ * (its stream plays) it gives one twice the frame's size.
  */
 #include <poll.h>
 #include <stdio.h>
@@ -24,6 +25,25 @@ static void fill(struct game_link *app, uint32_t colour)
 		for (uint32_t x = 0; x < app->shm->width; x++)
 			row[x] = colour;
 	}
+}
+
+/* The game's own picture, twice the frame, while bare_app wants it */
+static void full(struct game_link *app, uint32_t colour)
+{
+	static bool said;
+	int w = (int)app->shm->width * 2, h = (int)app->shm->height * 2;
+	uint32_t *pic;
+
+	if (!game_link_full_wanted(app, w, h))
+		return;
+	pic = game_link_full(app);
+	for (int y = 0; y < h; y++)
+		for (int x = 0; x < w; x++)
+			pic[(size_t)y * app->shm->full_width + (size_t)x] = colour;
+	game_link_full_publish(app, w, h);
+	if (!said)
+		fprintf(stderr, "fake: its own picture, %dx%d\n", w, h);
+	said = true;
 }
 
 int main(void)
@@ -64,6 +84,7 @@ int main(void)
 			return 0;
 		}
 		fill(&app, a_held ? 0x00ff00 : 0x2040c0);
+		full(&app, a_held ? 0x00ff00 : 0x2040c0);
 		if (game_link_publish(&app) < 0)
 			return 0;
 	}

@@ -38,6 +38,7 @@ struct game_link {
 	struct game_shm *shm;	/* the frames' width, height, stride */
 	size_t size;		/* of the mapping */
 	unsigned back;		/* the frame being drawn */
+	unsigned full_back;	/* the game's own picture being drawn */
 };
 
 /* Whether descriptors 3 and 4 are bare_app's: for a program that also runs
@@ -90,8 +91,48 @@ static inline int game_link_open(struct game_link *l, bool inherit)
 		fcntl(GAME_IPC_SOCK, F_SETFD, FD_CLOEXEC);
 		fcntl(GAME_IPC_SHM, F_SETFD, FD_CLOEXEC);
 	}
-	l->back = 0;	/* the producer starts with buffer 0 */
+	l->back = l->full_back = 0;	/* the producer starts with buffer 0 */
 	return 0;
+}
+
+/*
+ * The game's own picture, for the stream (game_ipc.h): a game that draws
+ * bigger than the frame and takes it down hands over what it drew while
+ * bare_app wants it, before the frame it publishes:
+ *
+ *	if (game_link_full_wanted(&link, w, h)) {
+ *		draw w x h into game_link_full(&link), full_width * 4 bytes a row
+ *		game_link_full_publish(&link, w, h);
+ *	}
+ *	game_link_publish(&link);
+ */
+static inline bool game_link_full_wanted(const struct game_link *l, int width, int height)
+{
+	return width > 0 && height > 0 && (uint32_t)width <= l->shm->full_width &&
+	       (uint32_t)height <= l->shm->full_height &&
+#ifdef __cplusplus
+	       l->shm->full_want.load();
+#else
+	       atomic_load(&l->shm->full_want);
+#endif
+}
+
+static inline uint32_t *game_link_full(const struct game_link *l)
+{
+	return (uint32_t *)game_shm_full(l->shm, l->full_back);
+}
+
+static inline void game_link_full_publish(struct game_link *l, int width, int height)
+{
+	uint32_t size = (uint32_t)width | (uint32_t)height << 16;
+
+#ifdef __cplusplus
+	l->shm->full_size[l->full_back].store(size);
+	l->full_back = l->shm->full_middle.exchange(l->full_back | GAME_SHM_FRESH) & ~GAME_SHM_FRESH;
+#else
+	atomic_store(&l->shm->full_size[l->full_back], size);
+	l->full_back = atomic_exchange(&l->shm->full_middle, l->full_back | GAME_SHM_FRESH) & ~GAME_SHM_FRESH;
+#endif
 }
 
 /* The frame to draw into next: shm->height rows of shm->stride bytes, XRGB8888 */

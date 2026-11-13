@@ -19,9 +19,19 @@
 #include <unistd.h>
 
 #include "core/log.h"
+#include "core/util.h"
 #include "game_ipc.h"
 
 #define TAG "game"
+/* Room for the game's own picture (game_ipc.h) for the stream; a memfd
+ * takes memory only for what the game writes into it */
+#ifdef CONFIG_STREAM
+#define GAME_FULL_WIDTH 1280
+#define GAME_FULL_HEIGHT 960
+#else
+#define GAME_FULL_WIDTH 0
+#define GAME_FULL_HEIGHT 0
+#endif
 #define STOP_WAIT_MS 1000
 
 extern char **environ;
@@ -31,6 +41,9 @@ struct game_proc {
 	int sock;
 	struct game_shm *shm;
 	size_t shm_size;
+	unsigned full_front;	/* the game's own picture held */
+	struct hal_fb full_fb;
+	uint64_t full_ms;	/* now_ms() it came, 0 none */
 	unsigned front;		/* buffer the view thread reads */
 	struct hal_fb fb;
 	bool ended;
@@ -156,7 +169,8 @@ struct game_proc *game_proc_start(const struct game_spawn *s)
 {
 	struct game_proc *g;
 	int sv[2] = { -1, -1 }, mem = -1, child_sock = -1, child_mem = -1, err;
-	struct game_shm hdr = { .width = s->width, .height = s->height, .stride = s->width * 4 };
+	struct game_shm hdr = { .width = s->width, .height = s->height, .stride = s->width * 4,
+				.full_width = GAME_FULL_WIDTH, .full_height = GAME_FULL_HEIGHT };
 
 	g = calloc(1, sizeof(*g));
 	if (!g)
@@ -175,6 +189,8 @@ struct game_proc *game_proc_start(const struct game_spawn *s)
 		goto fail;
 	*g->shm = hdr;
 	atomic_store(&g->shm->middle, 1);	/* the game starts with 0, we hold 2 */
+	atomic_store(&g->shm->full_middle, 1);
+	g->full_front = 2;
 	g->shm->magic = GAME_SHM_MAGIC;
 	g->front = 2;
 	g->fb = (struct hal_fb){ .width = s->width, .height = s->height, .stride = hdr.stride,
@@ -213,6 +229,34 @@ fail:
 bool game_proc_paced(const struct game_proc *g)
 {
 	return g->paced;
+}
+
+void game_proc_want_full(struct game_proc *g, bool want)
+{
+	if (g->shm->full_width && atomic_load(&g->shm->full_want) != want)
+		atomic_store(&g->shm->full_want, want);
+}
+
+const struct hal_fb *game_proc_full(struct game_proc *g)
+{
+	uint64_t now = now_ms();
+
+	if (atomic_load(&g->shm->full_middle) & GAME_SHM_FRESH) {
+		uint32_t size;
+
+		g->full_front = atomic_exchange(&g->shm->full_middle, g->full_front) & ~GAME_SHM_FRESH;
+		size = atomic_load(&g->shm->full_size[g->full_front]);
+		g->full_fb = (struct hal_fb){
+			.pixels = game_shm_full(g->shm, g->full_front),
+			.width = (int)MIN(size & 0xffff, g->shm->full_width),
+			.height = (int)MIN(size >> 16, g->shm->full_height),
+			.stride = (int)g->shm->full_width * 4,
+			.format = HAL_FMT_XRGB8888,
+		};
+		g->full_ms = now;
+	}
+	return g->full_ms && now - g->full_ms < 1000 && g->full_fb.width && g->full_fb.height ?
+		       &g->full_fb : NULL;
 }
 
 int game_proc_fd(struct game_proc *g)
