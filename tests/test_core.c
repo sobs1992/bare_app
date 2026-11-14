@@ -546,6 +546,230 @@ static void imu_acc_start(struct imu_parser *p, uint8_t *buf, const char *serial
 	input_set_motion_calibration(&(struct motion_cal){ .axes_set = true, .right = { 1, 0, 0 } });
 }
 
+/*
+ * The motion sensor's scenario matrix: modes (gyro and accelerometer, gyro
+ * alone, accelerometer alone) x rates (1, 5, 104, 1000 Hz) x events in the
+ * stream, all through the parser (imu_parser_feed()). A simulated device
+ * tilts about the sensor's x (its right) and turns about z (its vertical,
+ * lying flat); the samples say its rates and its gravity, a gap loses
+ * samples (their numbers skipped) or time (numbers going on). What the view
+ * must do: take the turns the received samples show, never a jump for what
+ * happened in a gap; with a gyro the tilt is the gyro's (a gap's tilt is
+ * never seen), an accelerometer alone sees a tilt over a gap of 3 samples or
+ * less (its gravity shows it) but takes no longer gap's.
+ */
+enum { MM_GA, MM_G, MM_A, MM_MODES };
+
+static const uint8_t mm_channels[MM_MODES] = { 1 | 2, 1, 2 };
+
+struct mstream {
+	uint8_t *buf;
+	size_t len, cap;
+	uint16_t seq;
+	uint32_t t;
+	float hz, tilt;		/* the device's tilt about x, degrees */
+};
+
+static void ms_put(struct mstream *s, const uint8_t *frame, size_t n)
+{
+	if (s->len + n > s->cap) {
+		s->cap = (s->len + n) * 2;
+		s->buf = realloc(s->buf, s->cap);
+	}
+	memcpy(s->buf + s->len, frame, n);
+	s->len += n;
+}
+
+/* n samples turning wx about x and wz about z (deg/s) */
+static void ms_run(struct mstream *s, int n, float wx, float wz)
+{
+	uint8_t hdr[8 + 12], f[8 + 12 + 6];
+
+	for (int i = 0; i < n; i++) {
+		int16_t g[3] = { (int16_t)lrintf(wx * 10), 0, (int16_t)lrintf(wz * 10) };	/* 0.1 deg/s */
+		int16_t a[3];
+
+		s->tilt += wx / s->hz;
+		a[0] = 0;
+		a[1] = (int16_t)lrintf(sinf(s->tilt * 0.017453293f) * 8192);
+		a[2] = (int16_t)lrintf(cosf(s->tilt * 0.017453293f) * 8192);
+		memcpy(hdr, &s->t, 4);
+		memcpy(hdr + 4, &s->seq, 2);
+		hdr[6] = 1;
+		hdr[7] = 0;
+		memcpy(hdr + 8, g, 6);
+		memcpy(hdr + 14, a, 6);
+		ms_put(s, f, imu_frame(f, 0x04, hdr, sizeof(hdr)));
+		s->seq++;
+		s->t += (uint32_t)lrintf(1e6f / s->hz);
+	}
+}
+
+/* a gap: 'missing' samples lost, 'extra' seconds with none, the device
+ * tilted by 'tilt' meanwhile (and turned too: no sample shows it) */
+static void ms_gap(struct mstream *s, int missing, float extra, float tilt)
+{
+	s->seq = (uint16_t)(s->seq + missing);
+	s->t += (uint32_t)lrintf(missing * 1e6f / s->hz + extra * 1e6f);
+	s->tilt += tilt;
+}
+
+static int ms_n(float hz, float secs, int at_least)
+{
+	int n = (int)lrintf(hz * secs);
+
+	return n < at_least ? at_least : n;
+}
+
+static size_t mm_info(uint8_t *f, int mode, float hz)
+{
+	uint8_t ch = mm_channels[mode];
+
+	return imu_info(f, "MATRIX", 9, ch, (uint32_t)lrintf(hz * 1000), ch & 1 ? 0.1f : 0,
+			ch & 2 ? 1.0f / 8192 : 0, ch & 1 ? 0.1f : 0, ch & 2 ? 0.002f : 0);
+}
+
+/* A fresh sensor of the mode at hz, calibrated (right x; vertical z where
+ * there is no gravity), lain still long enough for its zero; its stream
+ * from then on in s */
+static void mm_start(struct imu_parser *p, struct mstream *s, int mode, float hz, unsigned id)
+{
+	uint8_t f[160], st3[36] = { 3, 0, 3, 0x0b };	/* info 66 + status 42 bytes */
+	size_t n;
+
+	input_set_motion_calibration(NULL);	/* the last one's: room for this one's */
+	imu_parser_init(p);
+	snprintf(p->serial, sizeof(p->serial), "MM%u", id);
+	n = mm_info(f, mode, hz);
+	n += imu_frame(f + n, 0x02, st3, 36);
+	imu_parser_feed(p, f, n);
+	input_set_motion_calibration(&(struct motion_cal){ .axes_set = true, .right = { 1, 0, 0 },
+							   .up_set = !(mm_channels[mode] & 2),
+							   .up = { 0, 0, 1 } });
+	s->len = 0;
+	s->hz = hz;
+	s->tilt = 0;
+	s->seq = 1000;
+	s->t = 0;
+	ms_run(s, ms_n(hz, 2, 3), 0, 0);
+	imu_parser_feed(p, s->buf, s->len);
+	s->len = 0;
+	imu_turned = imu_my = 0;
+}
+
+static void mm_check(const char *what, int mode, float hz, float x, float y, float tol)
+{
+	static const char *const names[MM_MODES] = { "gyro+accel", "gyro", "accel" };
+
+	if (fabsf(imu_turned - x) <= tol && fabsf(imu_my - y) <= tol)
+		return;
+	fprintf(stderr, "matrix %s, %s, %g Hz: x %.2f y %.2f, want %.1f %.1f\n", what, names[mode],
+		(double)hz, (double)imu_turned, (double)imu_my, (double)x, (double)y);
+	failures++;
+}
+
+static void test_motion_matrix(void)
+{
+	static const float rates[] = { 1, 5, 104, 1000 };
+	static const int gaps[] = { 4, 50, 900 };
+	struct imu_parser p;
+	struct mainloop *ml = mainloop_new("matrix");
+	struct mstream s = { 0 };
+	unsigned id = 0;
+
+	input_init(ml, NULL, on_imu_event, NULL);
+	for (int mode = 0; mode < MM_MODES; mode++) {
+		bool gyro = mode != MM_A;
+
+		for (unsigned ri = 0; ri < sizeof(rates) / sizeof(rates[0]); ri++) {
+			float hz = rates[ri];
+			int nturn = ms_n(hz, 0.1f, 4);		/* 20 degrees in these */
+			float w = 20 * hz / nturn;
+
+			/* a steady stream: a turn of 45 degrees left, a tilt of 20 */
+			mm_start(&p, &s, mode, hz, id++);
+			ms_run(&s, ms_n(hz, 1, 4), 0, 45 * hz / ms_n(hz, 1, 4));
+			ms_run(&s, ms_n(hz, 2, 3), 0, 0);
+			ms_run(&s, ms_n(hz, 1, 4), 20 * hz / ms_n(hz, 1, 4), 0);
+			ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+			imu_parser_feed(&p, s.buf, s.len);
+			mm_check("steady", mode, hz, gyro ? -45 : 0, 20, 2.5f);
+
+			for (unsigned gi = 0; gi < sizeof(gaps) / sizeof(gaps[0]); gi++) {
+				/* samples lost while it turned: only what comes after counts */
+				mm_start(&p, &s, mode, hz, id++);
+				ms_gap(&s, gaps[gi], 0, 0);
+				ms_run(&s, nturn, 0, w);
+				ms_run(&s, ms_n(hz, 2, 3), 0, 0);
+				imu_parser_feed(&p, s.buf, s.len);
+				mm_check("turn after lost samples", mode, hz, gyro ? -20 : 0, 0, 2.5f);
+				/* samples lost while it tilted: never the view's */
+				mm_start(&p, &s, mode, hz, id++);
+				ms_gap(&s, gaps[gi], 0, 20);
+				ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+				imu_parser_feed(&p, s.buf, s.len);
+				mm_check("tilt in lost samples", mode, hz, 0, 0, 1);
+			}
+			/* 3 samples lost while it tilted: an accelerometer alone sees it
+			 * (a gyro decides the tilt where there is one: it saw none) */
+			mm_start(&p, &s, mode, hz, id++);
+			ms_gap(&s, 3, 0, 20);
+			ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+			imu_parser_feed(&p, s.buf, s.len);
+			mm_check("tilt in 3 lost samples", mode, hz, 0, gyro ? 0 : 20, 2);
+			/* time without samples, their numbers going on (the device set
+			 * its sensor up again), a tilt in it, then a turn: up to 3.5
+			 * periods it is no gap (2 periods; 0.5 s at 1 and 5 Hz), more
+			 * is (10 periods; 0.5 s at 104 and 1000 Hz) */
+			for (int pi = 0; pi < 3; pi++) {
+				float extra = pi == 0 ? 2 / hz : pi == 1 ? 10 / hz : 0.5f;
+				bool counted = extra * hz <= 3.5f && !gyro;
+
+				mm_start(&p, &s, mode, hz, id++);
+				ms_gap(&s, 0, extra, 20);
+				ms_run(&s, nturn, 0, w);
+				ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+				imu_parser_feed(&p, s.buf, s.len);
+				mm_check("tilt in a pause, then a turn", mode, hz, gyro ? -20 : 0,
+					 counted ? 20 : 0, 2.5f);
+			}
+			/* two gaps close together, a tilt in each */
+			mm_start(&p, &s, mode, hz, id++);
+			ms_gap(&s, 6, 0, 20);
+			ms_run(&s, ms_n(hz, 0.05f, 1), 0, 0);
+			ms_gap(&s, 6, 0, 20);
+			ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+			imu_parser_feed(&p, s.buf, s.len);
+			mm_check("two gaps close together", mode, hz, 0, 0, 1);
+			/* plugged out and in, tilted by 60 meanwhile: a new parser, its
+			 * numbers from anew; present only after the first read, as the
+			 * driver says it */
+			mm_start(&p, &s, mode, hz, id++);
+			input_motion_present(true, hz);
+			input_motion_present(false, 0);
+			imu_parser_init(&p);
+			snprintf(p.serial, sizeof(p.serial), "MM%u", id - 1);
+			s.seq = 3;
+			s.t += 5000000;
+			s.tilt += 60;
+			{
+				uint8_t f[80];
+
+				ms_put(&s, f, mm_info(f, mode, hz));
+			}
+			ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+			imu_parser_feed(&p, s.buf, s.len);
+			input_motion_present(true, hz);
+			input_motion_present(false, 0);
+			mm_check("plugged in again", mode, hz, 0, 0, 1);
+		}
+	}
+	input_set_motion_calibration(NULL);
+	free(s.buf);
+	input_deinit();
+	mainloop_free(ml);
+}
+
 static void test_imu(void)
 {
 	static uint8_t stream[4000 * IMU_SAMPLE_FRAME + 256];
@@ -789,8 +1013,8 @@ static void test_imu(void)
 		input_motion_present(true, 1000);
 		imu_feed(2000, 0, 0, 0, 0, 0);
 		input_motion_present(false, 0);
-		/* as the driver does it: the port opened (a gap), then what one read
-		 * gave (here 40 samples), then present */
+		/* input_motion_gap() itself (the parser calls it on a new stream:
+		 * the matrix tests that path), then 40 samples, then present */
 		input_motion_gap();
 		imu_my = 0;
 		imu_feed(40, 0, 0, 0, 60, 60);
@@ -1812,6 +2036,7 @@ int main(void)
 	test_motion();
 #ifdef CONFIG_INPUT_IMU
 	test_imu();
+	test_motion_matrix();
 #endif
 	test_rtp();
 	test_rtcp_in();

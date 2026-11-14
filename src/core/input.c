@@ -533,11 +533,8 @@ int input_save_calibration(void)
 
 void input_motion_present(bool present, float rate_hz)
 {
-	if (present && !in.motion.present) {
-		/* back after a while: nothing of then is now's */
-		motion_drop(&in.motion.m);
-		motion_synth_reset(&in.motion.synth);
-	}
+	if (present && !in.motion.present)
+		motion_drop(&in.motion.m);	/* nothing kept from before; gaps are the reader's */
 	in.motion.present = present;
 	in.motion.rate_hz = present ? rate_hz : 0;
 	input_report_devices(INPUT_DEV_MOTION, present ? INPUT_DEV_MOTION : 0);
@@ -615,6 +612,7 @@ void input_motion_sensor(const struct input_motion_desc *d)
 
 void input_motion_gap(void)
 {
+	/* the reader's word: what came before the gap is stale */
 	motion_synth_reset(&in.motion.synth);
 }
 

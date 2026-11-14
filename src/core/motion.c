@@ -89,7 +89,6 @@ float motion_synth_setup(struct motion_synth *s, float accel_rms, float rate_hz)
 
 void motion_synth_reset(struct motion_synth *s)
 {
-	/* the usual step stays: the next gap is told by it as well */
 	s->set = false;
 	s->count = 0;
 	s->head = 0;
@@ -103,11 +102,6 @@ void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, f
 	gyro[0] = gyro[1] = gyro[2] = 0;
 	if (!normalize(a) || !(dt > 0))
 		return;
-	/* a gap (samples lost): "up" then is not now's */
-	if (s->dt_avg > 0 && dt > MOTION_SYNTH_GAP * s->dt_avg)
-		motion_synth_reset(s);	/* a gap: not a step, the average keeps */
-	else
-		s->dt_avg = s->dt_avg > 0 ? s->dt_avg + (dt - s->dt_avg) * 0.01f : dt;
 	if (!s->set) {
 		memcpy(s->up, a, sizeof(s->up));
 		s->set = true;
