@@ -81,8 +81,6 @@ float motion_synth_setup(struct motion_synth *s, float accel_rms, float rate_hz)
 
 	memset(s, 0, sizeof(*s));
 	s->span = span < MOTION_SYNTH_MIN_S ? MOTION_SYNTH_MIN_S : span > MOTION_SYNTH_MAX_S ? MOTION_SYNTH_MAX_S : span;
-	if (rate_hz > 0 && s->span < 3 / rate_hz)
-		s->span = 3 / rate_hz;	/* a slow sensor: a few of its samples at least */
 	/* the turn of an "up" smoothed over 'span' seen 'span' apart: about
 	 * 3.85 n / span^1.5 deg/s (measured on a real accelerometer at rest,
 	 * 1139 Hz: 0.28 deg/s for 0.0022 g, span 0.1 s) */
@@ -106,7 +104,7 @@ void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, f
 	if (!normalize(a) || !(dt > 0))
 		return;
 	/* a gap (samples lost): "up" then is not now's */
-	if (s->dt_avg > 0 ? dt > MOTION_SYNTH_GAP * s->dt_avg : s->set && dt > s->span)
+	if (s->dt_avg > 0 && dt > MOTION_SYNTH_GAP * s->dt_avg)
 		motion_synth_reset(s);	/* a gap: not a step, the average keeps */
 	else
 		s->dt_avg = s->dt_avg > 0 ? s->dt_avg + (dt - s->dt_avg) * 0.01f : dt;
@@ -274,8 +272,8 @@ void motion_feed(struct motion *m, const float gyro[3], const float accel[3], fl
 	float g[3], yaw, pitch = 0, rx, ry;
 	int k;
 
-	if (!(dt > 0) || dt > 0.1f)
-		dt = dt > 0.1f ? 0.1f : 0;
+	if (!(dt > 0) || dt > MOTION_DT_MAX)
+		dt = dt > MOTION_DT_MAX ? MOTION_DT_MAX : 0;
 	still_add(m, gyro, accel, dt);
 	for (k = 0; k < 3; k++)
 		g[k] = gyro[k] - m->bias[k];

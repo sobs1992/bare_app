@@ -406,6 +406,10 @@ static void test_motion(void)
 		est = motion_synth_setup(&sy, 0.0022f, 104);
 		CHECK(sy.span == MOTION_SYNTH_MAX_S && est > 0.5f && est < 0.9f);
 		CHECK(motion_synth_setup(&sy, 0, 0) == 0 && sy.span == MOTION_SYNTH_MAX_S);
+		/* the span is not stretched for a slow sensor: it looks one sample
+		 * back (no "gap" at every step: tested through the parser) */
+		motion_synth_setup(&sy, 0.0001f, 10);
+		CHECK(fabsf(sy.span - 0.0001f * sqrtf(1139.0f / 10) * 45) < 1e-3f && sy.span < 0.1f);
 	}
 }
 
@@ -499,6 +503,47 @@ static void imu_feed(int n, float wx, float wy, float wz, float tilt0, float til
 			input_report_motion_end();
 	}
 	input_report_motion_end();
+}
+
+/* An accelerometer-only stream at hz: n samples (one a frame) tilting about
+ * x from tilt0 to tilt1 degrees; *sq and *t go on */
+static size_t imu_acc_samples(uint8_t *out, uint16_t *sq, uint32_t *t, float hz, int n, float tilt0,
+			      float tilt1)
+{
+	size_t m = 0;
+	uint8_t hdr[8 + 12];
+
+	for (int i = 0; i < n; i++) {
+		float th = (tilt0 + (tilt1 - tilt0) * (i + 1) / n) * 0.017453293f;
+		int16_t ay = (int16_t)lrintf(sinf(th) * 8192), az = (int16_t)lrintf(cosf(th) * 8192);
+
+		memcpy(hdr, t, 4);
+		memcpy(hdr + 4, sq, 2);
+		hdr[6] = 1;
+		hdr[7] = 0;
+		memset(hdr + 8, 0, 12);
+		memcpy(hdr + 8 + 8, &ay, 2);
+		memcpy(hdr + 8 + 10, &az, 2);
+		m += imu_frame(out + m, 0x04, hdr, 8 + 12);
+		(*sq)++;
+		*t += (uint32_t)lrintf(1e6f / hz);
+	}
+	return m;
+}
+
+/* The sensor (accelerometer only, at hz) told by its info, then calibrated:
+ * its right is the sensor's x */
+static void imu_acc_start(struct imu_parser *p, uint8_t *buf, const char *serial, float hz)
+{
+	uint8_t st3[36] = { 3, 0, 3, 0x0b };
+	size_t m;
+
+	imu_parser_init(p);
+	snprintf(p->serial, sizeof(p->serial), "%s", serial);
+	m = imu_info(buf, "ACCONLY", 9, 2, (uint32_t)lrintf(hz * 1000), 0, 1.0f / 8192, 0, 0.002f);
+	m += imu_frame(buf + m, 0x02, st3, 36);
+	imu_parser_feed(p, buf, m);
+	input_set_motion_calibration(&(struct motion_cal){ .axes_set = true, .right = { 1, 0, 0 } });
 }
 
 static void test_imu(void)
@@ -830,6 +875,75 @@ static void test_imu(void)
 				fprintf(stderr, "gap scenario %u: the view moved %.2f deg\n", si, (double)imu_my);
 			input_set_motion_calibration(NULL);
 		}
+	}
+
+	/* no gyro, plugged out and in again (a new port: a new parser), turned
+	 * 60 degrees meanwhile; the driver says it is present only after its
+	 * first read, here all of the samples: no jump */
+	{
+		uint16_t sq = 10;
+		uint32_t t = 0;
+		size_t m;
+
+		imu_acc_start(&p, stream, "RECON", 1000);
+		input_motion_present(true, 1000);
+		m = imu_acc_samples(stream, &sq, &t, 1000, 1000, 0, 0);
+		imu_parser_feed(&p, stream, m);
+		input_motion_present(false, 0);
+		imu_parser_init(&p);	/* open_port() */
+		snprintf(p.serial, sizeof(p.serial), "RECON");
+		sq = 7;			/* the device started its numbers again */
+		t = 123456;
+		imu_my = 0;
+		m = imu_info(stream, "ACCONLY", 9, 2, 1000000, 0, 1.0f / 8192, 0, 0.002f);
+		m += imu_acc_samples(stream + m, &sq, &t, 1000, 1500, 60, 60);
+		imu_parser_feed(&p, stream, m);
+		input_motion_present(true, 1000);
+		CHECK(input_motion()->cal.axes_set && fabsf(imu_my) < 1);
+		input_motion_present(false, 0);
+		input_set_motion_calibration(NULL);
+	}
+
+	/* slow sensors without a gyro: a tilt of 20 degrees over 4 s is the
+	 * view's (no step cut short, no "gap" at every sample) */
+	{
+		static const float hz[] = { 1, 2, 5 };
+
+		for (unsigned hi = 0; hi < sizeof(hz) / sizeof(hz[0]); hi++) {
+			uint16_t sq = 1;
+			uint32_t t = 0;
+			size_t m;
+			char serial[16];
+
+			snprintf(serial, sizeof(serial), "SLOW%u", hi);
+			imu_acc_start(&p, stream, serial, hz[hi]);
+			m = imu_acc_samples(stream, &sq, &t, hz[hi], (int)(4 * hz[hi]), 0, 0);
+			imu_parser_feed(&p, stream, m);
+			imu_my = 0;
+			m = imu_acc_samples(stream, &sq, &t, hz[hi], (int)(4 * hz[hi]), 0, 20);
+			m += imu_acc_samples(stream + m, &sq, &t, hz[hi], (int)(6 * hz[hi]), 20, 20);
+			imu_parser_feed(&p, stream, m);
+			CHECK(fabsf(imu_my - 20) < 2);
+			if (fabsf(imu_my - 20) >= 2)
+				fprintf(stderr, "%.0f Hz: the view moved %.2f deg of 20\n", (double)hz[hi],
+					(double)imu_my);
+			input_set_motion_calibration(NULL);
+		}
+	}
+
+	/* the sensor's rate from its info reaches the made-up gyro: its noise
+	 * estimate, so the thresholds, follow a new rate */
+	{
+		float still_fast, still_slow;
+		size_t m;
+
+		imu_acc_start(&p, stream, "RATE", 1000);
+		still_fast = input_motion()->still_gyro;
+		m = imu_info(stream, "ACCONLY", 9, 2, 104000, 0, 1.0f / 8192, 0, 0.002f);
+		imu_parser_feed(&p, stream, m);
+		still_slow = input_motion()->still_gyro;
+		CHECK(still_fast > 0.9f && still_fast < 1.3f && still_slow > still_fast);
+		input_set_motion_calibration(NULL);
 	}
 
 	/* neither: nothing to aim with, the samples are not used */

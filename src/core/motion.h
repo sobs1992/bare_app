@@ -35,6 +35,7 @@
 #include <stddef.h>
 
 #define MOTION_STILL_MS 1000		/* still that long: the bias is measured */
+#define MOTION_DT_MAX 2.0f		/* s: a sample's step at most (a slow sensor's is long) */
 #define MOTION_STILL_GYRO 0.6f		/* deg/s: the gyro's spread while still (noise unknown) */
 #define MOTION_STILL_NOISE 4.0f		/* ...else this many times its noise, within: */
 #define MOTION_STILL_MIN 0.3f
@@ -59,9 +60,9 @@
  * sample apart is noise): MOTION_SYNTH_PER_G seconds per g of the
  * accelerometer's noise as it would be at MOTION_SYNTH_REF_HZ (white noise:
  * rms * sqrt(REF_HZ / rate)), within MOTION_SYNTH_MIN_S..MAX_S (noise
- * unknown: MAX; at least 3 samples). A gap in the samples (more than
- * MOTION_SYNTH_GAP of its usual steps; before a step is known, longer than
- * the span) starts it afresh. */
+ * unknown: MAX; a slower sensor looks one sample back). A gap in the samples
+ * (more than MOTION_SYNTH_GAP of its usual steps, the first step being the
+ * usual one) starts it afresh. */
 #define MOTION_SYNTH_PER_G 45.0f
 #define MOTION_SYNTH_REF_HZ 1139.0f
 #define MOTION_SYNTH_GAP 4.0f

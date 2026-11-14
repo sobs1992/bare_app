@@ -49,7 +49,8 @@
 #define STATUS_FAKE 16u
 #define DEFAULT_US 1000.0f	/* the period until PKT_INFO says it */
 #define SPAN_US 2000000u		/* the period is measured over that much time */
-#define LOST_US 1000000.0f	/* a gap longer than that: lost track, one period */
+#define LOST_US 1000000.0f	/* a gap longer than that (and LOST_PERIODS): lost track */
+#define LOST_PERIODS 4.0f
 #define TIME_GAP_PERIODS 4	/* samples' times further apart than their numbers say by */
 #define TIME_GAP_US 20000.0f	/* ...this many periods and this much: a gap in time */
 #define RETRY_MS 100
@@ -217,6 +218,12 @@ static void on_info(struct imu_parser *p, const uint8_t *s)
 	}
 }
 
+/* A gap longer than this (us) is lost track: a second, or a few samples of a slow sensor */
+static float lost_us(const struct imu_parser *p)
+{
+	return fmaxf(LOST_US, LOST_PERIODS * p->period_us);
+}
+
 /* One sample; 'timed': t is its own time (not made up from the period) */
 static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint8_t *gyro_raw,
 		      const uint8_t *accel_raw, bool timed)
@@ -233,10 +240,14 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 
 		if (gap == 0)
 			return;		/* the same sample again */
-		if (gap * p->period_us < LOST_US)
+		if (gap * p->period_us <= lost_us(p))
 			dt = gap * p->period_us * 1e-6f;
 		else
 			input_motion_gap();	/* lost track: one period, afresh */
+	} else {
+		/* the first sample of this stream (the port opened again, a new
+		 * rate): nothing of before is now's */
+		input_motion_gap();
 	}
 	if (timed && p->have_real) {
 		uint16_t gap = (uint16_t)(seq - p->real_seq);
@@ -246,7 +257,7 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 			/* samples numbered on, but none came for a while (the device
 			 * set its sensor up again): a gap all the same */
 			input_motion_gap();
-		} else if (gap >= 1 && expected < LOST_US) {
+		} else if (gap >= 1 && expected <= lost_us(p)) {
 			p->span_us += t - p->real_t;
 			p->span_n += gap;
 		}
@@ -506,7 +517,6 @@ static bool open_port(struct imu *h, const char *tty)
 	memcpy(h->node, path, sizeof(h->node));
 	imu_parser_init(&h->parser);
 	memcpy(h->parser.serial, h->serial, sizeof(h->parser.serial));
-	input_motion_gap();	/* plugged in again: before its first samples */
 	h->vmin = 1;
 	h->seen = 0;
 	h->live = false;
