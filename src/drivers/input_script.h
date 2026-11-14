@@ -9,6 +9,9 @@
  * word per 'interval_ms'.
  *
  *   echo "down a wait:500 b f6:2500" | bare_app --platform pc
+ *
+ * BARE_APP_SIM_DEVICES=<INPUT_DEV_* mask> says those input devices are
+ * plugged in (the status bar's icons in screenshots: 7 all of them).
  */
 struct script_params {
 	int interval_ms;

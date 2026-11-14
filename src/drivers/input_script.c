@@ -120,6 +120,9 @@ static void *script_open(const void *params, struct mainloop *ml)
 	s->ml = ml;
 	s->interval = p && p->interval_ms ? p->interval_ms : 150;
 	s->held = GP_NONE;
+	if (getenv("BARE_APP_SIM_DEVICES"))
+		input_report_devices(INPUT_DEV_KEYBOARD | INPUT_DEV_MOUSE | INPUT_DEV_MOTION,
+				     (uint32_t)strtoul(getenv("BARE_APP_SIM_DEVICES"), NULL, 0));
 	mainloop_add_fd(ml, STDIN_FILENO, POLLIN, on_stdin, s);
 	input_declare(GP_BIT(GP_COUNT) - 1, 0);	/* a script can press anything */
 	LOGI(TAG, "reading input script from stdin");
