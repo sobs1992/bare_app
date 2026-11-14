@@ -112,7 +112,8 @@ void motion_init(struct motion *m);
 void motion_set_cal(struct motion *m, const struct motion_cal *c);
 /*
  * One sample, in the sensor's axes: the gyro in deg/s, the accelerometer
- * in g, dt seconds since the sample before (gaps included).
+ * in g, dt seconds it stands for (the stream's reader: its steps since the
+ * sample before, one period after a gap).
  */
 void motion_feed(struct motion *m, const float gyro[3], const float accel[3], float dt);
 /* What the sensor has (MOTION_CH_*) and its noise at rest (deg/s and g rms,

@@ -217,14 +217,48 @@ static void on_info(struct imu_parser *p, const uint8_t *s)
 	}
 }
 
+static int cmp_float(const void *a, const void *b)
+{
+	float x = *(const float *)a, y = *(const float *)b;
+
+	return x < y ? -1 : x > y;
+}
+
+/*
+ * The real period, from the samples' own times: each interval between two
+ * timed samples gives one (elapsed / samples); over SPAN_US their median is
+ * taken, so a pause (rare) does not count while a rate off the info's
+ * (every interval) does. Within 0.5..2x of the info's rate.
+ */
+static void measure_rate(struct imu_parser *p, float elapsed, unsigned n)
+{
+	float one = elapsed / n, m;
+
+	if (one < 0.25f * p->nominal_us || one > 4 * p->nominal_us)
+		return;		/* nonsense, or a long pause */
+	if (p->span_n < SPAN_MAX)
+		p->span_vals[p->span_n++] = one;
+	p->span_us += (uint64_t)elapsed;
+	if (p->span_us < SPAN_US || p->span_n < 3)
+		return;
+	qsort(p->span_vals, p->span_n, sizeof(p->span_vals[0]), cmp_float);
+	m = p->span_vals[p->span_n / 2];
+	if (m > 0.5f * p->nominal_us && m < 2 * p->nominal_us) {
+		p->period_us = p->period_measured ? 0.7f * p->period_us + 0.3f * m : m;
+		p->period_measured = true;
+	}
+	p->span_us = 0;
+	p->span_n = 0;
+}
+
 /*
  * One sample; 'timed': t is its own time (not made up from the period).
  *
  * Gaps are decided here and only here: the first sample of a stream (a new
- * port, a new rate), more than GAP_MISSING samples missing by their
- * numbers, or more than GAP_MISSING periods (and a half, for the timing's
- * jitter) missing by their times with the numbers going on (the device set
- * its sensor up again). A gap tells core/input (input_motion_gap()) and the
+ * port, a new rate), or more than GAP_MISSING samples missing (and a half,
+ * for the timing's jitter), counting together those missing by number and
+ * those missing by time with the numbers going on (the device set its
+ * sensor up again). A gap tells core/input (input_motion_gap()) and the
  * sample counts one period: what happened in the gap is not known. Else the
  * sample counts the steps its number made, GAP_MISSING + 1 periods at most.
  */
@@ -240,37 +274,26 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 		gyro[k] = s16(gyro_raw + 2 * k) * p->gyro_scale;
 		accel[k] = s16(accel_raw + 2 * k) * p->accel_scale;
 	}
+	float missing = 0;	/* samples missing before this one: by number, then by time */
+
 	if (p->have_prev) {
 		steps = (uint16_t)(seq - p->prev_seq);
 		if (steps == 0)
 			return;		/* the same sample again */
-		if (steps > GAP_MISSING + 1)
-			gap = true;
+		missing = steps - 1;
 	}
 	if (timed && p->have_real) {
 		uint16_t n = (uint16_t)(seq - p->real_seq);
 		float expected = n * p->period_us, elapsed = (float)(uint32_t)(t - p->real_t);
 
-		if (elapsed > expected + (GAP_MISSING + 0.5f) * p->period_us)
-			gap = true;
-		/* the rate is measured from steps as long as they should be (a
-		 * pause too short to be a gap would make it look slower) */
-		if (!gap && n >= 1 && fabsf(elapsed - expected) <= 0.5f * p->period_us) {
-			p->span_us += t - p->real_t;
-			p->span_n += n;
-		}
-		if (p->span_us >= SPAN_US) {
-			float measured = (float)p->span_us / p->span_n;
-
-			if (measured > 0.5f * p->nominal_us && measured < 2 * p->nominal_us) {
-				p->period_us = p->period_measured ? 0.7f * p->period_us + 0.3f * measured
-								  : measured;
-				p->period_measured = true;
-			}
-			p->span_us = 0;
-			p->span_n = 0;
-		}
+		/* time beyond what the numbers say: more missing samples */
+		if (elapsed > expected)
+			missing += (elapsed - expected) / p->period_us;
+		if (n >= 1)
+			measure_rate(p, elapsed, n);
 	}
+	if (missing > GAP_MISSING + 0.5f)
+		gap = true;
 	if (gap) {
 		input_motion_gap();
 		steps = 1;
@@ -435,6 +458,11 @@ static void on_readable(int fd, short revents, void *ud)
 		detach(h);	/* unplugged */
 }
 
+bool imu_live(uint64_t now, uint64_t last, uint32_t samples, float period_us)
+{
+	return samples && now - last <= fmaxf(LIVE_MS, 3 * period_us / 1000);
+}
+
 /* Every second: the rate measured, and the stream asked for if it stopped
  * (no samples for LIVE_MS or 3 of the sensor's periods, whichever is longer) */
 static void on_watch(void *ud)
@@ -443,12 +471,13 @@ static void on_watch(void *ud)
 
 	if (h->fd < 0)
 		return;
+	bool was_live = h->live;
+
 	/* a slow sensor's samples are seconds apart: not "none" for that */
-	h->live = h->parser.samples &&
-		  now_ms() - h->last_ms <= fmaxf(LIVE_MS, 3 * h->parser.period_us / 1000);
+	h->live = imu_live(now_ms(), h->last_ms, h->parser.samples, h->parser.period_us);
 	if (!h->live) {
-		if (h->parser.samples != h->seen || h->seen)
-			LOGW(TAG, "%s: no samples", h->node);
+		if (was_live)
+			LOGW(TAG, "%s: no samples", h->node);	/* once, when they stop */
 		send_cmd(h, "s");
 	}
 	h->seen = h->parser.samples;

@@ -36,6 +36,8 @@ extern const struct hal_input_ops input_imu;
  * the nominal one by a few percent) over SPAN_US, from samples that carry
  * their own time.
  */
+#define SPAN_MAX 1024		/* intervals kept for the median of 2 s */
+
 struct imu_parser {
 	uint8_t buf[512];
 	size_t len;
@@ -59,13 +61,17 @@ struct imu_parser {
 	bool have_real;			/* the last sample with a time of its own */
 	uint32_t real_t;
 	uint16_t real_seq;
-	uint64_t span_us;		/* measuring the period: time and samples */
-	uint32_t span_n;
+	uint64_t span_us;		/* measuring the period: time so far, */
+	uint32_t span_n;		/* ...and each interval's period (their median counts) */
+	float span_vals[SPAN_MAX];
 	uint32_t samples, bad_crc;
 	uint8_t bad_info;		/* length of an info not understood (logged once) */
 	bool streaming, imu_ok, fake;
 };
 
 void imu_parser_init(struct imu_parser *p);
+/* The driver's: is a sensor live at now_ms whose last samples came at
+ * last_ms (samples so far, its period)? LIVE_MS or 3 periods, the longer */
+bool imu_live(uint64_t now_ms, uint64_t last_ms, uint32_t samples, float period_us);
 void imu_parser_feed(struct imu_parser *p, const uint8_t *data, size_t n);
 uint16_t imu_crc16(const uint8_t *data, size_t n);
