@@ -311,14 +311,14 @@ static void test_motion(void)
 	motion_turn(&m, 0, 3, 0, y_up, 1100);
 	CHECK(fabsf(m.bias[1] + 0.2f) < 0.05f);
 
-	/* calibrated right = sensor x: the top towards the player looks up */
+	/* calibrated right = sensor x: the top towards the player looks down */
 	c = (struct motion_cal){ .axes_set = true, .right = { 2, 0, 0 } };
 	motion_set_cal(&m, &c);
 	CHECK(m.cal.axes_set && m.cal.right[0] == 1);
 	motion_take(&m, &x, &y);
 	motion_turn(&m, 20, 0, 0, y_up, 500);
 	motion_take(&m, &x, &y);
-	CHECK(fabsf(y + 10) < 1 && fabsf(x) < 0.5f);
+	CHECK(fabsf(y - 10) < 1 && fabsf(x) < 0.5f);
 
 	/* small turns are smoothed, not lost */
 	motion_take(&m, &x, &y);
@@ -359,6 +359,15 @@ static void test_motion(void)
 #ifdef CONFIG_INPUT_IMU
 static float imu_turned;	/* GP_EV_MOTION seen: x */
 static int imu_events;
+
+static uint32_t imu_devices_seen;
+static int imu_devices_calls;
+
+static void on_imu_devices(uint32_t devices)
+{
+	imu_devices_seen = devices;
+	imu_devices_calls++;
+}
 
 static void on_imu_event(const struct gp_event *ev, void *ud)
 {
@@ -432,6 +441,52 @@ static void test_imu(void)
 	stream[10] ^= 1;
 	imu_parser_feed(&p, stream, n);
 	CHECK(p.bad_crc > 0 && p.samples == 2999);
+
+	/* the tune for every game: sensitivity, inverted axes */
+	{
+		struct input_motion_tune t = { .sensitivity = 2, .invert_x = true }, got;
+		FILE *f;
+
+		input_set_motion_tune(&t);
+		imu_turned = 0;
+		for (i = 0; i < 1000; i++)
+			n = imu_sample(stream + 34 * (size_t)i, 3001000u + 1000u * i,
+				       (uint16_t)(i + 3001 + 65000), 537);
+		imu_parser_feed(&p, stream, 34 * 1000);
+		CHECK(fabsf(imu_turned - 2 * 32.78f) < 3);
+		input_set_motion_tune(&(struct input_motion_tune){ .sensitivity = 9 });
+		input_motion_tune(&got);
+		CHECK(got.sensitivity == INPUT_GYRO_SENS_MAX && !got.invert_x);
+		input_set_motion_tune(NULL);
+		input_motion_tune(&got);
+		CHECK(got.sensitivity == 1 && !got.invert_x && !got.invert_y);
+		/* kept with the calibration */
+		f = fopen("test_gyro.conf", "w");
+		fputs("gyro.sensitivity = 1.5\ngyro.invert_y = 1\ngyro.bogus = 1\n", f);
+		fclose(f);
+		CHECK(input_load_calibration("test_gyro.conf") == 0);
+		input_motion_tune(&got);
+		CHECK(got.sensitivity == 1.5f && got.invert_y && !got.invert_x);
+		CHECK(input_save_calibration() == 0);
+		input_set_motion_tune(NULL);
+		CHECK(input_load_calibration("test_gyro.conf") == 0);
+		input_motion_tune(&got);
+		CHECK(got.sensitivity == 1.5f && got.invert_y);
+		unlink("test_gyro.conf");
+		input_set_motion_tune(NULL);
+	}
+
+	/* devices plugged in: the listener hears each change once */
+	input_set_devices_cb(on_imu_devices);
+	input_report_devices(INPUT_DEV_KEYBOARD | INPUT_DEV_MOUSE, INPUT_DEV_MOUSE);
+	input_motion_present(true, 1000);
+	input_motion_present(true, 1000);
+	CHECK(imu_devices_calls == 2 && imu_devices_seen == (INPUT_DEV_MOUSE | INPUT_DEV_MOTION));
+	CHECK(input_devices() == (INPUT_DEV_MOUSE | INPUT_DEV_MOTION));
+	input_motion_present(false, 0);
+	input_report_devices(INPUT_DEV_KEYBOARD | INPUT_DEV_MOUSE, 0);
+	CHECK(imu_devices_calls == 4 && imu_devices_seen == 0);
+	input_set_devices_cb(NULL);
 	input_deinit();
 	mainloop_free(ml);
 }

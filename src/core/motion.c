@@ -183,9 +183,11 @@ void motion_feed(struct motion *m, const float gyro[3], const float accel[3], fl
 		yaw = fabsf(wy) * MOTION_YAW_RELAX < pl ? wy * MOTION_YAW_RELAX : copysignf(pl, wy);
 	}
 	/* left about "up" is positive: the view goes left, x the other way;
-	 * the top towards the player is positive about the right: up, y < 0 */
+	 * the top tilted towards the player is positive about the right: the
+	 * view goes down, as the user wanted it (a camera would look up; the
+	 * sensor's tune can invert it) */
 	rx = -yaw;
-	ry = -pitch;
+	ry = pitch;
 	m->rate_x = rx;
 	m->rate_y = ry;
 	if (!m->bias_known)

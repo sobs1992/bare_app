@@ -75,6 +75,18 @@ static void release_all(struct hid_dev *d)
 	d->dx = d->dy = d->wheel = 0;
 }
 
+/* What is plugged in now, to core/input (the status bar shows it) */
+static void report_devices(struct hid *h)
+{
+	uint32_t present = 0;
+
+	for (int i = 0; i < MAX_DEVS; i++)
+		if (h->devs[i].fd >= 0)
+			present |= (h->devs[i].keyboard ? INPUT_DEV_KEYBOARD : 0) |
+				   (h->devs[i].mouse ? INPUT_DEV_MOUSE : 0);
+	input_report_devices(INPUT_DEV_KEYBOARD | INPUT_DEV_MOUSE, present);
+}
+
 static void detach(struct hid_dev *d)
 {
 	if (d->fd < 0)
@@ -84,6 +96,7 @@ static void detach(struct hid_dev *d)
 	close(d->fd);
 	d->fd = -1;
 	release_all(d);
+	report_devices(d->hid);
 }
 
 static void handle(struct hid_dev *d, const struct input_event *e)
@@ -180,6 +193,7 @@ static bool open_node(struct hid *h, int node)
 	d->keyboard = keyboard;
 	d->mouse = mouse;
 	mainloop_add_fd(h->ml, fd, POLLIN, on_readable, d);
+	report_devices(h);
 	LOGI(TAG, "%s: \"%s\"%s%s", path, name, keyboard ? " keyboard" : "", mouse ? " mouse" : "");
 	return true;
 }
@@ -247,6 +261,7 @@ static void hid_close(void *p)
 			mainloop_remove_fd(h->ml, h->devs[i].fd);
 			close(h->devs[i].fd);
 		}
+	input_report_devices(INPUT_DEV_KEYBOARD | INPUT_DEV_MOUSE, 0);
 	free(h);
 }
 

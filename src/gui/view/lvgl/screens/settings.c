@@ -14,7 +14,8 @@
  *   Internet  the Wi-Fi network: opens the Wi-Fi screen; the address (CTX_WIFI);
  *             the stream on or off, its address and viewers (CONFIG_STREAM)
  *   Games     the controls hint when a game starts (CTX_SETTINGS); the
- *             motion sensor: opens its screen (CONFIG_INPUT_IMU)
+ *             motion sensor, plugged in or not (CTX_INPUT): opens its
+ *             screen (CONFIG_INPUT_IMU)
  *   System    language (CTX_SETTINGS), date and time (set if the platform
  *             can: CTX_SYSTEM), hibernation (CTX_SETTINGS, if the platform
  *             has it), device, platform (CTX_SYSTEM), battery (CTX_POWER)
@@ -498,14 +499,7 @@ static void build_games(struct settings *s)
 {
 	row_new(s, R_GAME_HINT, ROW_CHOICE, S_GAME_HINT);
 #ifdef CONFIG_INPUT_IMU
-	{
-		struct row *r = row_new(s, R_MOTION, ROW_LINK, S_MOTION);
-		struct input_motion_info mi;
-
-		input_motion_info(&mi);
-		lv_obj_set_style_text_color(r->value, mi.present ? UI_COLOR_ON : UI_COLOR_DIM, 0);
-		lv_label_set_text(r->value, tr(mi.present ? S_ON : S_OFF));
-	}
+	row_new(s, R_MOTION, ROW_LINK, S_MOTION);	/* plugged in or not: update_motion() */
 #endif
 }
 #endif
@@ -849,6 +843,18 @@ static void update_games(struct settings *s, const struct gui_ctx *c)
 	ui_set_text(s->rows[R_GAME_HINT].value, tr(s->game_hint ? S_ON : S_OFF));
 }
 
+#ifdef CONFIG_INPUT_IMU
+/* The motion sensor plugged in or not (CTX_INPUT), as it comes and goes */
+static void update_motion(struct settings *s, const struct gui_ctx *c)
+{
+	bool plugged = c->input.devices & INPUT_DEV_MOTION;
+	lv_obj_t *v = s->rows[R_MOTION].value;
+
+	lv_obj_set_style_text_color(v, plugged ? UI_COLOR_ON : UI_COLOR_DIM, 0);
+	ui_set_text(v, tr(plugged ? S_PLUGGED : S_UNPLUGGED));
+}
+#endif
+
 static void settings_update(void *self, const struct gui_ctx *c, uint32_t changed)
 {
 	struct settings *s = self;
@@ -867,6 +873,10 @@ static void settings_update(void *self, const struct gui_ctx *c, uint32_t change
 		update_system(s, c);
 	if ((changed & CTX_SETTINGS) && s->rows[R_GAME_HINT].obj)
 		update_games(s, c);
+#ifdef CONFIG_INPUT_IMU
+	if ((changed & CTX_INPUT) && s->rows[R_MOTION].obj)
+		update_motion(s, c);
+#endif
 #ifdef CONFIG_STREAM
 	if ((changed & (CTX_SETTINGS | CTX_WIFI)) && s->rows[R_STREAM].obj)
 		update_stream(s, c);
@@ -899,7 +909,7 @@ static void settings_deinit(void *self)
 
 const struct widget_ops settings_screen = {
 	.name = "settings",
-	.deps = CTX_DISPLAY | CTX_AUDIO | CTX_WIFI | CTX_SYSTEM | CTX_POWER | CTX_SETTINGS,
+	.deps = CTX_DISPLAY | CTX_AUDIO | CTX_WIFI | CTX_SYSTEM | CTX_POWER | CTX_SETTINGS | CTX_INPUT,
 	.init = settings_init,
 	.update = settings_update,
 	.deinit = settings_deinit,

@@ -41,6 +41,7 @@ enum ctx_section {
 	CTX_WIFI	= 1u << 6,
 	CTX_USB_DISK	= 1u << 7,
 	CTX_SYSMON	= 1u << 8,
+	CTX_INPUT	= 1u << 9,
 	CTX_ALL		= 0xffffffffu,
 };
 
@@ -148,6 +149,9 @@ struct gui_ctx {
 		uint64_t taken_ms;	/* now_ms() of the sample */
 		struct sysmon_info info;
 	} sysmon;
+	struct {
+		uint32_t devices;	/* INPUT_DEV_* plugged in (core/input.h) */
+	} input;
 };
 
 int ctx_init(void);

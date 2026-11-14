@@ -220,9 +220,12 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 				  RU("Это был поворот, а не наклон: ещё раз") },
 	[S_MOTION_CAL_DONE] = { "Motion sensor calibrated" RU("Датчик движения откалиброван") },
 	[S_MOTION_CAL_NONE] = { "Calibration removed" RU("Калибровка удалена") },
-	[S_MOTION_TRY]      = { "Turn and tilt the device: the cross follows"
-				RU("Поворачивайте и наклоняйте консоль: крестик следует за ней") },
-	[S_CENTER]          = { "Center" RU("В центр") },
+	[S_MOTION_TRY]      = { "Turn and tilt the device: the cross follows (X: back to the middle)"
+				RU("Поворачивайте и наклоняйте консоль: крестик следует за ней (X — в центр)") },
+	[S_PLUGGED]         = { "Plugged in" RU("Подкл.") },
+	[S_UNPLUGGED]       = { "Unplugged" RU("Откл.") },
+	[S_GYRO_INVERT_X]   = { "Invert X" RU("Инверсия X") },
+	[S_GYRO_INVERT_Y]   = { "Invert Y" RU("Инверсия Y") },
 };
 
 static int lang = LANG_EN;

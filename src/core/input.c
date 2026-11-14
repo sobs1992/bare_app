@@ -62,9 +62,12 @@ static struct {
 		float rate_hz;
 		struct motion m;
 		bool cal_set;	/* m.cal came from the file or the calibration */
+		struct input_motion_tune tune;
 		input_motion_cb cb;
 		void *ud;
 	} motion;
+	uint32_t devices;	/* INPUT_DEV_* */
+	void (*devices_cb)(uint32_t devices);
 } in;
 
 static void emit_button(enum gp_button b, bool pressed, bool repeat)
@@ -144,6 +147,7 @@ void input_init(struct mainloop *ml, const struct input_config *cfg, input_cb cb
 	for (s = 0; s < INPUT_STICKS; s++)
 		input_stick_tune_default(&in.stick[s].tune);
 	motion_init(&in.motion.m);
+	input_set_motion_tune(NULL);
 }
 
 void input_deinit(void)
@@ -332,6 +336,29 @@ static bool load_tune_line(int s, const char *field, const char *value)
 	return true;
 }
 
+/* "gyro.sensitivity = 1.0", "gyro.invert_x = 1": the sensor's tune */
+static bool load_gyro_line(const char *field, const char *value)
+{
+	struct input_motion_tune t = in.motion.tune;
+	char *end;
+	float v = strtof(value, &end);
+
+	while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')
+		end++;
+	if (end == value || *end)
+		return false;
+	if (!strcmp(field, "sensitivity"))
+		t.sensitivity = v;
+	else if (!strcmp(field, "invert_x"))
+		t.invert_x = v != 0;
+	else if (!strcmp(field, "invert_y"))
+		t.invert_y = v != 0;
+	else
+		return false;
+	input_set_motion_tune(&t);
+	return true;
+}
+
 int input_load_calibration(const char *path)
 {
 	const char *home = getenv("HOME");
@@ -371,6 +398,11 @@ int input_load_calibration(const char *path)
 			if (motion_cal_parse(eq + 1, &mc))
 				input_set_motion_calibration(&mc);
 			else
+				LOGW(TAG, "%s: bad line \"%s\"", in.cal_path, key);
+			continue;
+		}
+		if (!strncmp(key, "gyro.", 5)) {
+			if (!load_gyro_line(key + 5, eq + 1))
 				LOGW(TAG, "%s: bad line \"%s\"", in.cal_path, key);
 			continue;
 		}
@@ -420,6 +452,8 @@ int input_save_calibration(void)
 	}
 	if (in.motion.cal_set && motion_cal_format(&in.motion.m.cal, buf, sizeof(buf)) > 0)
 		fprintf(f, "gyro = %s\n", buf);
+	fprintf(f, "gyro.sensitivity = %.1f\ngyro.invert_x = %d\ngyro.invert_y = %d\n",
+		(double)in.motion.tune.sensitivity, in.motion.tune.invert_x, in.motion.tune.invert_y);
 	if (fflush(f) || fsync(fileno(f)))
 		err = -1;
 	if (fclose(f) || err || rename(tmp, in.cal_path)) {
@@ -439,6 +473,46 @@ void input_motion_present(bool present, float rate_hz)
 		motion_drop(&in.motion.m);
 	in.motion.present = present;
 	in.motion.rate_hz = present ? rate_hz : 0;
+	input_report_devices(INPUT_DEV_MOTION, present ? INPUT_DEV_MOTION : 0);
+}
+
+void input_motion_tune(struct input_motion_tune *t)
+{
+	*t = in.motion.tune;
+}
+
+void input_set_motion_tune(const struct input_motion_tune *t)
+{
+	struct input_motion_tune *to = &in.motion.tune;
+
+	if (!t) {
+		*to = (struct input_motion_tune){ .sensitivity = 1 };
+		return;
+	}
+	*to = *t;
+	/* tenths, as the screen steps it */
+	to->sensitivity = roundf(clampf(t->sensitivity, INPUT_GYRO_SENS_MIN, INPUT_GYRO_SENS_MAX) * 10) / 10;
+}
+
+void input_report_devices(uint32_t which, uint32_t present)
+{
+	uint32_t devices = (in.devices & ~which) | (present & which);
+
+	if (devices == in.devices)
+		return;
+	in.devices = devices;
+	if (in.devices_cb)
+		in.devices_cb(devices);
+}
+
+uint32_t input_devices(void)
+{
+	return in.devices;
+}
+
+void input_set_devices_cb(void (*cb)(uint32_t devices))
+{
+	in.devices_cb = cb;
 }
 
 void input_report_motion(const float gyro[3], const float accel[3], float dt)
@@ -453,6 +527,8 @@ void input_report_motion_end(void)
 	struct gp_event ev = { .type = GP_EV_MOTION };
 
 	motion_take(&in.motion.m, &ev.mx, &ev.my);
+	ev.mx *= in.motion.tune.sensitivity * (in.motion.tune.invert_x ? -1 : 1);
+	ev.my *= in.motion.tune.sensitivity * (in.motion.tune.invert_y ? -1 : 1);
 	if ((ev.mx != 0 || ev.my != 0) && in.cb)
 		in.cb(&ev, in.ud);
 }

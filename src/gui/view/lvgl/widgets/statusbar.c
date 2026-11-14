@@ -1,6 +1,7 @@
 /*
  * Status bar, the header of every screen (widgets/console.c): the screen's
- * title on the left, the time in the middle; volume (CTX_AUDIO), Wi-Fi
+ * title on the left, the time in the middle; a keyboard or a mouse and the
+ * motion sensor while plugged in (CTX_INPUT), volume (CTX_AUDIO), Wi-Fi
  * (CTX_WIFI) and battery (CTX_POWER) on the right. The time only once the
  * clock has been set (a board without a set RTC starts in 1970 or 2000).
  */
@@ -12,7 +13,7 @@
 #define CLOCK_VALID 1704067200	/* 2024-01-01: earlier is a clock never set */
 
 struct statusbar {
-	lv_obj_t *title, *volume, *wifi, *clock;
+	lv_obj_t *title, *hid, *motion, *volume, *wifi, *clock;
 	lv_obj_t *battery, *bat_bolt, *bat_pill;
 	lv_timer_t *tick;
 	int shown_minute;	/* minutes since the epoch, -1 none */
@@ -20,6 +21,7 @@ struct statusbar {
 	int shown_cap;
 	int shown_flags;	/* bit 0 charging, 1 online, 2 available, -1 nothing yet */
 	int shown_link;		/* enum wifi_link, -1 nothing yet */
+	int shown_devices;	/* INPUT_DEV_*, -1 nothing yet */
 };
 
 /* The pill (widgets/battery.c); with the level unknown, a bolt on the charger */
@@ -68,6 +70,16 @@ static void on_tick(lv_timer_t *t)
 	update_clock(lv_timer_get_user_data(t));
 }
 
+static lv_obj_t *icon_new(lv_obj_t *parent, const char *symbol)
+{
+	lv_obj_t *l = lv_label_create(parent);
+
+	lv_obj_set_style_text_font(l, UI_FONT_MID, 0);
+	lv_label_set_text(l, symbol);
+	lv_obj_set_hidden(l, true);
+	return l;
+}
+
 static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 {
 	struct statusbar *s = calloc(1, sizeof(*s));
@@ -78,6 +90,7 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 	s->shown_volume = -2;
 	s->shown_flags = -1;
 	s->shown_link = -1;
+	s->shown_devices = -1;
 	bar = lv_obj_create(parent);
 	lv_obj_remove_style_all(bar);
 	/* the header rows of the grid, on the screen's background */
@@ -105,6 +118,8 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_flex_flow(right, LV_FLEX_FLOW_ROW);
 	lv_obj_set_flex_align(right, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	lv_obj_set_style_pad_column(right, ui_px(14), 0);
+	s->hid = icon_new(right, LV_SYMBOL_KEYBOARD);
+	s->motion = icon_new(right, LV_SYMBOL_GPS);
 	s->volume = lv_label_create(right);
 	lv_obj_set_style_text_font(s->volume, UI_FONT_MID, 0);
 	lv_label_set_text(s->volume, "");
@@ -150,11 +165,25 @@ static void update_wifi(struct statusbar *s, const struct gui_ctx *c)
 				    0);
 }
 
+/* A USB keyboard or mouse (one icon for both), the motion sensor */
+static void update_devices(struct statusbar *s, const struct gui_ctx *c)
+{
+	int d = (int)c->input.devices;
+
+	if (d == s->shown_devices)
+		return;
+	s->shown_devices = d;
+	lv_obj_set_hidden(s->hid, !(d & (INPUT_DEV_KEYBOARD | INPUT_DEV_MOUSE)));
+	lv_obj_set_hidden(s->motion, !(d & INPUT_DEV_MOTION));
+}
+
 static void statusbar_update(void *self, const struct gui_ctx *c, uint32_t changed)
 {
 	struct statusbar *s = self;
 	int flags = c->power.charging | c->power.online << 1 | c->power.available << 2;
 
+	if (changed & CTX_INPUT)
+		update_devices(s, c);
 	if (changed & CTX_AUDIO)
 		update_volume(s, c);
 	if (changed & CTX_WIFI)
@@ -176,7 +205,7 @@ static void statusbar_deinit(void *self)
 
 const struct widget_ops statusbar_widget = {
 	.name = "statusbar",
-	.deps = CTX_POWER | CTX_AUDIO | CTX_WIFI,
+	.deps = CTX_POWER | CTX_AUDIO | CTX_WIFI | CTX_INPUT,
 	.init = statusbar_init,
 	.update = statusbar_update,
 	.deinit = statusbar_deinit,

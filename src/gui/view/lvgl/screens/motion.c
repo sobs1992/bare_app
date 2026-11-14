@@ -11,6 +11,11 @@
  * to core/input and is saved with the sticks' calibration. X puts the
  * cross back in the middle, Y removes the calibration, B leaves (or stops
  * a calibration).
+ *
+ * Over the state, the sensor's tune for every game (core/input
+ * input_motion_tune): the sensitivity and each axis inverted or not. Up
+ * and Down choose a row, Left and Right change it at once (the cross shows
+ * it); it is saved with the calibration when the screen closes.
  */
 #include <math.h>
 #include <stdlib.h>
@@ -30,6 +35,7 @@
 #define CAL_TILT_DEG 25.0f
 
 enum cal_step { CAL_OFF, CAL_STILL, CAL_PICK_UP, CAL_STEADY, CAL_TILT };
+enum tune_row { TUNE_SENS, TUNE_INVERT_X, TUNE_INVERT_Y, TUNE_ROWS };
 
 struct motion_screen {
 	lv_obj_t *box, *cross, *status, *zero, *axes, *note, *bar, *footer;
@@ -42,6 +48,10 @@ struct motion_screen {
 	float step_s;		/* seconds of samples in this step */
 	struct input_motion_info shown;
 	bool shown_valid;
+	lv_obj_t *col;		/* the text column, scrolled to the row chosen */
+	lv_obj_t *rows[TUNE_ROWS], *values[TUNE_ROWS];
+	int sel;		/* enum tune_row chosen */
+	bool tuned;		/* changed: saved when the screen closes */
 };
 
 static void footer_hints(struct motion_screen *m)
@@ -49,8 +59,50 @@ static void footer_hints(struct motion_screen *m)
 	if (m->step != CAL_OFF)
 		footer_set(m->footer, "B", tr(S_CANCEL), NULL);
 	else
-		footer_set(m->footer, "A", tr(S_CALIBRATE), "X", tr(S_CENTER), "Y", tr(S_RESET), "B",
-			   tr(S_BACK), NULL);
+		footer_set(m->footer, LV_SYMBOL_LEFT LV_SYMBOL_RIGHT, tr(S_CHANGE), "A", tr(S_CALIBRATE),
+			   "Y", tr(S_RESET), "B", tr(S_BACK), NULL);
+}
+
+static void show_tune(struct motion_screen *m)
+{
+	struct input_motion_tune t;
+	int tenths;
+	bool inv;
+
+	input_motion_tune(&t);
+	tenths = (int)lrintf(t.sensitivity * 10);
+	lv_label_set_text_fmt(m->values[TUNE_SENS], "%d.%d\xc3\x97", tenths / 10, tenths % 10);
+	lv_obj_set_style_text_color(m->values[TUNE_SENS], tenths == 10 ? lv_color_white() : UI_COLOR_ACCENT, 0);
+	for (int r = TUNE_INVERT_X; r <= TUNE_INVERT_Y; r++) {
+		inv = r == TUNE_INVERT_X ? t.invert_x : t.invert_y;
+		lv_label_set_text(m->values[r], tr(inv ? S_ON : S_OFF));
+		lv_obj_set_style_text_color(m->values[r], inv ? UI_COLOR_ACCENT : lv_color_white(), 0);
+	}
+}
+
+static void select_row(struct motion_screen *m, int sel)
+{
+	lv_obj_remove_state(m->rows[m->sel], LV_STATE_FOCUSED);
+	m->sel = (sel + TUNE_ROWS) % TUNE_ROWS;
+	lv_obj_add_state(m->rows[m->sel], LV_STATE_FOCUSED);
+	lv_obj_scroll_to_view(m->rows[m->sel], LV_ANIM_ON);
+}
+
+/* Left (dir -1) or Right (+1) on the row chosen */
+static void change_tune(struct motion_screen *m, int dir)
+{
+	struct input_motion_tune t;
+
+	input_motion_tune(&t);
+	if (m->sel == TUNE_SENS)
+		t.sensitivity += dir * 0.1f;
+	else if (m->sel == TUNE_INVERT_X)
+		t.invert_x = !t.invert_x;
+	else
+		t.invert_y = !t.invert_y;
+	input_set_motion_tune(&t);
+	m->tuned = true;
+	show_tune(m);
 }
 
 static void place_cross(struct motion_screen *m)
@@ -197,7 +249,19 @@ static void on_input(const struct gp_event *ev, void *ud)
 		}
 		return;
 	}
-	if (ev->type != GP_EV_BUTTON || !ev->pressed || ev->repeat)
+	if (ev->type != GP_EV_BUTTON || !ev->pressed)
+		return;
+	if (m->step == CAL_OFF && (ev->code == GP_UP || ev->code == GP_DOWN)) {
+		select_row(m, m->sel + (ev->code == GP_DOWN ? 1 : -1));
+		return;
+	}
+	if (m->step == CAL_OFF && (ev->code == GP_LEFT || ev->code == GP_RIGHT)) {
+		/* the sensitivity steps on while held, a switch once a press */
+		if (!ev->repeat || m->sel == TUNE_SENS)
+			change_tune(m, ev->code == GP_RIGHT ? 1 : -1);
+		return;
+	}
+	if (ev->repeat)
 		return;
 	if (m->step != CAL_OFF) {
 		if (ev->code == GP_B)
@@ -320,6 +384,41 @@ static void *motion_screen_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_flex_grow(col, 1);
 	lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_style_pad_row(col, ui_cell() / 2, 0);
+	lv_obj_set_scroll_dir(col, LV_DIR_VER);
+	lv_obj_set_scrollbar_mode(col, LV_SCROLLBAR_MODE_OFF);
+	m->col = col;
+	{
+		static const enum str_id names[TUNE_ROWS] = { S_SENSITIVITY, S_GYRO_INVERT_X,
+							       S_GYRO_INVERT_Y };
+		lv_obj_t *rows = lv_obj_create(col), *label;
+
+		lv_obj_remove_style_all(rows);
+		lv_obj_set_size(rows, LV_PCT(100), LV_SIZE_CONTENT);
+		lv_obj_set_flex_flow(rows, LV_FLEX_FLOW_COLUMN);
+		lv_obj_set_scrollable(rows, false);
+		for (int r = 0; r < TUNE_ROWS; r++) {
+			lv_obj_t *o = lv_obj_create(rows);
+
+			lv_obj_remove_style_all(o);
+			lv_obj_set_size(o, LV_PCT(100), LV_SIZE_CONTENT);
+			lv_obj_set_style_pad_hor(o, ui_cell() / 2, 0);
+			lv_obj_set_style_pad_ver(o, ui_px(6), 0);
+			lv_obj_set_style_border_side(o, LV_BORDER_SIDE_BOTTOM, 0);
+			lv_obj_set_style_border_width(o, 1, 0);
+			lv_obj_set_style_border_color(o, UI_COLOR_LINE, 0);
+			lv_obj_set_flex_flow(o, LV_FLEX_FLOW_ROW);
+			lv_obj_set_flex_align(o, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+					      LV_FLEX_ALIGN_CENTER);
+			lv_obj_set_scrollable(o, false);
+			console_focus_box(o);
+			label = lv_label_create(o);
+			lv_label_set_text(label, tr(names[r]));
+			m->values[r] = lv_label_create(o);
+			m->rows[r] = o;
+		}
+		show_tune(m);
+		lv_obj_add_state(m->rows[0], LV_STATE_FOCUSED);
+	}
 	m->status = line_new(col);
 	m->zero = line_new(col);
 	m->axes = line_new(col);
@@ -347,6 +446,8 @@ static void motion_screen_deinit(void *self)
 	input_motion_listen(NULL, NULL);
 	view_input_release(m);
 	lv_timer_delete(m->timer);
+	if (m->tuned)
+		input_save_calibration();
 	free(m);
 }
 

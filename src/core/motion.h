@@ -15,7 +15,8 @@
  *    upright or lying flat, for every way the sensor is mounted.
  *  - Looking up and down is the turn about the device's own left-right
  *    axis, which only the calibration knows (the sensor's mounting): without
- *    it there is no up and down.
+ *    it there is no up and down. The top tilted towards the player looks
+ *    down, away from the player up.
  *  - Small turns (a hand's tremor) are smoothed, big ones go as they are.
  */
 #pragma once
@@ -75,8 +76,8 @@ void motion_drop(struct motion *m);
 
 /*
  * Calibration: first the device lies still (the bias), then it is held as
- * in a game and its top tilted towards the player (looking up): the turn's
- * axis is the device's right. motion_rec_* collect them.
+ * in a game and its top tilted towards the player: the turn's axis is the
+ * device's right. motion_rec_* collect them.
  */
 struct motion_rec {
 	double g[3];		/* still: sums */

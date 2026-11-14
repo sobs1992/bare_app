@@ -143,6 +143,23 @@ struct input_motion_info {
 };
 
 void input_motion_present(bool present, float rate_hz);
+
+/*
+ * The sensor as a whole, for every game (the motion screen sets it, saved
+ * with the calibration: "gyro.sensitivity = 1.0", "gyro.invert_x = 0",
+ * "gyro.invert_y = 0"): GP_EV_MOTION is turned by it before the listener
+ * sees it. A game's controls have a sensitivity of their own on top.
+ */
+#define INPUT_GYRO_SENS_MIN 0.2f
+#define INPUT_GYRO_SENS_MAX 5.0f
+
+struct input_motion_tune {
+	float sensitivity;
+	bool invert_x, invert_y;
+};
+
+void input_motion_tune(struct input_motion_tune *t);
+void input_set_motion_tune(const struct input_motion_tune *t);	/* NULL: the default */
 void input_report_motion(const float gyro[3], const float accel[3], float dt);	/* deg/s, g, s */
 void input_report_motion_end(void);
 void input_motion_info(struct input_motion_info *mi);
@@ -152,6 +169,19 @@ typedef void (*input_motion_cb)(const float gyro[3], const float accel[3], float
 void input_motion_listen(input_motion_cb cb, void *ud);
 bool input_motion_calibration(struct motion_cal *c);	/* false: none */
 void input_set_motion_calibration(const struct motion_cal *c);	/* NULL: none */
+
+/*
+ * Input devices plugged in now, for the status bar and the settings: the
+ * drivers say what they have (input_report_devices(which, present): the
+ * bits of 'which' set as 'present' says), the listener hears every change.
+ */
+#define INPUT_DEV_KEYBOARD (1u << 0)
+#define INPUT_DEV_MOUSE (1u << 1)
+#define INPUT_DEV_MOTION (1u << 2)
+
+void input_report_devices(uint32_t which, uint32_t present);
+uint32_t input_devices(void);
+void input_set_devices_cb(void (*cb)(uint32_t devices));
 
 /* What the hardware has: drivers declare it when a device appears */
 void input_declare(uint32_t buttons, uint32_t axes);	/* GP_BIT() masks, added up */

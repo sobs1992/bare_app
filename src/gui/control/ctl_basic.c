@@ -140,8 +140,15 @@ static void set_clock(const char *when)
 
 static void system_action(const struct gui_action *a)
 {
-	if (a->type == ACT_SET_CLOCK)
+	struct gui_ctx *c;
+
+	if (a->type == ACT_SET_CLOCK) {
 		set_clock(a->str);
+	} else if (a->type == ACT_INPUT_DEVICES) {
+		c = ctx_lock();
+		c->input.devices = (uint32_t)a->arg;
+		ctx_unlock(CTX_INPUT);
+	}
 }
 
 const struct control_ops ctl_system = {

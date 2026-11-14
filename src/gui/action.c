@@ -81,6 +81,7 @@ const char *action_name(enum gui_action_type type)
 	case ACT_SET_STREAM:     return "set-stream";
 	case ACT_SET_HIBERNATE:  return "set-hibernate";
 	case ACT_SET_CLOCK:      return "set-clock";
+	case ACT_INPUT_DEVICES:  return "input-devices";
 	case ACT_OPEN_SCREEN:    return "open-screen";
 	case ACT_SET_BRIGHTNESS: return "set-brightness";
 	case ACT_SET_LANG:       return "set-lang";

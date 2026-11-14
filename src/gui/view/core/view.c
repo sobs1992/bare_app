@@ -15,6 +15,7 @@
 #include "core/log.h"
 #include "core/mainloop.h"
 #include "core/util.h"
+#include "gui/action.h"
 #include "media/shot.h"
 
 #define TAG "view"
@@ -207,6 +208,12 @@ static void load_stick_calibration(void)
 #endif
 }
 
+/* Keyboards, mice, the motion sensor come and go: to the context (status bar) */
+static void on_devices(uint32_t devices)
+{
+	gui_action_post(ACT_INPUT_DEVICES, (int)devices);
+}
+
 static void *view_thread(void *arg)
 {
 	(void)arg;
@@ -218,6 +225,7 @@ static void *view_thread(void *arg)
 	}
 	input_init(vcore.ml, NULL, view_on_gamepad, NULL);
 	input_set_raw_query(view_hid_game_in_front);
+	input_set_devices_cb(on_devices);
 	load_stick_calibration();
 	vcore.status = open_devices();
 	if (!vcore.status) {

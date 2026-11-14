@@ -35,6 +35,7 @@ enum gui_action_type {
 	ACT_SET_STREAM,		/* arg = 1 stream the screen and the sound, 0 not */
 	ACT_SET_HIBERNATE,	/* arg = 1 sleep by hibernating (platform hibernate), 0 not */
 	ACT_SET_CLOCK,		/* str = "YYYY-MM-DD hh:mm": the date and time to set */
+	ACT_INPUT_DEVICES,	/* arg = INPUT_DEV_* plugged in now (the view's drivers saw it) */
 };
 
 /* ACT_SET_CONTROL: button of the device, enum gp_button it is for the game (GP_NONE: none) */
