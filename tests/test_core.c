@@ -660,7 +660,7 @@ static void mm_start2(struct imu_parser *p, struct mstream *s, int mode, float h
 {
 	uint8_t f[160], st3[36] = { 3, 0, 3, 0x0b };	/* info 66 + status 42 bytes */
 	size_t n;
-	int b = (int)(4000 / (1e6f / real_hz));
+	int b = (int)(4000 / (1e6f / hz));	/* as the firmware: from the info's rate */
 
 	input_set_motion_calibration(NULL);	/* the last one's: room for this one's */
 	imu_parser_init(p);
@@ -678,7 +678,9 @@ static void mm_start2(struct imu_parser *p, struct mstream *s, int mode, float h
 	s->tilt = 0;
 	s->seq = 1000;
 	s->t = 0;
-	ms_run(s, ms_n(real_hz, real_hz == hz ? 2 : 3, 3), 0, 0);
+	/* still: 2 s, or with the rate off the info's long enough to measure it
+	 * (2 s and 16 intervals) */
+	ms_run(s, real_hz == hz ? ms_n(real_hz, 2, 3) : ms_n(real_hz, 3, 18 * s->batch), 0, 0);
 	ms_feed(p, s);
 	imu_turned = imu_my = 0;
 }
@@ -726,12 +728,14 @@ static void test_motion_matrix(void)
 			ms_feed(&p, &s);
 			mm_check("steady", mode, hz, gyro ? -45 : 0, 20, 2.5f);
 
-			/* the real rate other than the info says (by -20 % to +50 %):
-			 * measured from the samples' times, the turn as it was */
-			if (hz >= 104) {
-				static const float off[] = { 0.8f, 1.18f, 1.5f };
+			/* the real rate other than the info says (0.5x to 2x, the
+			 * ends too): measured from the samples' times, the turn as it
+			 * was; then 3 lost + 0.4 period paused is no gap, 3 + 0.6 is,
+			 * in the real rate's periods */
+			{
+				static const float off[] = { 0.5f, 0.8f, 1.18f, 1.5f, 2.0f };
 
-				for (unsigned oi = 0; oi < 3; oi++) {
+				for (unsigned oi = 0; oi < 5; oi++) {
 					float rh = hz * off[oi];
 					int nt = ms_n(rh, 1, 4);
 
@@ -741,6 +745,14 @@ static void test_motion_matrix(void)
 					ms_run(&s, ms_n(rh, 3, 4), 0, 0);
 					ms_feed(&p, &s);
 					mm_check("real rate off the info's", mode, rh, gyro ? -45 : 0, 20, 2.5f);
+					for (int ci = 0; ci < 2; ci++) {
+						imu_turned = imu_my = 0;
+						ms_gap(&s, 3, (ci ? 0.6f : 0.4f) / rh, 20);
+						ms_run(&s, ms_n(rh, 3, 4), 0, 0);
+						ms_feed(&p, &s);
+						mm_check("real rate off, then lost and paused", mode, rh, 0,
+							 ci == 0 && !gyro ? 20 : 0, 2);
+					}
 				}
 			}
 
@@ -784,12 +796,12 @@ static void test_motion_matrix(void)
 			}
 			/* time without samples, their numbers going on (the device set
 			 * its sensor up again), a tilt in it, then a turn: up to 3.5
-			 * periods it is no gap (2, 3, 3.4 periods; 0.5 s at 1 and 5 Hz),
-			 * more is (3.6 and 10 periods; 0.5 s at 104 and 1000 Hz) */
+			 * periods it is no gap (2, 3, 3.45 periods; 0.5 s at 1 and 5 Hz),
+			 * more is (3.55 and 10 periods; 0.5 s at 104 and 1000 Hz) */
 			{
-				static const float pauses[] = { 2, 3, 3.4f, 3.6f, 10, 0 };
+				static const float pauses[] = { 2, 3, 3.45f, 3.48f, 3.52f, 3.55f, 10, 0 };
 
-				for (int pi = 0; pi < 6; pi++) {
+				for (int pi = 0; pi < 8; pi++) {
 					float extra = pauses[pi] > 0 ? pauses[pi] / hz : 0.5f;
 					bool counted = extra * hz <= 3.5f && !gyro;
 
@@ -817,6 +829,32 @@ static void test_motion_matrix(void)
 					mm_check("lost and paused", mode, hz, 0, counted ? 20 : 0, 2);
 				}
 			}
+			/* pauses short of a gap now and then (1.5 periods after every
+			 * 20th sample: one interval in 5 even with batches of 4), 24 s:
+			 * not a slower rate, the turn after as it was */
+			mm_start(&p, &s, mode, hz, id++);
+			for (int r = 0; r < ms_n(hz, 24, 40) / 20; r++) {
+				ms_run(&s, 20, 0, 0);
+				ms_gap(&s, 0, 1.5f / hz, 0);
+			}
+			{
+				int nt = ms_n(hz, 1, 4);
+
+				imu_turned = imu_my = 0;
+				ms_run(&s, nt, 0, 45 * hz / nt);
+				ms_run(&s, ms_n(hz, 2, 3), 0, 0);
+				ms_feed(&p, &s);
+				mm_check("pauses now and then, then a turn", mode, hz, gyro ? -45 : 0, 0, 2.5f);
+			}
+			/* a slow sensor's few intervals: 3 lost + 0.4 period paused (no
+			 * gap) does not move its rate, so 3 + 0.6 after it is a gap */
+			mm_start2(&p, &s, mode, hz, hz * 1.0001f, id++);
+			ms_gap(&s, 3, 0.4f / hz, 0);
+			ms_run(&s, 3, 0, 0);
+			ms_gap(&s, 3, 0.6f / hz, 20);
+			ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+			ms_feed(&p, &s);
+			mm_check("3+0.4, then 3+0.6", mode, hz, 0, 0, 1);
 			/* two gaps close together, a tilt in each */
 			mm_start(&p, &s, mode, hz, id++);
 			ms_gap(&s, 6, 0, 20);
@@ -856,9 +894,12 @@ static void test_motion_matrix(void)
 		const float real_us = 1e6f / 1137.0f;
 		uint32_t delay = 0;
 
+		uint32_t base;
+
 		mm_start2(&p, &s, MM_GA, 1125, 1137, id++);
+		base = s.t;
 		for (int b = 0; b < 1500; b++) {	/* 6000 samples, 5.3 s */
-			uint32_t at = (uint32_t)lrintf(4 * b * real_us) + 1000000;
+			uint32_t at = base + (uint32_t)lrintf(4 * b * real_us);
 
 			delay = (delay + 40) % 200;
 			s.t = at + delay;
@@ -879,9 +920,20 @@ static void test_motion_matrix(void)
 
 	/* the driver: a sensor is live while its samples came within 1.5 s or 3
 	 * of its periods (a slow one is not "gone" between two samples) */
-	CHECK(imu_live(10000, 9000, 5, 1000) && !imu_live(10000, 8000, 5, 1000));
-	CHECK(imu_live(10000, 7600, 5, 1e6f) && !imu_live(10000, 6500, 5, 1e6f));
+	CHECK(imu_live(10000, 8500, 5, 1000) && !imu_live(10000, 8499, 5, 1000));	/* 1.5 s */
+	CHECK(imu_live(10000, 7000, 5, 1e6f) && !imu_live(10000, 6999, 5, 1e6f));	/* 3 periods */
 	CHECK(!imu_live(10000, 10000, 0, 1000));	/* none yet */
+	/* ...and says once that they stopped: live, gone (said), still gone
+	 * (not again), back, gone again (said) */
+	{
+		bool live = false;
+
+		CHECK(!imu_watch(&live, 1000, 900, 5, 1000) && live);
+		CHECK(imu_watch(&live, 3000, 900, 5, 1000) && !live);
+		CHECK(!imu_watch(&live, 4000, 900, 5, 1000) && !live);
+		CHECK(!imu_watch(&live, 5000, 4900, 9, 1000) && live);
+		CHECK(imu_watch(&live, 7000, 4900, 9, 1000) && !live);
+	}
 }
 
 static void test_imu(void)

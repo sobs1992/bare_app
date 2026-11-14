@@ -124,15 +124,18 @@ void motion_set_sensor(struct motion *m, unsigned channels, float gyro_rms, floa
  * as it is now, can it turn the view left and right, up and down? */
 void motion_can_aim(const struct motion *m, bool *x, bool *y);
 
-/* A gyro made from the accelerometer (a sensor without one): gravity smoothed,
- * its turn over the last 'span' seconds; deg/s out, about the axes across
- * gravity only */
+/* A gyro made from the accelerometer (a sensor without one): gravity smoothed
+ * over 'span', then its mean over the last 'span' seconds; the turn of that
+ * mean from sample to sample (they add up to the whole turn, whatever the
+ * steps); deg/s out, about the axes across gravity only */
 struct motion_synth {
 	float span;		/* s: motion_synth_setup() */
 	float up[3];
 	bool set;
-	float hist[MOTION_SYNTH_MAX][3], hdt[MOTION_SYNTH_MAX];	/* up as it was, dt after it */
+	float hist[MOTION_SYNTH_MAX][3], hdt[MOTION_SYNTH_MAX];	/* up as it was, its time */
 	unsigned head, count;
+	float v_prev[3];	/* the mean of the last sample */
+	bool have_v;
 };
 /* For an accelerometer that noisy (g rms, 0 unknown) at that rate (samples a
  * second, 0 unknown): starts afresh; returns the made-up gyro's noise at

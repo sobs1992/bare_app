@@ -90,13 +90,14 @@ float motion_synth_setup(struct motion_synth *s, float accel_rms, float rate_hz)
 void motion_synth_reset(struct motion_synth *s)
 {
 	s->set = false;
+	s->have_v = false;
 	s->count = 0;
 	s->head = 0;
 }
 
 void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, float gyro[3])
 {
-	float a[3] = { accel[0], accel[1], accel[2] }, *old = NULL, span = 0, k;
+	float a[3] = { accel[0], accel[1], accel[2] }, v[3] = { 0, 0, 0 }, held = 0, k;
 	unsigned i;
 
 	gyro[0] = gyro[1] = gyro[2] = 0;
@@ -106,36 +107,41 @@ void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, f
 		memcpy(s->up, a, sizeof(s->up));
 		s->set = true;
 		s->count = 0;
-		return;
+		s->have_v = false;
 	}
-	/* keep the smoothed "up" before this sample, with the time to this one */
-	memcpy(s->hist[s->head], s->up, sizeof(s->up));
-	s->hdt[s->head] = dt;
-	s->head = (s->head + 1) % MOTION_SYNTH_MAX;
-	if (s->count < MOTION_SYNTH_MAX)
-		s->count++;
 	if (!(s->span > 0))
 		s->span = MOTION_SYNTH_MAX_S;
 	k = dt / (s->span + dt);
 	for (i = 0; i < 3; i++)
 		s->up[i] += (a[i] - s->up[i]) * k;
 	normalize(s->up);
-	/* "up" as it was 'span' ago (or as long ago as is kept) */
-	for (i = 1; i <= s->count; i++) {
+	/* the smoothed "up" kept with the time it stands for */
+	memcpy(s->hist[s->head], s->up, sizeof(s->up));
+	s->hdt[s->head] = dt;
+	s->head = (s->head + 1) % MOTION_SYNTH_MAX;
+	if (s->count < MOTION_SYNTH_MAX)
+		s->count++;
+	/* its mean over the last 'span' seconds, each by the time it stood */
+	for (i = 1; i <= s->count && held < s->span; i++) {
 		unsigned j = (s->head + MOTION_SYNTH_MAX - i) % MOTION_SYNTH_MAX;
+		float w = fminf(s->hdt[j], s->span - held);
 
-		span += s->hdt[j];
-		old = s->hist[j];
-		if (span >= s->span)
-			break;
+		for (int c = 0; c < 3; c++)
+			v[c] += s->hist[j][c] * w;
+		held += w;
 	}
-	if (!old || !(span > 0))
+	if (!normalize(v))
 		return;
-	/* a vector fixed in the world turns by -w x v as seen from the sensor:
-	 * w (across it) = new x old / time */
-	gyro[0] = (s->up[1] * old[2] - s->up[2] * old[1]) / span / DEG2RAD;
-	gyro[1] = (s->up[2] * old[0] - s->up[0] * old[2]) / span / DEG2RAD;
-	gyro[2] = (s->up[0] * old[1] - s->up[1] * old[0]) / span / DEG2RAD;
+	if (s->have_v) {
+		/* the turn of that mean since the sample before: these add up to
+		 * the whole turn whatever the steps (a vector fixed in the world
+		 * turns by -w x v as seen from the sensor: w = new x old / dt) */
+		gyro[0] = (v[1] * s->v_prev[2] - v[2] * s->v_prev[1]) / dt / DEG2RAD;
+		gyro[1] = (v[2] * s->v_prev[0] - v[0] * s->v_prev[2]) / dt / DEG2RAD;
+		gyro[2] = (v[0] * s->v_prev[1] - v[1] * s->v_prev[0]) / dt / DEG2RAD;
+	}
+	memcpy(s->v_prev, v, sizeof(v));
+	s->have_v = true;
 }
 
 void motion_set_cal(struct motion *m, const struct motion_cal *c)

@@ -32,11 +32,12 @@ extern const struct hal_input_ops input_imu;
  * batches (PKT_SAMPLES): nothing is assumed of the chip. Each PKT_INFO
  * that changes the sensor tells core/input at once, before its samples
  * (input_motion_sensor(): id "<name>-<serial>", channels, noise). The
- * sample period is measured by the sensor's own clock (its rate differs from
- * the nominal one by a few percent) over SPAN_US, from samples that carry
- * their own time.
+ * sample period is measured by the sensor's own clock, from samples that
+ * carry their own time: over SPAN_US, the mean of the intervals within 25 %
+ * of their median, accepted within 0.5..2x of the info's rate.
  */
-#define SPAN_MAX 1024		/* intervals kept for the median of 2 s */
+#define SPAN_MAX 1024		/* intervals kept over SPAN_US (their median, then the mean near it) */
+#define SPAN_MIN 16		/* ...at least this many (a slow sensor's: one pause is little) */
 
 struct imu_parser {
 	uint8_t buf[512];
@@ -62,7 +63,7 @@ struct imu_parser {
 	uint32_t real_t;
 	uint16_t real_seq;
 	uint64_t span_us;		/* measuring the period: time so far, */
-	uint32_t span_n;		/* ...and each interval's period (their median counts) */
+	uint32_t span_n;		/* ...and each interval's period (the mean near their median counts) */
 	float span_vals[SPAN_MAX];
 	uint32_t samples, bad_crc;
 	uint8_t bad_info;		/* length of an info not understood (logged once) */
@@ -73,5 +74,8 @@ void imu_parser_init(struct imu_parser *p);
 /* The driver's: is a sensor live at now_ms whose last samples came at
  * last_ms (samples so far, its period)? LIVE_MS or 3 periods, the longer */
 bool imu_live(uint64_t now_ms, uint64_t last_ms, uint32_t samples, float period_us);
+/* The driver's watch: *live updated; true just when the samples stopped
+ * (said once) */
+bool imu_watch(bool *live, uint64_t now_ms, uint64_t last_ms, uint32_t samples, float period_us);
 void imu_parser_feed(struct imu_parser *p, const uint8_t *data, size_t n);
 uint16_t imu_crc16(const uint8_t *data, size_t n);
