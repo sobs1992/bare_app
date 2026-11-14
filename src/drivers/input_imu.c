@@ -3,17 +3,20 @@
  * ids of its device (/sys/class/tty/ttyACMn/device is the interface, its
  * parent the device), at start and on every "add" uevent of a tty; mdev
  * makes the node a little after the uevent, so the scan is retried a few
- * times. The port is raw, and poll() wakes only for a few frames at a time
- * (VMIN): about 280 wakeups a second instead of 1100.
+ * times. The port is raw, and poll() wakes only for a batch of samples at a
+ * time (VMIN; protocol v3 batches them on the device too).
  *
  * Opening the port sets DTR, which starts the stream; 's' asks for it too
- * and 'i' for the status packet (the sample's units: full scales, rate).
+ * and 'i' for the info and the status (the sensor, its units and rate). The
+ * sensor is known to core/input as "<chip>-<USB serial>", so each one keeps
+ * its own calibration.
  */
 #include "input_imu.h"
 
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,16 +32,23 @@
 #define TAG "imu"
 #define SYNC0 0xA5
 #define SYNC1 0x5A
-#define PKT_IMU 0x01
+#define PKT_IMU 0x01		/* v2 */
 #define PKT_STATUS 0x02
+#define PKT_INFO 0x03		/* v3 */
+#define PKT_SAMPLES 0x04
+#define PKT_MAG 0x05
 #define IMU_LEN 28
 #define STATUS_LEN 36
+#define INFO_LEN 56
+#define SAMPLES_HDR 8
+#define SAMPLE_LEN 12
 #define FRAME_OVERHEAD 6
 #define STATUS_IMU_OK 1u
 #define STATUS_STREAM 8u
-#define NOMINAL_US (1e6f / 1125)
+#define STATUS_FAKE 16u
+#define DEFAULT_US (1e6f / 1125)	/* v2's rate until the status says it */
 #define SPAN_SAMPLES 2000	/* the period is measured over that many */
-#define WAKE_FRAMES 4		/* VMIN: wake for this many samples */
+#define WAKE_BYTES 48		/* VMIN: about a v3 batch (or 1.4 v2 samples) */
 #define RETRY_MS 100
 #define RETRIES 20
 #define SILENT_MS 2000		/* no samples that long: ask for the stream again */
@@ -72,13 +82,36 @@ static uint32_t u32(const uint8_t *p)
 	return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24;
 }
 
+static float f32(const uint8_t *p)
+{
+	uint32_t v = u32(p);
+	float f;
+
+	memcpy(&f, &v, sizeof(f));
+	return isfinite(f) ? f : 0;
+}
+
 void imu_parser_init(struct imu_parser *p)
 {
 	memset(p, 0, sizeof(*p));
-	/* until the status says otherwise: the firmware's defaults */
+	/* v2's until a status or the info says otherwise */
 	p->gyro_scale = 2000.0f / 32768;
 	p->accel_scale = 4.0f / 32768;
-	p->period_us = NOMINAL_US;
+	p->nominal_us = p->period_us = DEFAULT_US;
+}
+
+/* A new rate: measured again from it */
+static void set_nominal(struct imu_parser *p, uint32_t odr_mhz)
+{
+	float us = odr_mhz ? 1e9f / odr_mhz : DEFAULT_US;
+
+	if (us == p->nominal_us && (p->have_info || p->have_status))
+		return;
+	p->nominal_us = p->period_us = us;
+	p->period_measured = false;
+	p->have_prev = p->have_real = false;
+	p->span_us = 0;
+	p->span_n = 0;
 }
 
 static void on_status(struct imu_parser *p, const uint8_t *s)
@@ -87,62 +120,138 @@ static void on_status(struct imu_parser *p, const uint8_t *s)
 	uint32_t odr_mhz = u32(s + 4);
 	uint16_t gyro_fs = u16(s + 8);
 	uint8_t accel_fs = s[10];
+	bool ok = flags & STATUS_IMU_OK;
 
-	if (gyro_fs)
-		p->gyro_scale = gyro_fs / 32768.0f;
-	if (accel_fs)
-		p->accel_scale = accel_fs / 32768.0f;
-	if (!p->have_status && odr_mhz)
-		p->period_us = 1e9f / odr_mhz;	/* nominal, until measured */
-	if (!p->have_status || p->imu_ok != !!(flags & STATUS_IMU_OK))
-		LOGI(TAG, "protocol %u, firmware %u.%u, IMU %s, gyro %u deg/s, accel %u g",
-		     s[0], s[1], s[2], flags & STATUS_IMU_OK ? "ok" : "missing", gyro_fs, accel_fs);
+	if (!p->have_status || p->imu_ok != ok || p->proto != s[0])
+		LOGI(TAG, "protocol %u, firmware %u.%u, sensor %s%s", s[0], s[1], s[2],
+		     ok ? "ok" : "missing", flags & STATUS_FAKE ? " (fake)" : "");
+	p->proto = s[0];
+	if (p->proto < 3) {
+		/* v2: the ICM-20948, its units from the full scales */
+		if (gyro_fs)
+			p->gyro_scale = gyro_fs / 32768.0f;
+		if (accel_fs)
+			p->accel_scale = accel_fs / 32768.0f;
+		if (odr_mhz)
+			set_nominal(p, odr_mhz);
+		if (strcmp(p->name, "ICM-20948")) {
+			snprintf(p->name, sizeof(p->name), "ICM-20948");
+			p->imu_id = 1;
+			p->gyro_noise = 0;
+			p->info_seq++;
+		}
+	}
 	p->have_status = true;
-	p->imu_ok = flags & STATUS_IMU_OK;
+	p->imu_ok = ok;
+	p->fake = flags & STATUS_FAKE;
 	p->streaming = flags & STATUS_STREAM;
 }
 
-static void on_imu(struct imu_parser *p, const uint8_t *s)
+/* v3: what the sensor is */
+static void on_info(struct imu_parser *p, const uint8_t *s)
 {
-	uint32_t t = u32(s);
-	uint16_t seq = u16(s + 4);
-	float accel[3], gyro[3], dt;
+	char name[sizeof(p->name)] = "";
+	uint8_t id = s[3];
+	float gs = f32(s + 28), as = f32(s + 32), noise = f32(s + 52);
+
+	p->proto = s[0];
+	if (id) {
+		memcpy(name, s + 4, 16);
+		name[16] = '\0';
+		for (char *c = name; *c; c++)
+			if (*c < ' ' || *c > '~')
+				*c = '?';
+	}
+	if (id && (gs <= 0 || as <= 0)) {
+		LOGW(TAG, "sensor %s without units: ignored", name);
+		id = 0;
+		name[0] = '\0';
+	}
+	set_nominal(p, id ? u32(s + 24) : 0);
+	if (id != p->imu_id || strcmp(name, p->name) || gs != p->gyro_scale || as != p->accel_scale) {
+		if (id)
+			LOGI(TAG, "sensor %s: %.1f Hz, %.5f deg/s and %.7f g a count, noise %.2f deg/s",
+			     name, u32(s + 24) / 1000.0, (double)gs, (double)as, (double)noise);
+		else
+			LOGI(TAG, "no sensor on the device");
+		p->info_seq++;
+	}
+	p->imu_id = id;
+	memcpy(p->name, name, sizeof(p->name));
+	if (id) {
+		p->gyro_scale = gs;
+		p->accel_scale = as;
+	}
+	p->gyro_noise = noise > 0 && noise < 10 ? noise : 0;
+	p->have_info = true;
+}
+
+/* One sample; 'timed': t is its own time (not made up from the period) */
+static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint8_t *gyro_raw,
+		      const uint8_t *accel_raw, bool timed)
+{
+	float accel[3], gyro[3], dt = p->period_us * 1e-6f;
 	int k;
 
 	for (k = 0; k < 3; k++) {
-		accel[k] = s16(s + 6 + 2 * k) * p->accel_scale;
-		gyro[k] = s16(s + 12 + 2 * k) * p->gyro_scale;
+		gyro[k] = s16(gyro_raw + 2 * k) * p->gyro_scale;
+		accel[k] = s16(accel_raw + 2 * k) * p->accel_scale;
 	}
-	dt = p->period_us * 1e-6f;
 	if (p->have_prev) {
 		uint16_t gap = (uint16_t)(seq - p->prev_seq);
-		uint32_t span = t - p->prev_t;
 
-		if (gap >= 1 && gap < 1000) {	/* else lost track: one period */
-			dt = gap * p->period_us * 1e-6f;
-			p->span_us += span;
-			p->span_n += gap;
-			if (p->span_n >= SPAN_SAMPLES) {
-				float measured = (float)p->span_us / p->span_n;
-
-				if (measured > 0.5f * NOMINAL_US && measured < 2 * NOMINAL_US) {
-					p->period_us = p->period_measured
-							       ? 0.7f * p->period_us + 0.3f * measured
-							       : measured;
-					p->period_measured = true;
-				}
-				p->span_us = 0;
-				p->span_n = 0;
-			}
-		} else if (gap == 0) {
+		if (gap == 0)
 			return;		/* the same sample again */
+		if (gap < 1000)		/* else lost track: one period */
+			dt = gap * p->period_us * 1e-6f;
+	}
+	if (timed && p->have_real) {
+		uint16_t gap = (uint16_t)(seq - p->real_seq);
+
+		if (gap >= 1 && gap < 1000) {
+			p->span_us += t - p->real_t;
+			p->span_n += gap;
+		}
+		if (p->span_n >= SPAN_SAMPLES) {
+			float measured = (float)p->span_us / p->span_n;
+
+			if (measured > 0.5f * p->nominal_us && measured < 2 * p->nominal_us) {
+				p->period_us = p->period_measured ? 0.7f * p->period_us + 0.3f * measured
+								  : measured;
+				p->period_measured = true;
+			}
+			p->span_us = 0;
+			p->span_n = 0;
 		}
 	}
+	if (timed) {
+		p->have_real = true;
+		p->real_t = t;
+		p->real_seq = seq;
+	}
 	p->have_prev = true;
-	p->prev_t = t;
 	p->prev_seq = seq;
 	p->samples++;
 	input_report_motion(gyro, accel, dt);
+}
+
+static void on_frame(struct imu_parser *p, uint8_t type, const uint8_t *f, uint8_t len)
+{
+	if (type == PKT_IMU && len == IMU_LEN) {
+		on_sample(p, u32(f), u16(f + 4), f + 12, f + 6, true);
+	} else if (type == PKT_STATUS && len == STATUS_LEN) {
+		on_status(p, f);
+	} else if (type == PKT_INFO && len == INFO_LEN) {
+		on_info(p, f);
+	} else if (type == PKT_SAMPLES && len >= SAMPLES_HDR && p->have_info && p->imu_id &&
+		   len == SAMPLES_HDR + SAMPLE_LEN * f[6]) {
+		for (int i = 0; i < f[6]; i++) {
+			const uint8_t *s = f + SAMPLES_HDR + SAMPLE_LEN * i;
+
+			on_sample(p, u32(f), (uint16_t)(u16(f + 4) + i), s, s + 6, i == 0);
+		}
+	}
+	/* PKT_MAG: not used for aiming */
 }
 
 void imu_parser_feed(struct imu_parser *p, const uint8_t *data, size_t n)
@@ -158,7 +267,7 @@ void imu_parser_feed(struct imu_parser *p, const uint8_t *data, size_t n)
 		n -= take;
 		i = 0;
 		while (p->len - i >= FRAME_OVERHEAD) {
-			uint8_t *f = p->buf + i, type = f[2], len = f[3];
+			uint8_t *f = p->buf + i, len = f[3];
 
 			if (f[0] != SYNC0 || f[1] != SYNC1) {
 				i++;
@@ -171,10 +280,7 @@ void imu_parser_feed(struct imu_parser *p, const uint8_t *data, size_t n)
 				i++;	/* not a frame: look for the next sync */
 				continue;
 			}
-			if (type == PKT_IMU && len == IMU_LEN)
-				on_imu(p, f + 4);
-			else if (type == PKT_STATUS && len == STATUS_LEN)
-				on_status(p, f + 4);
+			on_frame(p, f[2], f + 4, len);
 			i += (size_t)len + FRAME_OVERHEAD;
 		}
 		memmove(p->buf, p->buf + i, p->len - i);
@@ -191,7 +297,10 @@ struct imu {
 	int fd;
 	char node[32];
 	struct imu_parser parser;
+	char serial[33];	/* the USB device's, "" none */
 	uint32_t seen;		/* parser.samples at the last check */
+	bool live;		/* samples came in the last second */
+	unsigned info_seen;	/* parser.info_seq told to core/input */
 	bool told_zero, told_rate;	/* logged: the gyro's zero, the rate measured */
 	struct uevent_mon *mon;
 	struct ml_timer *retry, *watch;
@@ -200,9 +309,24 @@ struct imu {
 
 static void report_present(struct imu *h)
 {
-	bool ok = h->fd >= 0 && h->parser.samples > 0;
+	bool ok = h->fd >= 0 && h->live;
 
 	input_motion_present(ok, ok ? 1e6f / h->parser.period_us : 0);
+}
+
+/* The sensor changed (or its units): core/input picks its calibration */
+static void identify(struct imu *h)
+{
+	char id[64];
+
+	if (h->parser.info_seq == h->info_seen)
+		return;
+	h->info_seen = h->parser.info_seq;
+	h->told_rate = false;
+	if (!h->parser.name[0])
+		return;
+	snprintf(id, sizeof(id), "%s-%s", h->parser.name, h->serial[0] ? h->serial : "noserial");
+	input_motion_sensor(id, h->parser.name, h->parser.gyro_noise);
 }
 
 static void detach(struct imu *h)
@@ -228,12 +352,15 @@ static void on_readable(int fd, short revents, void *ud)
 	struct imu *h = ud;
 	uint8_t buf[1024];
 	ssize_t n;
-	bool had = h->parser.samples > 0;
+	uint32_t had = h->parser.samples;
 
 	while ((n = read(fd, buf, sizeof(buf))) > 0)
 		imu_parser_feed(&h->parser, buf, (size_t)n);
-	if (!had && h->parser.samples)
+	identify(h);
+	if (!h->live && h->parser.samples != had) {
+		h->live = true;
 		report_present(h);
+	}
 	if ((n < 0 && errno != EAGAIN) || n == 0 || (revents & (POLLERR | POLLHUP)))
 		detach(h);	/* unplugged */
 }
@@ -246,10 +373,11 @@ static void on_watch(void *ud)
 	if (h->fd < 0)
 		return;
 	if (h->parser.samples == h->seen) {
-		if (h->parser.samples)
+		if (h->live)
 			LOGW(TAG, "%s: no samples", h->node);
 		send_cmd(h, "s");
 	}
+	h->live = h->parser.samples != h->seen;
 	h->seen = h->parser.samples;
 	report_present(h);
 	if (!h->told_rate && h->parser.period_measured) {
@@ -313,7 +441,7 @@ static bool open_port(struct imu *h, const char *tty)
 	if (tcgetattr(fd, &tio) == 0) {
 		cfmakeraw(&tio);
 		tio.c_cflag |= CLOCAL | CREAD;
-		tio.c_cc[VMIN] = WAKE_FRAMES * (IMU_LEN + FRAME_OVERHEAD);
+		tio.c_cc[VMIN] = WAKE_BYTES;
 		tio.c_cc[VTIME] = 0;
 		tcsetattr(fd, TCSANOW, &tio);
 	}
@@ -322,6 +450,8 @@ static bool open_port(struct imu *h, const char *tty)
 	memcpy(h->node, path, sizeof(h->node));
 	imu_parser_init(&h->parser);
 	h->seen = 0;
+	h->live = false;
+	h->info_seen = 0;
 	h->told_rate = false;
 	mainloop_add_fd(h->ml, fd, POLLIN, on_readable, h);
 	send_cmd(h, "si");
@@ -338,8 +468,19 @@ static bool scan(struct imu *h)
 	if (h->fd >= 0 || !(d = opendir("/sys/class/tty")))
 		return h->fd >= 0;
 	while (!found && (e = readdir(d)) != NULL)
-		if (!strncmp(e->d_name, "ttyACM", 6) && is_ours(h, e->d_name))
+		if (!strncmp(e->d_name, "ttyACM", 6) && is_ours(h, e->d_name)) {
+			char dir[320];
+
+			/* the USB serial: the sensor's calibration is its own */
+			snprintf(dir, sizeof(dir), "/sys/class/tty/%.256s/device/..", e->d_name);
+			if (!read_attr(dir, "serial", h->serial, sizeof(h->serial)))
+				h->serial[0] = '\0';
+			for (char *c = h->serial; *c; c++)
+				if (!((*c >= '0' && *c <= '9') || (*c >= 'A' && *c <= 'Z') ||
+				      (*c >= 'a' && *c <= 'z')))
+					*c = '_';
 			found = open_port(h, e->d_name);
+		}
 	closedir(d);
 	return found;
 }

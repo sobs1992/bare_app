@@ -62,6 +62,15 @@ static struct {
 		float rate_hz;
 		struct motion m;
 		bool cal_set;	/* m.cal came from the file or the calibration */
+		char id[INPUT_MOTION_ID_LEN];	/* the sensor now ("" none yet) */
+		char name[17];
+		float noise;
+		/* calibrations by sensor id; "" the one from before sensors had ids */
+		struct {
+			char id[INPUT_MOTION_ID_LEN];
+			struct motion_cal cal;
+		} cals[INPUT_MOTION_CALS];
+		int ncals;
 		struct input_motion_tune tune;
 		input_motion_cb cb;
 		void *ud;
@@ -336,12 +345,77 @@ static bool load_tune_line(int s, const char *field, const char *value)
 	return true;
 }
 
-/* "gyro.sensitivity = 1.0", "gyro.invert_x = 1": the sensor's tune */
+static int cal_find(const char *id)
+{
+	for (int i = 0; i < in.motion.ncals; i++)
+		if (!strcmp(in.motion.cals[i].id, id))
+			return i;
+	return -1;
+}
+
+/* The calibration of sensor id: kept, replaced or (c NULL) dropped */
+static bool cal_store(const char *id, const struct motion_cal *c)
+{
+	int i = cal_find(id);
+
+	if (!c || !(c->bias_set || c->axes_set)) {
+		if (i >= 0)
+			in.motion.cals[i] = in.motion.cals[--in.motion.ncals];
+		return true;
+	}
+	if (i < 0) {
+		if (in.motion.ncals == INPUT_MOTION_CALS || strlen(id) >= INPUT_MOTION_ID_LEN) {
+			LOGW(TAG, "no room for the calibration of motion sensor %s", id);
+			return false;
+		}
+		i = in.motion.ncals++;
+		snprintf(in.motion.cals[i].id, INPUT_MOTION_ID_LEN, "%s", id);
+	}
+	in.motion.cals[i].cal = *c;
+	return true;
+}
+
+/* The sensor's calibration into core/motion: its own, else (an ICM-20948)
+ * the one kept before sensors had ids, which was the ICM-20948's */
+static void cal_apply(void)
+{
+	int i = cal_find(in.motion.id);
+
+	if (i < 0 && in.motion.id[0] && !strncmp(in.motion.name, "ICM-20948", 9))
+		i = cal_find("");
+	in.motion.cal_set = i >= 0;
+	motion_set_cal(&in.motion.m, i >= 0 ? &in.motion.cals[i].cal : NULL);
+}
+
+static bool id_ok(const char *id)
+{
+	for (; *id; id++)
+		if (!((*id >= '0' && *id <= '9') || (*id >= 'A' && *id <= 'Z') ||
+		      (*id >= 'a' && *id <= 'z') || *id == '-' || *id == '_'))
+			return false;
+	return true;
+}
+
+/*
+ * The sensor's lines: "gyro.sensitivity = 1.0", "gyro.invert_x = 1" (the
+ * tune), "gyro.<sensor id> = <motion_cal_format()>" (its calibration),
+ * "gyro = ..." (field "": the one from before sensors had ids)
+ */
 static bool load_gyro_line(const char *field, const char *value)
 {
 	struct input_motion_tune t = in.motion.tune;
 	char *end;
-	float v = strtof(value, &end);
+	float v;
+
+	if (strcmp(field, "sensitivity") && strcmp(field, "invert_x") && strcmp(field, "invert_y")) {
+		struct motion_cal mc;
+
+		if (!id_ok(field) || !motion_cal_parse(value, &mc) || !cal_store(field, &mc))
+			return false;
+		cal_apply();
+		return true;
+	}
+	v = strtof(value, &end);
 
 	while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')
 		end++;
@@ -392,17 +466,8 @@ int input_load_calibration(const char *path)
 			key++;
 		for (char *e = eq; e > key && e[-1] == ' '; )
 			*--e = '\0';
-		if (!strcmp(key, "gyro")) {
-			struct motion_cal mc;
-
-			if (motion_cal_parse(eq + 1, &mc))
-				input_set_motion_calibration(&mc);
-			else
-				LOGW(TAG, "%s: bad line \"%s\"", in.cal_path, key);
-			continue;
-		}
-		if (!strncmp(key, "gyro.", 5)) {
-			if (!load_gyro_line(key + 5, eq + 1))
+		if (!strcmp(key, "gyro") || !strncmp(key, "gyro.", 5)) {
+			if (!load_gyro_line(key[4] ? key + 5 : "", eq + 1))
 				LOGW(TAG, "%s: bad line \"%s\"", in.cal_path, key);
 			continue;
 		}
@@ -450,8 +515,10 @@ int input_save_calibration(void)
 			(double)in.stick[s].tune.sensitivity, stick_names[s],
 			in.stick[s].tune.snapback);
 	}
-	if (in.motion.cal_set && motion_cal_format(&in.motion.m.cal, buf, sizeof(buf)) > 0)
-		fprintf(f, "gyro = %s\n", buf);
+	for (int i = 0; i < in.motion.ncals; i++)
+		if (motion_cal_format(&in.motion.cals[i].cal, buf, sizeof(buf)) > 0)
+			fprintf(f, "gyro%s%s = %s\n", in.motion.cals[i].id[0] ? "." : "",
+				in.motion.cals[i].id, buf);
 	fprintf(f, "gyro.sensitivity = %.1f\ngyro.invert_x = %d\ngyro.invert_y = %d\n",
 		(double)in.motion.tune.sensitivity, in.motion.tune.invert_x, in.motion.tune.invert_y);
 	if (fflush(f) || fsync(fileno(f)))
@@ -517,6 +584,24 @@ void input_set_devices_cb(void (*cb)(uint32_t devices))
 	in.devices_cb = cb;
 }
 
+void input_motion_sensor(const char *id, const char *name, float gyro_noise)
+{
+	if (!id_ok(id) || strlen(id) >= INPUT_MOTION_ID_LEN)
+		id = "unknown";
+	if (!strcmp(id, in.motion.id) && gyro_noise == in.motion.noise)
+		return;
+	if (strcmp(id, in.motion.id)) {
+		/* another sensor: its zero, its "up", its calibration */
+		LOGI(TAG, "motion sensor %s", id);
+		motion_init(&in.motion.m);
+	}
+	snprintf(in.motion.id, sizeof(in.motion.id), "%s", id);
+	snprintf(in.motion.name, sizeof(in.motion.name), "%s", name ? name : "");
+	in.motion.noise = gyro_noise;
+	motion_set_noise(&in.motion.m, gyro_noise);
+	cal_apply();
+}
+
 void input_report_motion(const float gyro[3], const float accel[3], float dt)
 {
 	motion_feed(&in.motion.m, gyro, accel, dt);
@@ -544,6 +629,7 @@ void input_motion_info(struct input_motion_info *mi)
 		.bias_known = m->bias_known, .axes_set = m->cal.axes_set, .still = m->still,
 		.rate_x = in.motion.present ? m->rate_x : 0, .rate_y = in.motion.present ? m->rate_y : 0,
 	};
+	snprintf(mi->name, sizeof(mi->name), "%s", in.motion.name);
 }
 
 const struct motion *input_motion(void)
@@ -565,8 +651,11 @@ bool input_motion_calibration(struct motion_cal *c)
 
 void input_set_motion_calibration(const struct motion_cal *c)
 {
-	in.motion.cal_set = c && (c->bias_set || c->axes_set);
-	motion_set_cal(&in.motion.m, in.motion.cal_set ? c : NULL);
+	cal_store(in.motion.id, c);
+	/* the ICM-20948's from before sensors had ids is replaced by its own */
+	if (in.motion.id[0] && !strncmp(in.motion.name, "ICM-20948", 9))
+		cal_store("", NULL);
+	cal_apply();
 }
 
 uint32_t input_buttons(void)

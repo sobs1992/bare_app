@@ -25,7 +25,10 @@
 #include <stddef.h>
 
 #define MOTION_STILL_MS 1000		/* still that long: the bias is measured */
-#define MOTION_STILL_GYRO 0.6f		/* deg/s: the gyro's spread while still */
+#define MOTION_STILL_GYRO 0.6f		/* deg/s: the gyro's spread while still (noise unknown) */
+#define MOTION_STILL_NOISE 4.0f		/* ...else this many times its noise, within: */
+#define MOTION_STILL_MIN 0.3f
+#define MOTION_STILL_MAX 1.5f
 #define MOTION_STILL_ACCEL 0.01f	/* g: ...and the accelerometer's */
 #define MOTION_BIAS_MAX 10.0f		/* deg/s: a bigger "bias" is a turn */
 #define MOTION_BIAS_STEP 2.0f		/* deg/s: ...and so is a bigger change of it */
@@ -58,6 +61,7 @@ struct motion {
 	unsigned sm_head, sm_count;
 	float x, y;		/* degrees turned, not taken yet */
 	bool still;		/* the last window was still */
+	float still_gyro;	/* deg/s: the spread of a still window (motion_set_noise()) */
 	float rate_x, rate_y;	/* deg/s of the last sample, after the bias */
 };
 
@@ -69,6 +73,8 @@ void motion_set_cal(struct motion *m, const struct motion_cal *c);
  * in g, dt seconds since the sample before (gaps included).
  */
 void motion_feed(struct motion *m, const float gyro[3], const float accel[3], float dt);
+/* The sensor's gyro noise at rest (deg/s rms, 0 unknown): what "still" is */
+void motion_set_noise(struct motion *m, float rms);
 /* Degrees turned since the last call: x to the right, y down (as a mouse) */
 void motion_take(struct motion *m, float *x, float *y);
 /* Forget what was turned and not taken (the game was not in front) */

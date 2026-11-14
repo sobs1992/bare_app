@@ -127,14 +127,18 @@ void input_set_stick_tune(int stick, const struct input_stick_tune *t);	/* NULL:
  * A motion sensor (drivers/input_imu.c; core/motion.h does the math). The
  * driver reports each sample, then input_report_motion_end() after a batch
  * of them hands the listener what the device turned meanwhile (GP_EV_MOTION;
- * only once it knows the gyro's zero). Its calibration is kept in the
- * sticks' file ("gyro = <motion_cal_format()>").
+ * only once it knows the gyro's zero). The driver names the sensor
+ * (input_motion_sensor(): "<chip>-<serial>"); each one has a calibration of
+ * its own, kept in the sticks' file ("gyro.<id> = <motion_cal_format()>").
  */
+#define INPUT_MOTION_ID_LEN 64
+#define INPUT_MOTION_CALS 8
 struct motion;
 struct motion_cal;
 
 struct input_motion_info {
 	bool present;		/* a sensor is plugged in */
+	char name[17];		/* its chip ("ICM-20948", "FAKE"), "" unknown */
 	float rate_hz;		/* its samples a second */
 	bool bias_known;	/* the gyro's zero measured (lain still) or calibrated */
 	bool axes_set;		/* up and down calibrated */
@@ -143,6 +147,9 @@ struct input_motion_info {
 };
 
 void input_motion_present(bool present, float rate_hz);
+/* Which sensor it is: id [A-Za-z0-9_-] (another one starts afresh: its zero,
+ * its calibration), the chip's name, its gyro noise (deg/s rms, 0 unknown) */
+void input_motion_sensor(const char *id, const char *name, float gyro_noise);
 
 /*
  * The sensor as a whole, for every game (the motion screen sets it, saved
@@ -167,8 +174,8 @@ const struct motion *input_motion(void);	/* for "up" and the bias */
 /* Every sample as it comes (the calibration), NULL: none */
 typedef void (*input_motion_cb)(const float gyro[3], const float accel[3], float dt, void *ud);
 void input_motion_listen(input_motion_cb cb, void *ud);
-bool input_motion_calibration(struct motion_cal *c);	/* false: none */
-void input_set_motion_calibration(const struct motion_cal *c);	/* NULL: none */
+bool input_motion_calibration(struct motion_cal *c);	/* the sensor's; false: none */
+void input_set_motion_calibration(const struct motion_cal *c);	/* the sensor's; NULL: none */
 
 /*
  * Input devices plugged in now, for the status bar and the settings: the

@@ -35,6 +35,16 @@ static bool normalize(float v[3])
 void motion_init(struct motion *m)
 {
 	memset(m, 0, sizeof(*m));
+	m->still_gyro = MOTION_STILL_GYRO;
+}
+
+void motion_set_noise(struct motion *m, float rms)
+{
+	float t = rms * MOTION_STILL_NOISE;
+
+	m->still_gyro = !(rms > 0) ? MOTION_STILL_GYRO
+		      : t < MOTION_STILL_MIN ? MOTION_STILL_MIN
+		      : t > MOTION_STILL_MAX ? MOTION_STILL_MAX : t;
 }
 
 void motion_set_cal(struct motion *m, const struct motion_cal *c)
@@ -83,7 +93,7 @@ static void still_add(struct motion *m, const float gyro[3], const float accel[3
 		double vg = m->still_g2[k] / n - mg * mg, va = m->still_a2[k] / n - ma * ma;
 
 		mean[k] = mg;
-		if (vg > (double)MOTION_STILL_GYRO * MOTION_STILL_GYRO ||
+		if (vg > (double)m->still_gyro * m->still_gyro ||
 		    va > (double)MOTION_STILL_ACCEL * MOTION_STILL_ACCEL || fabs(mg) > MOTION_BIAS_MAX ||
 		    /* a slow steady turn is not a new zero */
 		    (m->bias_known && fabs(mg - m->bias[k]) > MOTION_BIAS_STEP))

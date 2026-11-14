@@ -476,6 +476,97 @@ static void test_imu(void)
 		input_set_motion_tune(NULL);
 	}
 
+	/* protocol v3: the sensor says its units and rate (a fake one, unlike
+	 * the ICM-20948: 833 Hz, 70 mdps and 0.122 mg a count), batches of 3 */
+	{
+		uint8_t info[56] = { 3, 0, 2, 2, 'F', 'A', 'K', 'E' }, hdr[8 + 36];
+		uint32_t odr3 = 833000;
+		float gs = 0.07f, as = 0.000122f, noise = 0.12f;
+		uint8_t st3[36] = { 3, 0, 2, 0x1b };
+		size_t m = 0;
+
+		imu_parser_init(&p);
+		memcpy(info + 24, &odr3, 4);
+		memcpy(info + 28, &gs, 4);
+		memcpy(info + 32, &as, 4);
+		memcpy(info + 52, &noise, 4);
+		info[20] = 1 | 2 | 8;
+		info[21] = 4;
+		/* samples before the info: units unknown, dropped */
+		memset(hdr, 0, sizeof(hdr));
+		hdr[6] = 3;
+		m += imu_frame(stream + m, 0x04, hdr, 8 + 36);
+		m += imu_frame(stream + m, 0x03, info, 56);
+		m += imu_frame(stream + m, 0x02, st3, 36);
+		imu_turned = 0;
+		/* 3 s still, then 1 s at 45 deg/s about z (643 counts of 0.07) */
+		for (i = 0; i < 4 * 833 / 3; i++) {
+			uint32_t t = 3000000u + (uint32_t)((uint64_t)3 * i * 1000000000u / 833000);
+			uint16_t sq = (uint16_t)(3 * i + 65000);
+			int16_t gz = 3 * i >= 3 * 833 ? 643 : 0, az = 8197;	/* 1 g */
+
+			memcpy(hdr, &t, 4);
+			memcpy(hdr + 4, &sq, 2);
+			hdr[6] = 3;
+			for (int k = 0; k < 3; k++) {
+				memset(hdr + 8 + 12 * k, 0, 12);
+				memcpy(hdr + 8 + 12 * k + 4, &gz, 2);
+				memcpy(hdr + 8 + 12 * k + 10, &az, 2);
+			}
+			m += imu_frame(stream + m, 0x04, hdr, 8 + 36);
+		}
+		for (off = 0; off < m; off += 61)
+			imu_parser_feed(&p, stream + off, m - off < 61 ? m - off : 61);
+		CHECK(p.proto == 3 && p.have_info && p.imu_id == 2 && !strcmp(p.name, "FAKE"));
+		CHECK(p.info_seq == 1 && p.gyro_noise == noise && p.fake && p.imu_ok);
+		CHECK(p.samples == 3 * (4 * 833 / 3) && p.bad_crc == 0);
+		CHECK(p.period_measured && fabsf(p.period_us - 1e6f / 833) < 1);
+		/* about 45 degrees to the left: x negative (the zero measured meanwhile) */
+		CHECK(fabsf(imu_turned + 45) < 2.5f);
+		/* no sensor on the device: units forgotten, its samples dropped */
+		memset(info + 3, 0, 17);
+		n = imu_frame(stream, 0x03, info, 56);
+		imu_parser_feed(&p, stream, n);
+		CHECK(p.imu_id == 0 && !p.name[0] && p.info_seq == 2);
+	}
+
+	/* each sensor its own calibration; the old "gyro =" line is the ICM-20948's */
+	{
+		struct motion_cal c;
+		FILE *f = fopen("test_cal.conf", "w");
+		char text[1024] = "";
+
+		fputs("gyro = bias 0.1 0.2 0.3 right -1 0 0\ngyro.FAKE-X1 = right 0 1 0\n", f);
+		fclose(f);
+		CHECK(input_load_calibration("test_cal.conf") == 0);
+		input_motion_sensor("ICM-20948-AB12", "ICM-20948", 0.15f);
+		CHECK(input_motion_calibration(&c) && c.axes_set && c.right[0] == -1);
+		CHECK(input_motion()->still_gyro == 0.6f);
+		input_motion_sensor("FAKE-X1", "FAKE", 0.12f);
+		CHECK(input_motion_calibration(&c) && c.right[1] == 1 && !c.bias_set);
+		CHECK(!input_motion()->bias_known && input_motion()->still_gyro == 0.48f);
+		input_motion_sensor("FAKE-X2", "FAKE", 0);
+		CHECK(!input_motion_calibration(&c) && input_motion()->still_gyro == MOTION_STILL_GYRO);
+		input_set_motion_calibration(&(struct motion_cal){ .bias_set = true, .bias = { 1, 2, 3 } });
+		/* the ICM-20948's own calibration replaces the old line */
+		input_motion_sensor("ICM-20948-AB12", "ICM-20948", 0.15f);
+		input_set_motion_calibration(&(struct motion_cal){ .axes_set = true, .right = { 0, 0, 1 } });
+		CHECK(input_save_calibration() == 0);
+		f = fopen("test_cal.conf", "r");
+		CHECK(f && fread(text, 1, sizeof(text) - 1, f) > 0);
+		if (f)
+			fclose(f);
+		CHECK(strstr(text, "gyro.FAKE-X1 = right 0.0000 1.0000 0.0000\n"));
+		CHECK(strstr(text, "gyro.FAKE-X2 = bias 1.0000 2.0000 3.0000\n"));
+		CHECK(strstr(text, "gyro.ICM-20948-AB12 = right 0.0000 0.0000 1.0000\n"));
+		CHECK(!strstr(text, "\ngyro = "));
+		CHECK(input_load_calibration("test_cal.conf") == 0);
+		input_motion_sensor("FAKE-X2", "FAKE", 0);
+		CHECK(input_motion_calibration(&c) && c.bias[2] == 3);
+		unlink("test_cal.conf");
+		input_set_motion_calibration(NULL);
+	}
+
 	/* devices plugged in: the listener hears each change once */
 	input_set_devices_cb(on_imu_devices);
 	input_report_devices(INPUT_DEV_KEYBOARD | INPUT_DEV_MOUSE, INPUT_DEV_MOUSE);

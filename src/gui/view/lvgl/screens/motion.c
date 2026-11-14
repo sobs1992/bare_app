@@ -1,6 +1,6 @@
 /*
  * Motion sensor (SCREEN_MOTION, Settings > Games): whether the sensor is
- * plugged in and how fast it samples, whether the gyro's zero and up and
+ * plugged in, which chip it is and how fast it samples, whether the gyro's zero and up and
  * down are known, and a cross in a box that follows the device's turns
  * (GP_EV_MOTION) as a game's view would, MOTION_BOX_DEG across.
  *
@@ -8,7 +8,8 @@
  * (the gyro's zero), then is picked up and held as in a game; once held
  * steady its top is tilted towards the player by CAL_TILT_DEG, which gives
  * the device's right in the sensor's axes (up and down). The result goes
- * to core/input and is saved with the sticks' calibration. X puts the
+ * to core/input and is saved with the sticks' calibration, as the
+ * calibration of this sensor (another one plugged in has its own). X puts the
  * cross back in the middle, Y removes the calibration, B leaves (or stops
  * a calibration).
  *
@@ -19,6 +20,7 @@
  */
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "../widget.h"
 #include "core/motion.h"
@@ -306,7 +308,8 @@ static void on_timer(lv_timer_t *t)
 
 	input_motion_info(&mi);
 	if (m->shown_valid && mi.present == m->shown.present && mi.bias_known == m->shown.bias_known &&
-	    mi.axes_set == m->shown.axes_set && fabsf(mi.rate_hz - m->shown.rate_hz) < 1)
+	    mi.axes_set == m->shown.axes_set && fabsf(mi.rate_hz - m->shown.rate_hz) < 1 &&
+	    !strcmp(mi.name, m->shown.name))
 		return;
 	m->shown = mi;
 	m->shown_valid = true;
@@ -319,7 +322,8 @@ static void on_timer(lv_timer_t *t)
 			cal_stop(m, S_COUNT, UI_COLOR_DIM);
 		return;
 	}
-	lv_label_set_text_fmt(m->status, tr(S_MOTION_RATE_FMT), (int)lrintf(mi.rate_hz));
+	lv_label_set_text_fmt(m->status, tr(S_MOTION_RATE_FMT), mi.name[0] ? mi.name : "?",
+			      (int)lrintf(mi.rate_hz));
 	lv_obj_set_style_text_color(m->status, UI_COLOR_ON, 0);
 	lv_obj_set_hidden(m->zero, false);
 	lv_obj_set_hidden(m->axes, false);
