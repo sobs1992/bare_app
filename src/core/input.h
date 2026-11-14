@@ -161,6 +161,7 @@ struct input_motion_desc {
 	unsigned channels;	/* MOTION_CH_GYRO, MOTION_CH_ACCEL */
 	float gyro_noise;	/* deg/s rms at rest, 0 unknown */
 	float accel_noise;	/* g rms at rest, 0 unknown */
+	float rate_hz;		/* samples a second, nominal; 0 unknown */
 };
 void input_motion_sensor(const struct input_motion_desc *d);
 
@@ -180,7 +181,8 @@ struct input_motion_tune {
 
 void input_motion_tune(struct input_motion_tune *t);
 void input_set_motion_tune(const struct input_motion_tune *t);	/* NULL: the default */
-/* The stream had a gap (samples lost for a while): what came before is stale */
+/* The stream had a gap (samples lost for a while), or the port was opened
+ * again: what came before is stale */
 void input_motion_gap(void);
 /* deg/s, g, s; a channel the sensor lacks is ignored (0) */
 void input_report_motion(const float gyro[3], const float accel[3], float dt);

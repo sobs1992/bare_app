@@ -65,7 +65,7 @@ static struct {
 		char id[INPUT_MOTION_ID_LEN];	/* the sensor now ("" none yet) */
 		char name[17];
 		unsigned channels;
-		float noise, accel_noise;
+		float noise, accel_noise, rate_nominal;
 		struct motion_synth synth;	/* the gyro of a sensor without one */
 		/* calibrations by sensor id; "" the one from before sensors had ids */
 		struct {
@@ -590,7 +590,7 @@ void input_motion_sensor(const struct input_motion_desc *d)
 	unsigned ch = d->channels & (MOTION_CH_GYRO | MOTION_CH_ACCEL);
 
 	if (!strcmp(id, in.motion.id) && ch == in.motion.channels && d->gyro_noise == in.motion.noise &&
-	    d->accel_noise == in.motion.accel_noise)
+	    d->accel_noise == in.motion.accel_noise && d->rate_hz == in.motion.rate_nominal)
 		return;
 	if (strcmp(id, in.motion.id) || ch != in.motion.channels) {
 		/* another sensor: its zero, its "up", its calibration */
@@ -603,10 +603,12 @@ void input_motion_sensor(const struct input_motion_desc *d)
 	in.motion.channels = ch;
 	in.motion.noise = d->gyro_noise;
 	in.motion.accel_noise = d->accel_noise;
+	in.motion.rate_nominal = d->rate_hz;
 	/* no gyro: the one made from gravity, as noisy as the accelerometer makes it */
 	motion_set_sensor(&in.motion.m, ch,
 			  ch & MOTION_CH_GYRO ? d->gyro_noise
-					      : motion_synth_setup(&in.motion.synth, d->accel_noise),
+					      : motion_synth_setup(&in.motion.synth, d->accel_noise,
+								   d->rate_hz),
 			  d->accel_noise);
 	cal_apply();
 }

@@ -57,8 +57,13 @@
 #define MOTION_TIGHT_MAX 0.6f
 /* No gyro: gravity smoothed over a time, then its turn over as much time (one
  * sample apart is noise): MOTION_SYNTH_PER_G seconds per g of the
- * accelerometer's noise, within MOTION_SYNTH_MIN_S..MAX_S (noise unknown: MAX) */
+ * accelerometer's noise as it would be at MOTION_SYNTH_REF_HZ (white noise:
+ * rms * sqrt(REF_HZ / rate)), within MOTION_SYNTH_MIN_S..MAX_S (noise
+ * unknown: MAX). A gap in the samples (longer than the span, or than
+ * MOTION_SYNTH_GAP of its usual steps) starts it afresh. */
 #define MOTION_SYNTH_PER_G 45.0f
+#define MOTION_SYNTH_REF_HZ 1139.0f
+#define MOTION_SYNTH_GAP 4.0f
 #define MOTION_SYNTH_MIN_S 0.03f
 #define MOTION_SYNTH_MAX_S 0.12f
 #define MOTION_SYNTH_MAX 2048		/* samples kept for it: 120 ms up to 17 kHz */
@@ -117,18 +122,20 @@ void motion_set_sensor(struct motion *m, unsigned channels, float gyro_rms, floa
 void motion_can_aim(const struct motion *m, bool *x, bool *y);
 
 /* A gyro made from the accelerometer (a sensor without one): gravity smoothed,
- * its turn over the last MOTION_SYNTH_SPAN_S; deg/s out, about the axes across
+ * its turn over the last 'span' seconds; deg/s out, about the axes across
  * gravity only */
 struct motion_synth {
 	float span;		/* s: motion_synth_setup() */
+	float dt_avg;		/* the usual step between samples, 0 none yet */
 	float up[3];
 	bool set;
 	float hist[MOTION_SYNTH_MAX][3], hdt[MOTION_SYNTH_MAX];	/* up as it was, dt after it */
 	unsigned head, count;
 };
-/* For an accelerometer that noisy (g rms, 0 unknown): starts afresh; returns
- * the made-up gyro's noise at rest (deg/s rms, an estimate) */
-float motion_synth_setup(struct motion_synth *s, float accel_rms);
+/* For an accelerometer that noisy (g rms, 0 unknown) at that rate (samples a
+ * second, 0 unknown): starts afresh; returns the made-up gyro's noise at
+ * rest (deg/s rms, an estimate) */
+float motion_synth_setup(struct motion_synth *s, float accel_rms, float rate_hz);
 /* Starts afresh (the sensor was away: its "up" then is not now's) */
 void motion_synth_reset(struct motion_synth *s);
 void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, float gyro[3]);

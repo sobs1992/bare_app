@@ -361,7 +361,7 @@ static void test_motion(void)
 	 * tilt must give the right axis */
 	{
 		static struct motion_synth sy;
-		float est = motion_synth_setup(&sy, 0.0022f);
+		float est = motion_synth_setup(&sy, 0.0022f, 1125);
 		struct motion_rec r;
 		const float dt = 1 / 1125.0f, bias0[3] = { 0, 0, 0 };
 		unsigned rng = 1;
@@ -397,10 +397,15 @@ static void test_motion(void)
 			if (i >= 2250)
 				deg = motion_rec_tilt(&r, g, bias0, dt);
 		}
-		CHECK(fabsf(sy.span - 0.099f) < 0.001f && est > 0.2f && est < 0.35f);
+		CHECK(fabsf(sy.span - 0.0996f) < 0.001f && est > 0.2f && est < 0.35f);
 		CHECK(sqrt(sq / n) < 0.5 && peak < 2);
 		CHECK(fabsf(deg - 25) < 2);
 		CHECK(motion_rec_right(&r, axis) && axis[0] > 0.99f);
+		/* the same accelerometer at 104 Hz: each sample counts more, the
+		 * longest span, a bigger estimate; unknown noise: the longest */
+		est = motion_synth_setup(&sy, 0.0022f, 104);
+		CHECK(sy.span == MOTION_SYNTH_MAX_S && est > 0.5f && est < 0.9f);
+		CHECK(motion_synth_setup(&sy, 0, 0) == 0 && sy.span == MOTION_SYNTH_MAX_S);
 	}
 }
 
@@ -652,20 +657,20 @@ static void test_imu(void)
 		CHECK(input_load_calibration("test_cal.conf") == 0);
 		/* no sensor named yet: no calibration; a line without a sensor is no one's */
 		CHECK(!input_motion_calibration(&c) && !input_motion()->cal.axes_set);
-		input_motion_sensor(&(struct input_motion_desc){ "AAA-1", "AAA", 3, 0.15f, 0.0022f });
+		input_motion_sensor(&(struct input_motion_desc){ "AAA-1", "AAA", 3, 0.15f, 0.0022f, 1000 });
 		CHECK(!input_motion_calibration(&c));
 		CHECK(fabsf(input_motion()->still_gyro - 0.6f) < 1e-5f &&
 		      fabsf(input_motion()->still_accel - 0.0088f) < 1e-6f);
 		CHECK(fabsf(input_motion()->smooth_dps - 3.75f) < 1e-5f &&
 		      fabsf(input_motion()->tight_dps - 0.3f) < 1e-6f);
-		input_motion_sensor(&(struct input_motion_desc){ "FAKE-X1", "FAKE", 3, 0.12f, 0 });
+		input_motion_sensor(&(struct input_motion_desc){ "FAKE-X1", "FAKE", 3, 0.12f, 0, 1000 });
 		CHECK(input_motion_calibration(&c) && c.right[1] == 1 && !c.bias_set);
 		CHECK(!input_motion()->bias_known && input_motion()->still_accel == MOTION_STILL_ACCEL);
-		input_motion_sensor(&(struct input_motion_desc){ "FAKE-X2", "FAKE", 3, 0, 0 });
+		input_motion_sensor(&(struct input_motion_desc){ "FAKE-X2", "FAKE", 3, 0, 0, 1000 });
 		CHECK(!input_motion_calibration(&c) && input_motion()->still_gyro == MOTION_STILL_GYRO);
 		CHECK(input_motion()->smooth_dps == MOTION_SMOOTH_DPS);
 		input_set_motion_calibration(&(struct motion_cal){ .bias_set = true, .bias = { 1, 2, 3 } });
-		input_motion_sensor(&(struct input_motion_desc){ "AAA-1", "AAA", 3, 0.15f, 0.0022f });
+		input_motion_sensor(&(struct input_motion_desc){ "AAA-1", "AAA", 3, 0.15f, 0.0022f, 1000 });
 		input_set_motion_calibration(&(struct motion_cal){ .axes_set = true, .right = { 0, 0, 1 } });
 		CHECK(input_save_calibration() == 0);
 		f = fopen("test_cal.conf", "r");
@@ -677,7 +682,7 @@ static void test_imu(void)
 		CHECK(strstr(text, "gyro.AAA-1 = right 0.0000 0.0000 1.0000\n"));
 		CHECK(!strstr(text, "\ngyro = "));
 		CHECK(input_load_calibration("test_cal.conf") == 0);
-		input_motion_sensor(&(struct input_motion_desc){ "FAKE-X2", "FAKE", 3, 0, 0 });
+		input_motion_sensor(&(struct input_motion_desc){ "FAKE-X2", "FAKE", 3, 0, 0, 1000 });
 		CHECK(input_motion_calibration(&c) && c.bias[2] == 3);
 		unlink("test_cal.conf");
 		input_set_motion_calibration(NULL);
@@ -688,7 +693,7 @@ static void test_imu(void)
 		struct input_motion_info mi;
 		struct motion_cal c = { .axes_set = true, .right = { 1, 0, 0 }, .up_set = true, .up = { 0, 0, 1 } };
 
-		input_motion_sensor(&(struct input_motion_desc){ "GYRO-1", "GYRO", MOTION_CH_GYRO, 0.15f, 0 });
+		input_motion_sensor(&(struct input_motion_desc){ "GYRO-1", "GYRO", MOTION_CH_GYRO, 0.15f, 0, 1000 });
 		input_motion_info(&mi);
 		CHECK(mi.channels == MOTION_CH_GYRO && !mi.aim_x && !mi.aim_y && !mi.axes_set);
 		imu_feed(1100, 0, 0, 0, 0, 0);	/* still: the zero, by the gyro alone */
@@ -711,7 +716,7 @@ static void test_imu(void)
 		float y0;
 
 		imu_my = 0;
-		input_motion_sensor(&(struct input_motion_desc){ "ACC-1", "ACC", MOTION_CH_ACCEL, 0, 0.002f });
+		input_motion_sensor(&(struct input_motion_desc){ "ACC-1", "ACC", MOTION_CH_ACCEL, 0, 0.002f, 1000 });
 		/* a gyro's zero in the calibration is not this sensor's to take */
 		input_set_motion_calibration(&(struct motion_cal){ .axes_set = true, .right = { 1, 0, 0 },
 								   .bias_set = true, .bias = { 1, 1, 1 } });
@@ -734,14 +739,17 @@ static void test_imu(void)
 	 * while the device was turned: no jump of the view when it comes back */
 	{
 		imu_my = 0;
-		input_motion_sensor(&(struct input_motion_desc){ "ACC-2", "ACC", MOTION_CH_ACCEL, 0, 0.002f });
+		input_motion_sensor(&(struct input_motion_desc){ "ACC-2", "ACC", MOTION_CH_ACCEL, 0, 0.002f, 1000 });
 		input_set_motion_calibration(&(struct motion_cal){ .axes_set = true, .right = { 1, 0, 0 } });
 		input_motion_present(true, 1000);
 		imu_feed(2000, 0, 0, 0, 0, 0);
 		input_motion_present(false, 0);
-		input_motion_present(true, 1000);
+		/* as the driver does it: the port opened (a gap), samples, then present */
+		input_motion_gap();
 		imu_my = 0;
-		imu_feed(2000, 0, 0, 0, 60, 60);
+		imu_feed(4, 0, 0, 0, 60, 60);
+		input_motion_present(true, 1000);
+		imu_feed(1996, 0, 0, 0, 60, 60);
 		CHECK(fabsf(imu_my) < 1);
 		imu_feed(500, 0, 0, 0, 0, 0);	/* the gap in the stream */
 		input_motion_gap();
@@ -752,11 +760,67 @@ static void test_imu(void)
 		input_set_motion_calibration(NULL);
 	}
 
+	/* no gyro, gaps in the stream shorter than the parser's "lost" (1 s) but
+	 * longer than the made-up gyro's span: the turn made meanwhile is not
+	 * the view's (no jump) */
+	{
+		static const float gaps[] = { 0.05f, 0.2f, 0.5f, 0.9f };
+
+		for (unsigned gi = 0; gi < sizeof(gaps) / sizeof(gaps[0]); gi++) {
+			uint8_t hdr[8 + 48], st3[36] = { 3, 0, 3, 0x0b };
+			size_t m = 0;
+			uint16_t sq = 100;
+			uint32_t t = 0;
+
+			imu_parser_init(&p);
+			snprintf(p.serial, sizeof(p.serial), "GAP%u", gi);
+			m += imu_info(stream + m, "ACCONLY", 9, 2, 1000000, 0, 1.0f / 8192, 0, 0.002f);
+			m += imu_frame(stream + m, 0x02, st3, 36);
+			/* the sensor known first, then its calibration */
+			imu_parser_feed(&p, stream, m);
+			CHECK(p.channels == 2 && input_motion()->channels == MOTION_CH_ACCEL);
+			input_set_motion_calibration(&(struct motion_cal){ .axes_set = true,
+									   .right = { 1, 0, 0 } });
+			m = 0;
+			/* 1 s flat, a gap while it tilts 20 degrees about x, 1 s so */
+			for (int part = 0; part < 2; part++) {
+				int16_t ay = part ? (int16_t)lrintf(sinf(0.3490659f) * 8192) : 0;
+				int16_t az = part ? (int16_t)lrintf(cosf(0.3490659f) * 8192) : 8192;
+
+				if (part) {
+					sq = (uint16_t)(sq + lrintf(gaps[gi] * 1000));
+					t += (uint32_t)lrintf(gaps[gi] * 1e6f);
+				}
+				for (int b = 0; b < 250; b++) {
+					memcpy(hdr, &t, 4);
+					memcpy(hdr + 4, &sq, 2);
+					hdr[6] = 4;
+					hdr[7] = 0;
+					for (int k = 0; k < 4; k++) {
+						memset(hdr + 8 + 12 * k, 0, 12);
+						memcpy(hdr + 8 + 12 * k + 8, &ay, 2);
+						memcpy(hdr + 8 + 12 * k + 10, &az, 2);
+					}
+					m += imu_frame(stream + m, 0x04, hdr, 8 + 48);
+					sq = (uint16_t)(sq + 4);
+					t += 4000;
+				}
+			}
+			imu_my = 0;
+			imu_parser_feed(&p, stream, m);
+			CHECK(input_motion()->cal.axes_set && fabsf(imu_my) < 1);
+			if (fabsf(imu_my) >= 1)
+				fprintf(stderr, "gap %.2f s: the view moved %.2f deg\n", (double)gaps[gi],
+					(double)imu_my);
+			input_set_motion_calibration(NULL);
+		}
+	}
+
 	/* neither: nothing to aim with, the samples are not used */
 	{
 		struct input_motion_info mi;
 
-		input_motion_sensor(&(struct input_motion_desc){ "MAG-1", "MAG", 0, 0, 0 });
+		input_motion_sensor(&(struct input_motion_desc){ "MAG-1", "MAG", 0, 0, 0, 1000 });
 		input_motion_info(&mi);
 		CHECK(!mi.aim_x && !mi.aim_y && !mi.channels);
 		imu_turned = 0;

@@ -73,21 +73,24 @@ void motion_can_aim(const struct motion *m, bool *x, bool *y)
 	*y = m->channels && m->cal.axes_set;
 }
 
-float motion_synth_setup(struct motion_synth *s, float accel_rms)
+float motion_synth_setup(struct motion_synth *s, float accel_rms, float rate_hz)
 {
-	float span = accel_rms > 0 ? accel_rms * MOTION_SYNTH_PER_G : MOTION_SYNTH_MAX_S;
+	/* the noise as at MOTION_SYNTH_REF_HZ: fewer samples, each counts more */
+	float n = accel_rms * (rate_hz > 0 ? sqrtf(MOTION_SYNTH_REF_HZ / rate_hz) : 1);
+	float span = n > 0 ? n * MOTION_SYNTH_PER_G : MOTION_SYNTH_MAX_S;
 
 	memset(s, 0, sizeof(*s));
 	s->span = span < MOTION_SYNTH_MIN_S ? MOTION_SYNTH_MIN_S : span > MOTION_SYNTH_MAX_S ? MOTION_SYNTH_MAX_S : span;
-	/* the turn of an "up" smoothed over 'span' seen 'span' apart, n g of
-	 * noise at about 1 kHz: about 3.85 n / span^1.5 deg/s (measured on a
-	 * real accelerometer at rest: 0.28 deg/s for 0.0022 g, span 0.1 s) */
-	return accel_rms > 0 ? 3.85f * accel_rms / powf(s->span, 1.5f) : 0;
+	/* the turn of an "up" smoothed over 'span' seen 'span' apart: about
+	 * 3.85 n / span^1.5 deg/s (measured on a real accelerometer at rest,
+	 * 1139 Hz: 0.28 deg/s for 0.0022 g, span 0.1 s) */
+	return n > 0 ? 3.85f * n / powf(s->span, 1.5f) : 0;
 }
 
 void motion_synth_reset(struct motion_synth *s)
 {
 	s->set = false;
+	s->dt_avg = 0;
 	s->count = 0;
 	s->head = 0;
 }
@@ -100,6 +103,10 @@ void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, f
 	gyro[0] = gyro[1] = gyro[2] = 0;
 	if (!normalize(a) || !(dt > 0))
 		return;
+	/* a gap (samples lost): "up" then is not now's */
+	if (s->set && ((s->span > 0 && dt > s->span) || (s->dt_avg > 0 && dt > MOTION_SYNTH_GAP * s->dt_avg)))
+		motion_synth_reset(s);
+	s->dt_avg = s->dt_avg > 0 ? s->dt_avg + (dt - s->dt_avg) * 0.01f : dt;
 	if (!s->set) {
 		memcpy(s->up, a, sizeof(s->up));
 		s->set = true;

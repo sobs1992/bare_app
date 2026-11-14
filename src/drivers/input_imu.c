@@ -3,8 +3,9 @@
  * ids of its device (/sys/class/tty/ttyACMn/device is the interface, its
  * parent the device), at start and on every "add" uevent of a tty; mdev
  * makes the node a little after the uevent, so the scan is retried a few
- * times. The port is raw, and poll() wakes only for a batch of samples at a
- * time (VMIN as long as the device's PKT_SAMPLES frames).
+ * times. The port is raw, and while samples flow poll() wakes only for a
+ * batch of them at a time (VMIN as long as the device's PKT_SAMPLES frames;
+ * 1 while none come).
  *
  * Opening the port sets DTR, which starts the stream; 's' asks for it too
  * and 'i' for the info and the status (the sensor, its units and rate). The
@@ -143,6 +144,7 @@ static void identify(struct imu_parser *p)
 		.id = id, .name = p->name,
 		.channels = (p->channels & 1 ? MOTION_CH_GYRO : 0) | (p->channels & 2 ? MOTION_CH_ACCEL : 0),
 		.gyro_noise = p->gyro_noise, .accel_noise = p->accel_noise,
+		.rate_hz = p->nominal_us > 0 ? 1e6f / p->nominal_us : 0,
 	};
 
 	snprintf(id, sizeof(id), "%s-%s", p->name, p->serial[0] ? p->serial : "noserial");
@@ -397,7 +399,8 @@ static void on_readable(int fd, short revents, void *ud)
 		h->info_seen = h->parser.info_seq;
 		h->told_rate = false;
 	}
-	if (n != 0 && h->parser.batch_bytes != h->vmin)
+	/* samples flowing: wake for a batch of them */
+	if (n != 0 && h->parser.samples != had && h->parser.batch_bytes != h->vmin)
 		set_vmin(h, h->parser.batch_bytes);
 	if (!h->live && h->parser.samples != had) {
 		h->live = true;
@@ -421,6 +424,8 @@ static void on_watch(void *ud)
 	}
 	h->live = h->parser.samples != h->seen;
 	h->seen = h->parser.samples;
+	if (!h->live)
+		set_vmin(h, 1);	/* no samples: a status alone wakes too */
 	report_present(h);
 	if (!h->told_rate && h->parser.period_measured) {
 		h->told_rate = true;
@@ -492,6 +497,7 @@ static bool open_port(struct imu *h, const char *tty)
 	memcpy(h->node, path, sizeof(h->node));
 	imu_parser_init(&h->parser);
 	memcpy(h->parser.serial, h->serial, sizeof(h->parser.serial));
+	input_motion_gap();	/* plugged in again: before its first samples */
 	h->vmin = 1;
 	h->seen = 0;
 	h->live = false;
