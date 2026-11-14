@@ -1,7 +1,8 @@
 /*
  * Settings kept in the config file (CTX_SETTINGS): the UI language, the
  * games in the order they were played, the controls hint at a game's
- * start, the stream, each game's own controls ("controls.<game_key()>").
+ * start, the stream, sleeping by hibernation, each game's own controls
+ * ("controls.<game_key()>").
  */
 #include <stdio.h>
 #include <string.h>
@@ -65,6 +66,14 @@ static void set_stream(bool on)
 	ctx_unlock(CTX_SETTINGS);
 }
 
+static void set_hibernate(bool on)
+{
+	struct gui_ctx *c = ctx_lock();
+
+	c->settings.hibernate = on;
+	ctx_unlock(CTX_SETTINGS);
+}
+
 /* ---- a game's own controls: "controls.<game_key()>" in the config ------ */
 
 #define CONTROLS_KEY "controls."
@@ -108,26 +117,32 @@ static void load_controls(const char *key, const char *value, void *ud)
 	gc->map = m;
 }
 
-/* One button of a game, or all back to the default (from < 0); kept in the config */
-static void set_control(const char *game, int from, int to)
+/* A change to the controls of a game, kept in the config: one button (from
+ * >= 0), one axis inverted or not (axis >= 0), or all back to the default */
+static void change_controls(const char *game, int from, int to, int axis, bool invert)
 {
 	struct gui_ctx *c;
 	struct game_controls *gc;
 	char key[sizeof(CONTROLS_KEY) + GAME_KEY_LEN], text[256];
-	bool keep;
+	bool keep, one = from >= 0 || axis >= 0;
 
-	if (!game_key_ok(game) || from >= GP_COUNT || to < GP_NONE || to >= GP_COUNT)
+	if (!game_key_ok(game) || from >= GP_COUNT || to < GP_NONE || to >= GP_COUNT ||
+	    axis >= GP_AXIS_COUNT)
 		return;
 	c = ctx_lock();
-	gc = controls_of(c, game, from >= 0);
+	gc = controls_of(c, game, one);
 	if (!gc) {
 		ctx_unlock(0);
-		if (from >= 0)
+		if (one)
 			LOGW(TAG, "no room for the controls of another game");
 		return;
 	}
 	if (from >= 0)
 		gc->map.to[from] = (int8_t)to;
+	else if (axis >= 0 && invert)
+		gc->map.invert |= (uint8_t)GP_BIT(axis);
+	else if (axis >= 0)
+		gc->map.invert &= (uint8_t)~GP_BIT(axis);
 	else
 		gp_remap_reset(&gc->map);
 	keep = !gp_remap_is_default(&gc->map);
@@ -151,6 +166,7 @@ static int settings_init(const struct control_env *env)
 	set_recent(recent ? recent : "");
 	set_game_hint(config_get_int("game_hint", 0));
 	set_stream(config_get_int("stream", 0));
+	set_hibernate(config_get_int("hibernate", 1));
 	config_each(CONTROLS_KEY, load_controls, ctx_lock());
 	ctx_unlock(CTX_SETTINGS);
 	return 0;
@@ -170,12 +186,21 @@ static void settings_action(const struct gui_action *a)
 		config_set_int("stream", !!a->arg);
 		return;
 	}
+	if (a->type == ACT_SET_HIBERNATE) {
+		set_hibernate(a->arg);
+		config_set_int("hibernate", !!a->arg);
+		return;
+	}
 	if (a->type == ACT_SET_CONTROL) {
-		set_control(a->str, ACT_CONTROL_FROM(a->arg), ACT_CONTROL_TO(a->arg));
+		change_controls(a->str, ACT_CONTROL_FROM(a->arg), ACT_CONTROL_TO(a->arg), -1, false);
+		return;
+	}
+	if (a->type == ACT_SET_INVERT) {
+		change_controls(a->str, -1, 0, ACT_INVERT_AXIS(a->arg), ACT_INVERT_ON(a->arg));
 		return;
 	}
 	if (a->type == ACT_RESET_CONTROLS) {
-		set_control(a->str, -1, 0);
+		change_controls(a->str, -1, 0, -1, false);
 		return;
 	}
 	if (!a->str[0] || strchr(a->str, ','))

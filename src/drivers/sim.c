@@ -7,6 +7,9 @@
 #include <unistd.h>
 
 #include "core/util.h"
+#ifdef CONFIG_POWER
+#include "sysfs.h"
+#endif
 
 /* ---- mixer: values in memory, no jack --------------------------------- */
 
@@ -248,3 +251,33 @@ const struct hal_wifi_ops wifi_sim = {
 	.set_enabled = wsim_set_enabled,
 	.close = wsim_close,
 };
+
+/* ---- battery: a power_supply directory of $BARE_APP_SIM_BATTERY ---------- */
+
+#ifdef CONFIG_POWER
+static struct power_sysfs_params sim_battery;
+
+static void *psim_open(const void *params)
+{
+	(void)params;
+	sim_battery.battery = getenv("BARE_APP_SIM_BATTERY");
+	return sim_battery.battery ? power_sysfs.open(&sim_battery) : NULL;
+}
+
+static int psim_read(void *h, struct hal_power_state *st)
+{
+	return power_sysfs.read(h, st);
+}
+
+static void psim_close(void *h)
+{
+	power_sysfs.close(h);
+}
+
+const struct hal_power_ops power_sim = {
+	.name = "power-sim",
+	.open = psim_open,
+	.read = psim_read,
+	.close = psim_close,
+};
+#endif

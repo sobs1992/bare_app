@@ -30,13 +30,20 @@ enum gui_action_type {
 	ACT_SET_GAME_HINT,	/* arg = 1 show the controls when a game starts, 0 not */
 	ACT_SET_CONTROL,	/* str = game_key(), arg = ACT_CONTROL_ARG(button, for the game) */
 	ACT_RESET_CONTROLS,	/* str = game_key(): its controls back to the default */
+	ACT_SET_INVERT,		/* str = game_key(), arg = ACT_INVERT_ARG(axis, inverted) */
 	ACT_SET_STREAM,		/* arg = 1 stream the screen and the sound, 0 not */
+	ACT_SET_HIBERNATE,	/* arg = 1 sleep by hibernating (platform hibernate), 0 not */
+	ACT_SET_CLOCK,		/* str = "YYYY-MM-DD hh:mm": the date and time to set */
 };
 
 /* ACT_SET_CONTROL: button of the device, enum gp_button it is for the game (GP_NONE: none) */
 #define ACT_CONTROL_ARG(from, to) ((from) | ((to) + 1) << 8)
 #define ACT_CONTROL_FROM(arg) ((arg) & 0xff)
 #define ACT_CONTROL_TO(arg) (((arg) >> 8) - 1)
+/* ACT_SET_INVERT: enum gp_axis, the game gets it the other way round or not */
+#define ACT_INVERT_ARG(axis, on) ((axis) | !!(on) << 8)
+#define ACT_INVERT_AXIS(arg) ((arg) & 0xff)
+#define ACT_INVERT_ON(arg) (((arg) >> 8) & 1)
 
 struct gui_action {
 	enum gui_action_type type;

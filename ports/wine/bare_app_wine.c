@@ -11,8 +11,11 @@
  * of every Wine process connects there and hands over the pixels of its
  * windows (winebare_proto.h); they are put together into one Windows
  * screen of the display mode, the cursor drawn over it, and the screen
- * scaled into bare_app's frame. bare_app's buttons and sticks become mouse
- * and keyboard input after the [keys] of wine.ini.
+ * scaled into bare_app's frame. While bare_app streams the screen, a
+ * Windows screen bigger than the frame goes to the stream as it is, the
+ * cursor drawn over it (game_ipc.h: the game's own picture). bare_app's
+ * buttons and sticks become mouse and keyboard input after the [keys] of
+ * wine.ini.
  *
  * Only pixels and input cross over: no code of Wine is linked here.
  */
@@ -52,6 +55,7 @@ extern char **environ;
 #define MAX_ENV 32
 #define TICK_NS (1000000000L / 60)	/* frames and cursor moves at most 60 a second */
 #define STICK_DEAD 0.15f		/* stick deflection taken as rest */
+#define FULL_CHECK_MS 500		/* whether the stream wants the screen, when idle */
 #define WINEBOOT_ENV "WINEDLLOVERRIDES=mscoree,mshtml="	/* no Mono or Gecko dialogs */
 
 static void msg(const char *fmt, ...)
@@ -979,22 +983,22 @@ static inline uint32_t over(uint32_t under, uint32_t p)
 	return out;
 }
 
-/* The cursor over the frame, at the frame's own pixels (as sharp as its
- * picture), its hotspot at (fx, fy) */
-static void draw_cursor(uint8_t *frame, int fx, int fy)
+/* The cursor over a w x h picture of stride bytes a row, at the picture's
+ * own pixels (as sharp as its picture), its hotspot at (fx, fy) */
+static void draw_cursor(uint8_t *pic, int pw, int ph, size_t stride, int fx, int fy)
 {
-	int fw = (int)app.shm->width, fh = (int)app.shm->height, x, y;
+	int x, y;
 	int w = cursor_pic ? cursor_w : 12, h = cursor_pic ? cursor_h : 19;
 	int x0 = fx - (cursor_pic ? cursor_hx : 0), y0 = fy - (cursor_pic ? cursor_hy : 0);
 
 	for (y = 0; y < h; y++) {
 		uint32_t *out;
 
-		if (y0 + y < 0 || y0 + y >= fh)
+		if (y0 + y < 0 || y0 + y >= ph)
 			continue;
-		out = (uint32_t *)(frame + (size_t)(y0 + y) * app.shm->stride);
+		out = (uint32_t *)(pic + (size_t)(y0 + y) * stride);
 		for (x = 0; x < w; x++) {
-			if (x0 + x < 0 || x0 + x >= fw)
+			if (x0 + x < 0 || x0 + x >= pw)
 				continue;
 			if (cursor_pic) {
 				uint32_t p = cursor_pic[(size_t)y * w + x];
@@ -1051,7 +1055,34 @@ static void put_frame(void)
 		fy = dst_y + (int)(((int)cur_y * 2 + 1) * (int64_t)dst_h / (2 * (int64_t)mode.height));
 	}
 	if (cursor_shown)
-		draw_cursor(frame, fx, fy);
+		draw_cursor(frame, fw, fh, app.shm->stride, fx, fy);
+}
+
+/*
+ * bare_app's stream wants the screen as Windows has it (game_ipc.h) when
+ * it is bigger than the frame: Pirates!' 800x600, not the 640x480 it is
+ * taken down to. The whole screen, the magnifier on or not.
+ */
+static bool full_wanted(void)
+{
+	return screen && (mode.width > app.shm->width || mode.height > app.shm->height) &&
+	       game_link_full_wanted(&app, mode.width, mode.height);
+}
+
+static bool full_given;		/* with the last frame published */
+
+static void put_full(void)
+{
+	uint32_t *full = game_link_full(&app);
+	size_t stride = (size_t)app.shm->full_width * 4;
+	int y;
+
+	for (y = 0; y < (int)mode.height; y++)
+		memcpy((uint8_t *)full + (size_t)y * stride, screen + (size_t)y * mode.width,
+		       (size_t)mode.width * 4);
+	if (cursor_shown)
+		draw_cursor((uint8_t *)full, mode.width, mode.height, stride, (int)cur_x, (int)cur_y);
+	game_link_full_publish(&app, mode.width, mode.height);
 }
 
 static int publish(void)
@@ -1062,6 +1093,9 @@ static int publish(void)
 	else
 		take_down();
 	put_frame();
+	full_given = full_wanted();
+	if (full_given)
+		put_full();
 	dirty = false;
 	return game_link_publish(&app);
 }
@@ -2193,11 +2227,15 @@ int main(int argc, char **argv)
 		first_client = n;
 		for (i = 0; i < (int)client_count; i++)
 			pfd[n++] = (struct pollfd){ .fd = clients[i].fd, .events = POLLIN };
-		if (poll(pfd, n, -1) < 0) {
+		/* the stream may start wanting the screen over a still picture:
+		 * looked at twice a second */
+		if (poll(pfd, n, app.shm->full_width ? FULL_CHECK_MS : -1) < 0) {
 			if (errno == EINTR)
 				continue;
 			break;
 		}
+		if (!full_given && !dirty && full_wanted())
+			dirty = true;
 		if (pfd[0].revents && !read_app()) {
 			msg("bare_app is gone");
 			break;

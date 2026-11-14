@@ -232,6 +232,19 @@ static void test_remap(void)
 	CHECK(gp_remap_parse(&m, "a=zz,qq=b,l1=r1,") == -1);
 	CHECK(gp_remap_apply(&m, GP_A) == GP_A && gp_remap_apply(&m, GP_L1) == GP_R1);
 	CHECK(gp_remap_parse(&m, NULL) == 0 && gp_remap_is_default(&m));
+	/* inverted axes: the value the other way round, the left stick's
+	 * directions swapped with them */
+	CHECK(gp_remap_parse(&m, "a=b,ly=invert,rx=invert") == 0 && !gp_remap_is_default(&m));
+	CHECK(m.invert == (GP_BIT(GP_AXIS_LY) | GP_BIT(GP_AXIS_RX)));
+	CHECK(gp_remap_axis(&m, GP_AXIS_LY, 0.5f) == -0.5f && gp_remap_axis(&m, GP_AXIS_LX, 0.5f) == 0.5f);
+	CHECK(gp_remap_axis(&m, GP_AXIS_RX, -1) == 1 && gp_remap_axis(&m, GP_AXIS_RY, -1) == -1);
+	CHECK(gp_remap_stick_dir(&m, GP_UP) == GP_DOWN && gp_remap_stick_dir(&m, GP_DOWN) == GP_UP);
+	CHECK(gp_remap_stick_dir(&m, GP_LEFT) == GP_LEFT && gp_remap_stick_dir(&m, GP_A) == GP_A);
+	CHECK(gp_remap_format(&m, buf, sizeof(buf)) && !strcmp(buf, "a=b,ly=invert,rx=invert"));
+	CHECK(gp_remap_parse(&m, "lx=invert") == 0 && gp_remap_stick_dir(&m, GP_RIGHT) == GP_LEFT);
+	CHECK(gp_remap_parse(&m, "ly=on,ry=invert") == -1 && m.invert == GP_BIT(GP_AXIS_RY));
+	m.invert = 0;
+	CHECK(gp_remap_is_default(&m));
 }
 
 struct rtp_capture {

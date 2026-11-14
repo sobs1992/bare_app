@@ -1,6 +1,9 @@
 /* Small control modules: application lifetime, navigation, system info. */
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "control.h"
 #include "core/log.h"
@@ -86,7 +89,9 @@ const struct control_ops ctl_nav = {
 	.on_action = nav_action,
 };
 
-/* ---- system: what we run on ------------------------------------------- */
+/* ---- system: what we run on, its clock --------------------------------- */
+
+static const char *clock_cmd;
 
 static int system_init(const struct control_env *env)
 {
@@ -95,11 +100,52 @@ static int system_init(const struct control_env *env)
 	snprintf(c->system.platform, sizeof(c->system.platform), "%s", env->pf->name);
 	/* "" when unknown: wording is the view's business */
 	snprintf(c->system.model, sizeof(c->system.model), "%s", platform_model());
+	c->system.can_hibernate = env->pf->hibernate != NULL;
+	c->system.can_set_clock = env->pf->clock != NULL;
+	clock_cmd = env->pf->clock;
 	ctx_unlock(CTX_SYSTEM);
 	return 0;
+}
+
+/* "<clock> set 'YYYY-MM-DD hh:mm'": the system time and the RTC */
+static void set_clock(const char *when)
+{
+	int y, mo, d, h, mi, n = 0, status;
+	pid_t pid;
+
+	if (!clock_cmd)
+		return;
+	if (sscanf(when, "%4d-%2d-%2d %2d:%2d%n", &y, &mo, &d, &h, &mi, &n) != 5 ||
+	    when[n] || y < 2000 || mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59) {
+		LOGW("system", "bad date and time \"%s\"", when);
+		return;
+	}
+	pid = fork();
+	if (pid < 0) {
+		LOGW("system", "fork: %s", strerror(errno));
+		return;
+	}
+	if (pid == 0) {
+		execl(clock_cmd, clock_cmd, "set", when, (char *)NULL);
+		_exit(127);
+	}
+	while (waitpid(pid, &status, 0) < 0)
+		if (errno != EINTR)
+			return;
+	if (!WIFEXITED(status) || WEXITSTATUS(status))
+		LOGW("system", "%s set failed (status %#x)", clock_cmd, status);
+	else
+		LOGI("system", "date and time set: %s", when);
+}
+
+static void system_action(const struct gui_action *a)
+{
+	if (a->type == ACT_SET_CLOCK)
+		set_clock(a->str);
 }
 
 const struct control_ops ctl_system = {
 	.name = "system",
 	.init = system_init,
+	.on_action = system_action,
 };

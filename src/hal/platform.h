@@ -44,6 +44,12 @@ struct platform {
 	/* Run for a short press of the power key: puts the device to sleep and
 	 * returns once it has woken up. NULL: the key does nothing. */
 	const char *suspend;
+	/* Run instead of suspend when the hibernation setting is on (the
+	 * default): the device sleeps turned off. NULL: no such setting. */
+	const char *hibernate;
+	/* Sets the date and time: "<cmd> set 'YYYY-MM-DD hh:mm'" (the SDK's
+	 * /usr/sbin/rtc-clock, the battery-backed RTC too). NULL: only shown. */
+	const char *clock;
 	/* Shares the games partition as a USB disk: "<cmd> start|status|stop"
 	 * (the SDK's /usr/sbin/usb-disk). NULL: no USB disk screen. */
 	const char *usb_disk;

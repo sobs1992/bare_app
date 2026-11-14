@@ -50,6 +50,9 @@ const struct platform platform_pc = {
 #ifdef CONFIG_WIFI
 	.wifi = { &wifi_sim, NULL },
 #endif
+#ifdef CONFIG_POWER
+	.power = { &power_sim, NULL },
+#endif
 	.quit_combo = GP_BIT(GP_F6),
 	.config_path = "~/.config/bare_app.conf",
 };
@@ -67,6 +70,9 @@ const struct platform platform_pc_mem = {
 #ifdef CONFIG_WIFI
 	.wifi = { &wifi_sim, NULL },
 #endif
+#ifdef CONFIG_POWER
+	.power = { &power_sim, NULL },
+#endif
 	.quit_combo = GP_BIT(GP_F6),
 };
 
@@ -82,6 +88,9 @@ const struct platform platform_pc_wide = {
 #endif
 #ifdef CONFIG_WIFI
 	.wifi = { &wifi_sim, NULL },
+#endif
+#ifdef CONFIG_POWER
+	.power = { &power_sim, NULL },
 #endif
 	.quit_combo = GP_BIT(GP_F6),
 };

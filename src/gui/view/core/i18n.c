@@ -184,7 +184,7 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_CONTROLS]        = { "Controls" RU("Управление") },
 	[S_RESET]           = { "Reset" RU("Сбросить") },
 	[S_DEFAULT]         = { "Default" RU("Как было") },
-	[S_CONTROLS_RESET_ALL] = { "All buttons as they were" RU("Все кнопки как были") },
+	[S_CONTROLS_RESET_ALL] = { "All controls as they were" RU("Всё управление как было") },
 	[S_STREAM]          = { "Stream (RTSP)" RU("Трансляция (RTSP)") },
 	[S_STREAM_FAILED]   = { "did not start" RU("не запустилась") },
 	[S_LEFT_STICK]      = { "Left stick" RU("Левый стик") },
@@ -194,6 +194,12 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_SNAPBACK]        = { "Snap back" RU("Возврат в центр") },
 	[S_SAVE]            = { "Save" RU("Сохранить") },
 	[S_STICK_TUNE_SAVED] = { "Stick settings saved" RU("Настройки стиков сохранены") },
+	[S_INVERT_X]        = { "invert X" RU("инверсия X") },
+	[S_INVERT_Y]        = { "invert Y" RU("инверсия Y") },
+	[S_BATTERY_PLUG_IN] = { "Plug the charger in" RU("Подключите зарядку") },
+	[S_HIBERNATE]       = { "Hibernation" RU("Гибернация") },
+	[S_DATE_TIME]       = { "Date and time" RU("Дата и время") },
+	[S_FIELD]           = { "Field" RU("Поле") },
 };
 
 static int lang = LANG_EN;

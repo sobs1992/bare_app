@@ -23,11 +23,12 @@
 #include "game_ipc.h"
 
 #define TAG "game"
-/* Room for the game's own picture (game_ipc.h) for the stream; a memfd
+/* Room for the game's own picture (game_ipc.h) for the stream, as big as
+ * the hardware encoders take (VCMI's 1708x960 on the GO Ultra); a memfd
  * takes memory only for what the game writes into it */
 #ifdef CONFIG_STREAM
-#define GAME_FULL_WIDTH 1280
-#define GAME_FULL_HEIGHT 960
+#define GAME_FULL_WIDTH 1920
+#define GAME_FULL_HEIGHT 1088
 #else
 #define GAME_FULL_WIDTH 0
 #define GAME_FULL_HEIGHT 0

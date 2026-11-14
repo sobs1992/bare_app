@@ -5,15 +5,18 @@
  * group gets them as keys, port_input_set_2d()); Right or A goes into the
  * settings, Left or B back to the categories, B there closes the screen.
  * In the settings Left and Right move a slider, A changes a choice or
- * opens the screen of a link.
+ * opens the screen of a link. A on the date and time edits it in its row:
+ * Left and Right choose a field, Up and Down change it, A sets the clock,
+ * B leaves it as it was.
  *
  *   Screen    brightness (CTX_DISPLAY)
  *   Sound     volume, output (CTX_AUDIO)
  *   Internet  the Wi-Fi network: opens the Wi-Fi screen; the address (CTX_WIFI);
  *             the stream on or off, its address and viewers (CONFIG_STREAM)
  *   Games     the controls hint when a game starts (CTX_SETTINGS)
- *   System    language (CTX_SETTINGS), device, platform (CTX_SYSTEM),
- *             battery (CTX_POWER)
+ *   System    language (CTX_SETTINGS), date and time (set if the platform
+ *             can: CTX_SYSTEM), hibernation (CTX_SETTINGS, if the platform
+ *             has it), device, platform (CTX_SYSTEM), battery (CTX_POWER)
  *
  * Only the chosen category's rows exist; it is kept while the application
  * runs, so the screen rebuilt in another language shows the same one.
@@ -22,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "../widget.h"
 #include "gui/action.h"
@@ -34,16 +38,20 @@
 #define ROW_CELLS 2	/* a category, a setting at least */
 
 enum row_id {
-	R_BRIGHTNESS, R_VOLUME, R_OUTPUT, R_WIFI, R_IP, R_STREAM, R_GAME_HINT, R_LANG, R_DEVICE, R_PLATFORM,
-	R_BATTERY, R_COUNT
+	R_BRIGHTNESS, R_VOLUME, R_OUTPUT, R_WIFI, R_IP, R_STREAM, R_GAME_HINT, R_LANG, R_CLOCK,
+	R_HIBERNATE, R_DEVICE, R_PLATFORM, R_BATTERY, R_COUNT
 };
 
 enum row_kind {
 	ROW_SLIDER,	/* Left, Right */
 	ROW_CHOICE,	/* A: the next value */
 	ROW_LINK,	/* A: another screen */
+	ROW_CLOCK,	/* A: edited in place */
 	ROW_INFO,	/* not focusable */
 };
+
+/* The date and time as edited, in the order shown */
+enum { CLOCK_DAY, CLOCK_MONTH, CLOCK_YEAR, CLOCK_HOUR, CLOCK_MINUTE, CLOCK_FIELDS };
 
 struct settings;
 
@@ -71,7 +79,12 @@ struct settings {
 	enum audio_output output;
 	bool game_hint;
 	bool stream;
+	bool hibernate;
 	lv_timer_t *viewers;	/* the stream's row: its viewers change */
+	lv_timer_t *clock;	/* the date and time row: the time goes on */
+	bool editing;		/* the date and time, in its row */
+	int field;		/* CLOCK_DAY... */
+	int edit[CLOCK_FIELDS];
 };
 
 static int kept_cat;	/* the category last shown */
@@ -113,6 +126,114 @@ static void show_slider(struct row *r, int percent)
 	ui_set_text(r->value, text);
 }
 
+/* ---- the date and time ---------------------------------------------------- */
+
+static int days_in(int month, int year)
+{
+	static const int days[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+	bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+
+	return month == 2 && leap ? 29 : days[month - 1];
+}
+
+/* The row's text: the time now, or the one edited with its field marked */
+static void show_clock(struct settings *s)
+{
+	struct row *r = &s->rows[R_CLOCK];
+	const int *v = s->edit;
+	int now[CLOCK_FIELDS];
+	char part[CLOCK_FIELDS][24], text[160];
+	time_t t = time(NULL);
+	struct tm tm;
+	int i;
+
+	if (!r->obj)
+		return;
+	if (!s->editing) {
+		localtime_r(&t, &tm);
+		now[CLOCK_DAY] = tm.tm_mday;
+		now[CLOCK_MONTH] = tm.tm_mon + 1;
+		now[CLOCK_YEAR] = tm.tm_year + 1900;
+		now[CLOCK_HOUR] = tm.tm_hour;
+		now[CLOCK_MINUTE] = tm.tm_min;
+		v = now;
+	}
+	for (i = 0; i < CLOCK_FIELDS; i++) {
+		const char *fmt = i == CLOCK_YEAR ? "%04d" : "%02d";
+		char num[8];
+
+		snprintf(num, sizeof(num), fmt, v[i]);
+		if (s->editing && i == s->field)
+			snprintf(part[i], sizeof(part[i]), "#%06x %s#",
+				 (unsigned)(lv_color_to_u32(UI_COLOR_ACCENT) & 0xffffff), num);
+		else
+			snprintf(part[i], sizeof(part[i]), "%s", num);
+	}
+	snprintf(text, sizeof(text), "%s.%s.%s  %s:%s", part[CLOCK_DAY], part[CLOCK_MONTH],
+		 part[CLOCK_YEAR], part[CLOCK_HOUR], part[CLOCK_MINUTE]);
+	ui_set_text(r->value, text);
+}
+
+static void row_hints(struct row *r);
+
+static void clock_edit(struct settings *s, bool on)
+{
+	time_t t = time(NULL);
+	struct tm tm;
+
+	s->editing = on;
+	if (on) {
+		localtime_r(&t, &tm);
+		s->edit[CLOCK_DAY] = tm.tm_mday;
+		s->edit[CLOCK_MONTH] = tm.tm_mon + 1;
+		/* a clock never set says 1970 or so */
+		s->edit[CLOCK_YEAR] = tm.tm_year + 1900 < 2026 ? 2026 : tm.tm_year + 1900;
+		s->edit[CLOCK_HOUR] = tm.tm_hour;
+		s->edit[CLOCK_MINUTE] = tm.tm_min;
+		s->field = CLOCK_DAY;
+	}
+	lv_obj_set_style_text_color(s->rows[R_CLOCK].value, on ? lv_color_white() : UI_COLOR_DIM, 0);
+	show_clock(s);
+	row_hints(&s->rows[R_CLOCK]);
+}
+
+/* Up, Down: the field by one, round */
+static void clock_step(struct settings *s, int dir)
+{
+	static const int lo[CLOCK_FIELDS] = { 1, 1, 2000, 0, 0 };
+	int hi[CLOCK_FIELDS] = { 0, 12, 2099, 23, 59 }, *v = s->edit, f = s->field;
+
+	hi[CLOCK_DAY] = days_in(v[CLOCK_MONTH], v[CLOCK_YEAR]);
+	v[f] += dir;
+	if (v[f] > hi[f])
+		v[f] = lo[f];
+	else if (v[f] < lo[f])
+		v[f] = hi[f];
+	/* 31.01 -> February: the 28th or 29th */
+	if (v[CLOCK_DAY] > days_in(v[CLOCK_MONTH], v[CLOCK_YEAR]))
+		v[CLOCK_DAY] = days_in(v[CLOCK_MONTH], v[CLOCK_YEAR]);
+	show_clock(s);
+}
+
+static void clock_set(struct settings *s)
+{
+	char when[24];
+
+	snprintf(when, sizeof(when), "%04d-%02d-%02d %02d:%02d", s->edit[CLOCK_YEAR],
+		 s->edit[CLOCK_MONTH], s->edit[CLOCK_DAY], s->edit[CLOCK_HOUR], s->edit[CLOCK_MINUTE]);
+	gui_action_post_str(ACT_SET_CLOCK, when);
+}
+
+static void on_clock(lv_timer_t *t)
+{
+	struct settings *s = lv_timer_get_user_data(t);
+
+	if (!s->editing)
+		show_clock(s);
+}
+
+/* ---- rows --------------------------------------------------------------- */
+
 /* A or Left, Right (dir 0: A) on a row */
 static void row_change(struct row *r, int dir)
 {
@@ -151,6 +272,15 @@ static void row_change(struct row *r, int dir)
 	case R_STREAM:
 		gui_action_post(ACT_SET_STREAM, !s->stream);
 		break;
+	case R_HIBERNATE:
+		gui_action_post(ACT_SET_HIBERNATE, !s->hibernate);
+		break;
+	case R_CLOCK:
+		/* A: edit; A while editing: set (the time shown from then on) */
+		if (s->editing)
+			clock_set(s);
+		clock_edit(s, !s->editing);
+		break;
 	case R_WIFI:
 		kept_row = R_WIFI;
 		gui_action_post(ACT_OPEN_SCREEN, SCREEN_WIFI);
@@ -166,7 +296,10 @@ static void row_hints(struct row *r)
 
 	if (r->kind == ROW_SLIDER && !lv_obj_is_hidden(r->slider))
 		footer_set(r->s->footer, LV_SYMBOL_LEFT LV_SYMBOL_RIGHT, tr(S_CHANGE), "B", back, NULL);
-	else if (r->kind == ROW_CHOICE)
+	else if (r->kind == ROW_CLOCK && r->s->editing)
+		footer_set(r->s->footer, LV_SYMBOL_LEFT LV_SYMBOL_RIGHT, tr(S_FIELD),
+			   LV_SYMBOL_UP LV_SYMBOL_DOWN, tr(S_CHANGE), "B", tr(S_CANCEL), "A", tr(S_SAVE), NULL);
+	else if (r->kind == ROW_CHOICE || r->kind == ROW_CLOCK)
 		footer_set(r->s->footer, "B", back, "A", tr(S_CHANGE), NULL);
 	else if (r->kind == ROW_LINK)
 		footer_set(r->s->footer, "B", back, "A", tr(S_OK), NULL);
@@ -187,6 +320,25 @@ static void on_row_key(lv_event_t *e)
 	struct row *r = lv_event_get_user_data(e);
 	lv_obj_t *to;
 
+	if (r->kind == ROW_CLOCK && r->s->editing) {
+		struct settings *s = r->s;
+
+		switch (lv_event_get_key(e)) {
+		case LV_KEY_UP:
+		case LV_KEY_DOWN:
+			clock_step(s, lv_event_get_key(e) == LV_KEY_UP ? 1 : -1);
+			break;
+		case LV_KEY_LEFT:
+		case LV_KEY_RIGHT:
+			s->field += lv_event_get_key(e) == LV_KEY_RIGHT ? 1 : -1;
+			s->field = s->field < 0 ? 0 : s->field >= CLOCK_FIELDS ? CLOCK_FIELDS - 1 : s->field;
+			show_clock(s);
+			break;
+		default:
+			break;
+		}
+		return;
+	}
 	switch (lv_event_get_key(e)) {
 	case LV_KEY_UP:
 	case LV_KEY_DOWN:
@@ -213,13 +365,26 @@ static void on_row_click(lv_event_t *e)
 	row_change(lv_event_get_user_data(e), 0);
 }
 
-/* B in the settings: back to the categories, not out of the screen */
+/* B in the settings: back to the categories, not out of the screen; while
+ * the date and time is edited: the edit is dropped */
 static void on_row_cancel(lv_event_t *e)
 {
 	struct row *r = lv_event_get_user_data(e);
 
 	port_input_take_back();
-	focus_cat(r->s);
+	if (r->kind == ROW_CLOCK && r->s->editing)
+		clock_edit(r->s, false);
+	else
+		focus_cat(r->s);
+}
+
+/* The focus went elsewhere (a row hidden by a change): the edit with it */
+static void on_row_defocused(lv_event_t *e)
+{
+	struct row *r = lv_event_get_user_data(e);
+
+	if (r->kind == ROW_CLOCK && r->s->editing)
+		clock_edit(r->s, false);
 }
 
 static lv_obj_t *label_new(lv_obj_t *parent, lv_color_t color)
@@ -258,6 +423,8 @@ static struct row *row_new(struct settings *s, enum row_id id, enum row_kind kin
 	label = label_new(o, lv_color_white());
 	lv_label_set_text(label, tr(name));
 	r->value = label_new(o, kind == ROW_CHOICE ? UI_COLOR_ACCENT : UI_COLOR_DIM);
+	if (kind == ROW_CLOCK)
+		lv_label_set_recolor(r->value, true);	/* the field edited */
 	lv_obj_set_style_max_width(r->value, LV_PCT(100), 0);
 	lv_label_set_long_mode(r->value, LV_LABEL_LONG_MODE_WRAP);
 
@@ -287,6 +454,7 @@ static struct row *row_new(struct settings *s, enum row_id id, enum row_kind kin
 		lv_obj_add_event_cb(o, on_row_key, LV_EVENT_KEY, r);
 		lv_obj_add_event_cb(o, on_row_click, LV_EVENT_CLICKED, r);
 		lv_obj_add_event_cb(o, on_row_cancel, LV_EVENT_CANCEL, r);
+		lv_obj_add_event_cb(o, on_row_defocused, LV_EVENT_DEFOCUSED, r);
 	}
 	return r;
 }
@@ -329,8 +497,14 @@ static void build_games(struct settings *s)
 
 static void build_system(struct settings *s)
 {
+	const struct gui_ctx *c = view_ctx();
+
 	if (i18n_count() > 1)
 		row_new(s, R_LANG, ROW_CHOICE, S_LANGUAGE);
+	row_new(s, R_CLOCK, c && c->system.can_set_clock ? ROW_CLOCK : ROW_INFO, S_DATE_TIME);
+	show_clock(s);
+	if (c && c->system.can_hibernate)
+		row_new(s, R_HIBERNATE, ROW_CHOICE, S_HIBERNATE);
 	row_new(s, R_DEVICE, ROW_INFO, S_DEVICE);
 	row_new(s, R_PLATFORM, ROW_INFO, S_PLATFORM);
 	row_new(s, R_BATTERY, ROW_INFO, S_BATTERY);
@@ -364,6 +538,7 @@ static void show_cat(struct settings *s, int i)
 	lv_obj_remove_state(s->cats[s->cat], LV_STATE_CHECKED);
 	s->cat = kept_cat = i;
 	lv_obj_add_state(s->cats[i], LV_STATE_CHECKED);
+	s->editing = false;
 	lv_obj_clean(s->panel);		/* its rows leave the group too */
 	memset(s->rows, 0, sizeof(s->rows));
 	s->shown_brightness = -2;
@@ -537,6 +712,7 @@ static void *settings_init(lv_obj_t *parent, lv_obj_t **root)
 #ifdef CONFIG_STREAM
 	s->viewers = lv_timer_create(on_viewers, 1000, s);
 #endif
+	s->clock = lv_timer_create(on_clock, 1000, s);
 	*root = scr;
 	return s;
 }
@@ -607,6 +783,10 @@ static void update_system(struct settings *s, const struct gui_ctx *c)
 
 	if (s->rows[R_LANG].obj)
 		ui_set_text(s->rows[R_LANG].value, tr(S_LANG_NAME));
+	if (s->rows[R_HIBERNATE].obj) {
+		s->hibernate = c->settings.hibernate;
+		ui_set_text(s->rows[R_HIBERNATE].value, tr(s->hibernate ? S_ON : S_OFF));
+	}
 	lv_obj_set_hidden(s->rows[R_DEVICE].obj, !c->system.model[0]);
 	ui_set_text(s->rows[R_DEVICE].value, c->system.model);
 	ui_set_text(s->rows[R_PLATFORM].value, c->system.platform);
@@ -692,6 +872,8 @@ static void settings_deinit(void *self)
 
 	if (s->viewers)
 		lv_timer_delete(s->viewers);
+	if (s->clock)
+		lv_timer_delete(s->clock);
 	if (port_input_2d() == s->group)
 		port_input_set_2d(NULL);
 	/* LVGL deletes the children after this: none of them may take the

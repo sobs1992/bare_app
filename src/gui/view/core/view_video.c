@@ -425,12 +425,14 @@ int view_video_set(enum video_source src)
 #define STREAM_KBPS 3000
 #define STREAM_PORT 8554
 
-/* The game's own picture (game_ipc.h) can be bigger than the screen */
-#define STREAM_MAX_WIDTH 1280
-#define STREAM_MAX_HEIGHT 960
+/* The game's own picture (game_ipc.h) can be bigger than the screen: up
+ * to what the hardware encoders take (meson-venc, rk-vepu-h264) */
+#define STREAM_MAX_WIDTH 1920
+#define STREAM_MAX_HEIGHT 1088
 
 /* The picture of a game in front as it drew it, before it was taken down to
- * the screen, if it gives one (VCMI); NULL otherwise */
+ * the screen, if it gives one (VCMI, Windows games, SDL games drawn bigger
+ * than the screen); NULL otherwise */
 static const struct hal_fb *game_full(bool watched)
 {
 #ifdef HAVE_GAMES

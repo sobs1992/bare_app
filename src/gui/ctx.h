@@ -103,6 +103,8 @@ struct gui_ctx {
 	struct {
 		char platform[16];
 		char model[64];
+		bool can_hibernate;	/* the platform has a hibernate command */
+		bool can_set_clock;	/* ...a command setting the date and time */
 	} system;
 	struct {
 		char lang[16];		/* UI language code, "en", "ru"... */
@@ -110,6 +112,7 @@ struct gui_ctx {
 		char recent[RECENT_MAX * 9];
 		bool game_hint;		/* the controls hint when a game starts */
 		bool stream;		/* the screen and the sound over RTSP (the view runs it) */
+		bool hibernate;		/* sleep by hibernating (system.can_hibernate) */
 		int ncontrols;
 		struct game_controls controls[CONTROLS_MAX];
 	} settings;

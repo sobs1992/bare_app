@@ -1,6 +1,7 @@
 /*
  * Power: battery state into CTX_POWER, low battery and charger as
- * notifications; sleep (ACT_SUSPEND) through the platform's command.
+ * notifications; sleep (ACT_SUSPEND) through the platform's command, its
+ * hibernate one while the setting says so.
  */
 #include <errno.h>
 #include <stddef.h>
@@ -21,7 +22,7 @@
 #define LOW_BATTERY 15
 
 static int sub;
-static const char *suspend_cmd;
+static const char *suspend_cmd, *hibernate_cmd;
 static struct hal_power_state prev;
 static bool have_prev;
 
@@ -54,6 +55,7 @@ static int power_init(const struct control_env *env)
 	struct gui_ctx *c = ctx_lock();
 
 	suspend_cmd = env->pf->suspend;
+	hibernate_cmd = env->pf->hibernate;
 	c->power.available = power_available();
 	ctx_unlock(CTX_POWER);
 	sub = bus_subscribe(EV_POWER_CHANGED, on_power, NULL);
@@ -62,7 +64,7 @@ static int power_init(const struct control_env *env)
 
 /* The command returns once the device has woken up; the control thread
  * waits for it, nothing else happens meanwhile anyway */
-static int run_suspend(void)
+static int run_suspend(const char *cmd)
 {
 	int status;
 	pid_t pid = fork();
@@ -72,14 +74,14 @@ static int run_suspend(void)
 		return -1;
 	}
 	if (pid == 0) {
-		execl(suspend_cmd, suspend_cmd, (char *)NULL);
+		execl(cmd, cmd, (char *)NULL);
 		_exit(127);
 	}
 	while (waitpid(pid, &status, 0) < 0)
 		if (errno != EINTR)
 			return -1;
 	if (!WIFEXITED(status) || WEXITSTATUS(status)) {
-		LOGW(TAG, "%s failed (status %#x)", suspend_cmd, status);
+		LOGW(TAG, "%s failed (status %#x)", cmd, status);
 		return -1;
 	}
 	return 0;
@@ -92,8 +94,14 @@ static void power_action(const struct gui_action *a)
 	if (a->type != ACT_SUSPEND)
 		return;
 	if (suspend_cmd) {
-		LOGI(TAG, "going to sleep: %s", suspend_cmd);
-		ret = run_suspend();
+		const char *cmd = suspend_cmd;
+		struct gui_ctx *c = ctx_lock();
+
+		if (hibernate_cmd && c->settings.hibernate)
+			cmd = hibernate_cmd;
+		ctx_unlock(0);
+		LOGI(TAG, "going to sleep: %s", cmd);
+		ret = run_suspend(cmd);
 		LOGI(TAG, ret == 0 ? "woken up" : "did not sleep");
 	}
 	gui_notify_post(NOTIFY_RESUMED, ret);

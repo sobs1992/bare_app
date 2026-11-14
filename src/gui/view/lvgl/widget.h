@@ -37,6 +37,8 @@ lv_obj_t *statusbar_create(lv_obj_t *parent, const char *symbol, const char *tit
 /* screens/ */
 extern const struct widget_ops home_screen, settings_screen, input_test_screen, layers_screen,
 	game_screen, wifi_screen, wifi_key_screen, usb_disk_screen, controls_screen;
+/* A game screen is up: it says a low battery itself (screens/game.c) */
+bool game_screen_battery(void);
 
 /* widgets/console.c: what every screen shares (the grid: lvgl_view.h) */
 /* A new screen: the background, the header with symbol and title, a line under it */
