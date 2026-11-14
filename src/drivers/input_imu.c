@@ -266,6 +266,12 @@ static void on_frame(struct imu_parser *p, uint8_t type, const uint8_t *f, uint8
 		on_status(p, f);
 	} else if (type == PKT_INFO && len == INFO_LEN) {
 		on_info(p, f);
+	} else if (type == PKT_INFO) {
+		/* another layout: the firmware is older or newer than this */
+		if (p->bad_info != len)
+			LOGW(TAG, "sensor info of %u bytes, %u expected: update the sensor's firmware "
+			     "or bare_app", len, INFO_LEN);
+		p->bad_info = len;
 	} else if (type == PKT_SAMPLES && len >= SAMPLES_HDR && p->have_info && p->imu_id &&
 		   p->proto == PROTO &&
 		   len == SAMPLES_HDR + SAMPLE_LEN * f[6]) {

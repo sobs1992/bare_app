@@ -61,6 +61,7 @@ struct imu_parser {
 	uint64_t span_us;		/* measuring the period: time and samples */
 	uint32_t span_n;
 	uint32_t samples, bad_crc;
+	uint8_t bad_info;		/* length of an info not understood (logged once) */
 	bool streaming, imu_ok, fake;
 };
 

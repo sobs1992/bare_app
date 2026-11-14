@@ -354,6 +354,51 @@ static void test_motion(void)
 	CHECK(!motion_cal_parse("bias 1 2", &c2) && !motion_cal_parse("right 0 0 0", &c2) &&
 	      !motion_cal_parse("left 1 0 0", &c2));
 	CHECK(motion_cal_format(&(struct motion_cal){ 0 }, buf, sizeof(buf)) == 0 && !buf[0]);
+
+	/* no gyro: one made from a noisy accelerometer (0.0022 g rms at 1125 Hz)
+	 * must be quiet enough at rest for the calibration's "held steady"
+	 * (under 8 deg/s), and its tilt must give the right axis */
+	{
+		struct motion_synth sy = { 0 };
+		struct motion_rec r;
+		const float dt = 1 / 1125.0f, bias0[3] = { 0, 0, 0 };
+		unsigned rng = 1;
+		double sq = 0;
+		float peak = 0, deg = 0, axis[3];
+		int n = 0;
+
+		for (int i = 0; i < 4500; i++) {
+			float a[3], g[3], th = i < 2250 ? 0 : fminf((i - 2250) * dt * 40, 25) * 0.017453293f;
+
+			a[0] = 0;
+			a[1] = sinf(th);
+			a[2] = cosf(th);
+			for (int k = 0; k < 3; k++) {
+				float u = 0;	/* about normal: a sum of 12 uniforms */
+
+				for (int j = 0; j < 12; j++) {
+					rng = rng * 1664525u + 1013904223u;
+					u += (rng >> 8) / 16777216.0f;
+				}
+				a[k] += (u - 6) * 0.0022f;
+			}
+			motion_synth_gyro(&sy, a, dt, g);
+			if (i >= 200 && i < 2250) {	/* at rest */
+				float s2 = g[0] * g[0] + g[1] * g[1] + g[2] * g[2];
+
+				sq += s2;
+				n++;
+				peak = fmaxf(peak, sqrtf(s2));
+			}
+			if (i == 2250)
+				motion_rec_tilt_begin(&r, (float[]){ 0, 0, 0 });
+			if (i >= 2250)
+				deg = motion_rec_tilt(&r, g, bias0, dt);
+		}
+		CHECK(sqrt(sq / n) < 1.0 && peak < 8);
+		CHECK(fabsf(deg - 25) < 2);
+		CHECK(motion_rec_right(&r, axis) && axis[0] > 0.99f);
+	}
 }
 
 #ifdef CONFIG_INPUT_IMU

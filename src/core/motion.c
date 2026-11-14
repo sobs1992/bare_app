@@ -75,8 +75,8 @@ void motion_can_aim(const struct motion *m, bool *x, bool *y)
 
 void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, float gyro[3])
 {
-	float a[3] = { accel[0], accel[1], accel[2] }, prev[3], k;
-	int i;
+	float a[3] = { accel[0], accel[1], accel[2] }, *old = NULL, span = 0, k;
+	unsigned i;
 
 	gyro[0] = gyro[1] = gyro[2] = 0;
 	if (!normalize(a) || !(dt > 0))
@@ -84,18 +84,35 @@ void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, f
 	if (!s->set) {
 		memcpy(s->up, a, sizeof(s->up));
 		s->set = true;
+		s->count = 0;
 		return;
 	}
-	memcpy(prev, s->up, sizeof(prev));
+	/* keep the smoothed "up" before this sample, with the time to this one */
+	memcpy(s->hist[s->head], s->up, sizeof(s->up));
+	s->hdt[s->head] = dt;
+	s->head = (s->head + 1) % MOTION_SYNTH_MAX;
+	if (s->count < MOTION_SYNTH_MAX)
+		s->count++;
 	k = dt / (MOTION_SYNTH_S + dt);
 	for (i = 0; i < 3; i++)
 		s->up[i] += (a[i] - s->up[i]) * k;
 	normalize(s->up);
+	/* "up" as it was MOTION_SYNTH_SPAN_S ago (or as long ago as is kept) */
+	for (i = 1; i <= s->count; i++) {
+		unsigned j = (s->head + MOTION_SYNTH_MAX - i) % MOTION_SYNTH_MAX;
+
+		span += s->hdt[j];
+		old = s->hist[j];
+		if (span >= MOTION_SYNTH_SPAN_S)
+			break;
+	}
+	if (!old || !(span > 0))
+		return;
 	/* a vector fixed in the world turns by -w x v as seen from the sensor:
-	 * w (across it) = new x old / dt */
-	gyro[0] = (s->up[1] * prev[2] - s->up[2] * prev[1]) / dt / DEG2RAD;
-	gyro[1] = (s->up[2] * prev[0] - s->up[0] * prev[2]) / dt / DEG2RAD;
-	gyro[2] = (s->up[0] * prev[1] - s->up[1] * prev[0]) / dt / DEG2RAD;
+	 * w (across it) = new x old / time */
+	gyro[0] = (s->up[1] * old[2] - s->up[2] * old[1]) / span / DEG2RAD;
+	gyro[1] = (s->up[2] * old[0] - s->up[0] * old[2]) / span / DEG2RAD;
+	gyro[2] = (s->up[0] * old[1] - s->up[1] * old[0]) / span / DEG2RAD;
 }
 
 void motion_set_cal(struct motion *m, const struct motion_cal *c)

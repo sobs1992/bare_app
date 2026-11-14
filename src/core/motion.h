@@ -55,7 +55,9 @@
 #define MOTION_TIGHT_NOISE 2.0f
 #define MOTION_TIGHT_MIN 0.1f
 #define MOTION_TIGHT_MAX 0.6f
-#define MOTION_SYNTH_S 0.03f		/* no gyro: gravity smoothed over this, then its turn */
+#define MOTION_SYNTH_S 0.03f		/* no gyro: gravity smoothed over this, then its turn... */
+#define MOTION_SYNTH_SPAN_S 0.03f	/* ...over this much time (one sample apart is noise) */
+#define MOTION_SYNTH_MAX 512		/* samples kept for it: 30 ms up to 17 kHz */
 
 /* The sensor's channels (as the protocol's PKT_INFO.channels) */
 #define MOTION_CH_GYRO 1u
@@ -111,10 +113,13 @@ void motion_set_sensor(struct motion *m, unsigned channels, float gyro_rms, floa
 void motion_can_aim(const struct motion *m, bool *x, bool *y);
 
 /* A gyro made from the accelerometer (a sensor without one): gravity smoothed,
- * its turn per sample; deg/s out, about the axes across gravity only */
+ * its turn over the last MOTION_SYNTH_SPAN_S; deg/s out, about the axes across
+ * gravity only */
 struct motion_synth {
 	float up[3];
 	bool set;
+	float hist[MOTION_SYNTH_MAX][3], hdt[MOTION_SYNTH_MAX];	/* up as it was, dt after it */
+	unsigned head, count;
 };
 void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, float gyro[3]);
 /* Degrees turned since the last call: x to the right, y down (as a mouse) */

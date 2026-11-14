@@ -10,7 +10,8 @@
  * the device's right in the sensor's axes (up and down). A sensor without an
  * accelerometer is then turned to the left by as much: its vertical (left
  * and right). One without a gyro does the same with the gyro core/input
- * makes from gravity. What the sensor lacks is said under its state. The result goes
+ * makes from gravity, without the first step (that gyro has no zero). What
+ * the sensor lacks is said under its state. The result goes
  * to core/input and is saved with the sticks' calibration, as the
  * calibration of this sensor (another one plugged in has its own). X puts the
  * cross back in the middle, Y removes the calibration, B leaves (or stops
@@ -282,9 +283,19 @@ static void cal_start(struct motion_screen *m)
 	input_motion_info(&mi);
 	if (!mi.present || !mi.channels)
 		return;		/* nothing to calibrate */
-	m->step = CAL_STILL;
-	m->step_s = 0;
 	motion_rec_begin(&m->rec);
+	m->step_s = 0;
+	if (!(mi.channels & MOTION_CH_GYRO)) {
+		/* a gyro made from gravity has no zero: straight to the tilt */
+		memset(m->bias, 0, sizeof(m->bias));
+		m->step = CAL_PICK_UP;
+		set_note(m, S_MOTION_CAL_TILT, lv_color_white());
+		show_progress(m, 0);
+		footer_hints(m);
+		input_motion_listen(on_sample, m);
+		return;
+	}
+	m->step = CAL_STILL;
 	set_note(m, S_MOTION_CAL_STILL, lv_color_white());
 	show_progress(m, 0);
 	footer_hints(m);
@@ -386,7 +397,7 @@ static void on_timer(lv_timer_t *t)
 				       : !(mi.channels & MOTION_CH_GYRO) ? S_MOTION_NO_GYRO
 				       : S_MOTION_NO_ACCEL));
 	lv_obj_set_style_text_color(m->chan, UI_COLOR_WARN, 0);
-	lv_obj_set_hidden(m->zero, !mi.channels);
+	lv_obj_set_hidden(m->zero, !(mi.channels & MOTION_CH_GYRO));	/* nothing to measure */
 	lv_obj_set_hidden(m->axes, !mi.channels);
 	lv_label_set_text(m->zero, tr(mi.bias_known ? S_MOTION_ZERO_OK : S_MOTION_ZERO_WAIT));
 	lv_obj_set_style_text_color(m->zero, mi.bias_known ? UI_COLOR_DIM : UI_COLOR_WARN, 0);
