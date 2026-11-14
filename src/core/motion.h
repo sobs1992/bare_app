@@ -55,9 +55,13 @@
 #define MOTION_TIGHT_NOISE 2.0f
 #define MOTION_TIGHT_MIN 0.1f
 #define MOTION_TIGHT_MAX 0.6f
-#define MOTION_SYNTH_S 0.03f		/* no gyro: gravity smoothed over this, then its turn... */
-#define MOTION_SYNTH_SPAN_S 0.03f	/* ...over this much time (one sample apart is noise) */
-#define MOTION_SYNTH_MAX 512		/* samples kept for it: 30 ms up to 17 kHz */
+/* No gyro: gravity smoothed over a time, then its turn over as much time (one
+ * sample apart is noise): MOTION_SYNTH_PER_G seconds per g of the
+ * accelerometer's noise, within MOTION_SYNTH_MIN_S..MAX_S (noise unknown: MAX) */
+#define MOTION_SYNTH_PER_G 45.0f
+#define MOTION_SYNTH_MIN_S 0.03f
+#define MOTION_SYNTH_MAX_S 0.12f
+#define MOTION_SYNTH_MAX 2048		/* samples kept for it: 120 ms up to 17 kHz */
 
 /* The sensor's channels (as the protocol's PKT_INFO.channels) */
 #define MOTION_CH_GYRO 1u
@@ -116,11 +120,17 @@ void motion_can_aim(const struct motion *m, bool *x, bool *y);
  * its turn over the last MOTION_SYNTH_SPAN_S; deg/s out, about the axes across
  * gravity only */
 struct motion_synth {
+	float span;		/* s: motion_synth_setup() */
 	float up[3];
 	bool set;
 	float hist[MOTION_SYNTH_MAX][3], hdt[MOTION_SYNTH_MAX];	/* up as it was, dt after it */
 	unsigned head, count;
 };
+/* For an accelerometer that noisy (g rms, 0 unknown): starts afresh; returns
+ * the made-up gyro's noise at rest (deg/s rms, an estimate) */
+float motion_synth_setup(struct motion_synth *s, float accel_rms);
+/* Starts afresh (the sensor was away: its "up" then is not now's) */
+void motion_synth_reset(struct motion_synth *s);
 void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, float gyro[3]);
 /* Degrees turned since the last call: x to the right, y down (as a mouse) */
 void motion_take(struct motion *m, float *x, float *y);

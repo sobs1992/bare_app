@@ -227,8 +227,10 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 
 		if (gap == 0)
 			return;		/* the same sample again */
-		if (gap * p->period_us < LOST_US)	/* else lost track: one period */
+		if (gap * p->period_us < LOST_US)
 			dt = gap * p->period_us * 1e-6f;
+		else
+			input_motion_gap();	/* lost track: one period, afresh */
 	}
 	if (timed && p->have_real) {
 		uint16_t gap = (uint16_t)(seq - p->real_seq);

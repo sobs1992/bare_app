@@ -515,8 +515,7 @@ int input_save_calibration(void)
 	}
 	for (int i = 0; i < in.motion.ncals; i++)
 		if (motion_cal_format(&in.motion.cals[i].cal, buf, sizeof(buf)) > 0)
-			fprintf(f, "gyro%s%s = %s\n", in.motion.cals[i].id[0] ? "." : "",
-				in.motion.cals[i].id, buf);
+			fprintf(f, "gyro.%s = %s\n", in.motion.cals[i].id, buf);
 	fprintf(f, "gyro.sensitivity = %.1f\ngyro.invert_x = %d\ngyro.invert_y = %d\n",
 		(double)in.motion.tune.sensitivity, in.motion.tune.invert_x, in.motion.tune.invert_y);
 	if (fflush(f) || fsync(fileno(f)))
@@ -534,8 +533,11 @@ int input_save_calibration(void)
 
 void input_motion_present(bool present, float rate_hz)
 {
-	if (present && !in.motion.present)
+	if (present && !in.motion.present) {
+		/* back after a while: nothing of then is now's */
 		motion_drop(&in.motion.m);
+		motion_synth_reset(&in.motion.synth);
+	}
 	in.motion.present = present;
 	in.motion.rate_hz = present ? rate_hz : 0;
 	input_report_devices(INPUT_DEV_MOTION, present ? INPUT_DEV_MOTION : 0);
@@ -595,15 +597,23 @@ void input_motion_sensor(const struct input_motion_desc *d)
 		LOGI(TAG, "motion sensor %s:%s%s%s", id, ch & MOTION_CH_GYRO ? " gyro" : "",
 		     ch & MOTION_CH_ACCEL ? " accelerometer" : "", ch ? "" : " nothing to aim with");
 		motion_init(&in.motion.m);
-		memset(&in.motion.synth, 0, sizeof(in.motion.synth));
 	}
 	snprintf(in.motion.id, sizeof(in.motion.id), "%s", id);
 	snprintf(in.motion.name, sizeof(in.motion.name), "%s", d->name ? d->name : "");
 	in.motion.channels = ch;
 	in.motion.noise = d->gyro_noise;
 	in.motion.accel_noise = d->accel_noise;
-	motion_set_sensor(&in.motion.m, ch, d->gyro_noise, d->accel_noise);
+	/* no gyro: the one made from gravity, as noisy as the accelerometer makes it */
+	motion_set_sensor(&in.motion.m, ch,
+			  ch & MOTION_CH_GYRO ? d->gyro_noise
+					      : motion_synth_setup(&in.motion.synth, d->accel_noise),
+			  d->accel_noise);
 	cal_apply();
+}
+
+void input_motion_gap(void)
+{
+	motion_synth_reset(&in.motion.synth);
 }
 
 void input_report_motion(const float gyro[3], const float accel[3], float dt)

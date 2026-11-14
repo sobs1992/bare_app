@@ -355,11 +355,13 @@ static void test_motion(void)
 	      !motion_cal_parse("left 1 0 0", &c2));
 	CHECK(motion_cal_format(&(struct motion_cal){ 0 }, buf, sizeof(buf)) == 0 && !buf[0]);
 
-	/* no gyro: one made from a noisy accelerometer (0.0022 g rms at 1125 Hz)
-	 * must be quiet enough at rest for the calibration's "held steady"
-	 * (under 8 deg/s), and its tilt must give the right axis */
+	/* no gyro: one made from a noisy accelerometer (0.0022 g rms at 1125 Hz,
+	 * the span from that noise) must be quiet enough at rest for the
+	 * calibration's "held steady" (under 8 deg/s) and the thresholds, and its
+	 * tilt must give the right axis */
 	{
-		struct motion_synth sy = { 0 };
+		static struct motion_synth sy;
+		float est = motion_synth_setup(&sy, 0.0022f);
 		struct motion_rec r;
 		const float dt = 1 / 1125.0f, bias0[3] = { 0, 0, 0 };
 		unsigned rng = 1;
@@ -395,7 +397,8 @@ static void test_motion(void)
 			if (i >= 2250)
 				deg = motion_rec_tilt(&r, g, bias0, dt);
 		}
-		CHECK(sqrt(sq / n) < 1.0 && peak < 8);
+		CHECK(fabsf(sy.span - 0.099f) < 0.001f && est > 0.2f && est < 0.35f);
+		CHECK(sqrt(sq / n) < 0.5 && peak < 2);
 		CHECK(fabsf(deg - 25) < 2);
 		CHECK(motion_rec_right(&r, axis) && axis[0] > 0.99f);
 	}
@@ -724,6 +727,28 @@ static void test_imu(void)
 		imu_turned = 0;
 		imu_feed(500, 0, 0, 90, 20, 20);	/* a gyro's turn is not seen */
 		CHECK(fabsf(imu_turned) < 0.5f);
+		input_set_motion_calibration(NULL);
+	}
+
+	/* no gyro, plugged out and in again (or the stream lost for a while)
+	 * while the device was turned: no jump of the view when it comes back */
+	{
+		imu_my = 0;
+		input_motion_sensor(&(struct input_motion_desc){ "ACC-2", "ACC", MOTION_CH_ACCEL, 0, 0.002f });
+		input_set_motion_calibration(&(struct motion_cal){ .axes_set = true, .right = { 1, 0, 0 } });
+		input_motion_present(true, 1000);
+		imu_feed(2000, 0, 0, 0, 0, 0);
+		input_motion_present(false, 0);
+		input_motion_present(true, 1000);
+		imu_my = 0;
+		imu_feed(2000, 0, 0, 0, 60, 60);
+		CHECK(fabsf(imu_my) < 1);
+		imu_feed(500, 0, 0, 0, 0, 0);	/* the gap in the stream */
+		input_motion_gap();
+		imu_my = 0;
+		imu_feed(2000, 0, 0, 0, 60, 60);
+		CHECK(fabsf(imu_my) < 1);
+		input_motion_present(false, 0);
 		input_set_motion_calibration(NULL);
 	}
 

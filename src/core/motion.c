@@ -73,6 +73,25 @@ void motion_can_aim(const struct motion *m, bool *x, bool *y)
 	*y = m->channels && m->cal.axes_set;
 }
 
+float motion_synth_setup(struct motion_synth *s, float accel_rms)
+{
+	float span = accel_rms > 0 ? accel_rms * MOTION_SYNTH_PER_G : MOTION_SYNTH_MAX_S;
+
+	memset(s, 0, sizeof(*s));
+	s->span = span < MOTION_SYNTH_MIN_S ? MOTION_SYNTH_MIN_S : span > MOTION_SYNTH_MAX_S ? MOTION_SYNTH_MAX_S : span;
+	/* the turn of an "up" smoothed over 'span' seen 'span' apart, n g of
+	 * noise at about 1 kHz: about 3.85 n / span^1.5 deg/s (measured on a
+	 * real accelerometer at rest: 0.28 deg/s for 0.0022 g, span 0.1 s) */
+	return accel_rms > 0 ? 3.85f * accel_rms / powf(s->span, 1.5f) : 0;
+}
+
+void motion_synth_reset(struct motion_synth *s)
+{
+	s->set = false;
+	s->count = 0;
+	s->head = 0;
+}
+
 void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, float gyro[3])
 {
 	float a[3] = { accel[0], accel[1], accel[2] }, *old = NULL, span = 0, k;
@@ -93,17 +112,19 @@ void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, f
 	s->head = (s->head + 1) % MOTION_SYNTH_MAX;
 	if (s->count < MOTION_SYNTH_MAX)
 		s->count++;
-	k = dt / (MOTION_SYNTH_S + dt);
+	if (!(s->span > 0))
+		s->span = MOTION_SYNTH_MAX_S;
+	k = dt / (s->span + dt);
 	for (i = 0; i < 3; i++)
 		s->up[i] += (a[i] - s->up[i]) * k;
 	normalize(s->up);
-	/* "up" as it was MOTION_SYNTH_SPAN_S ago (or as long ago as is kept) */
+	/* "up" as it was 'span' ago (or as long ago as is kept) */
 	for (i = 1; i <= s->count; i++) {
 		unsigned j = (s->head + MOTION_SYNTH_MAX - i) % MOTION_SYNTH_MAX;
 
 		span += s->hdt[j];
 		old = s->hist[j];
-		if (span >= MOTION_SYNTH_SPAN_S)
+		if (span >= s->span)
 			break;
 	}
 	if (!old || !(span > 0))
