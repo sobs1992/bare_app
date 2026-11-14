@@ -32,12 +32,11 @@
 #define TAG "imu"
 #define SYNC0 0xA5
 #define SYNC1 0x5A
-#define PKT_IMU 0x01		/* v2 */
+#define PROTO 3			/* the only one read (firmware 0.2 on) */
 #define PKT_STATUS 0x02
-#define PKT_INFO 0x03		/* v3 */
+#define PKT_INFO 0x03
 #define PKT_SAMPLES 0x04
 #define PKT_MAG 0x05
-#define IMU_LEN 28
 #define STATUS_LEN 36
 #define INFO_LEN 56
 #define SAMPLES_HDR 8
@@ -46,9 +45,9 @@
 #define STATUS_IMU_OK 1u
 #define STATUS_STREAM 8u
 #define STATUS_FAKE 16u
-#define DEFAULT_US (1e6f / 1125)	/* v2's rate until the status says it */
+#define DEFAULT_US 1000.0f	/* the period until PKT_INFO says it */
 #define SPAN_SAMPLES 2000	/* the period is measured over that many */
-#define WAKE_BYTES 48		/* VMIN: about a v3 batch (or 1.4 v2 samples) */
+#define WAKE_BYTES 48		/* VMIN: about a batch of samples */
 #define RETRY_MS 100
 #define RETRIES 20
 #define SILENT_MS 2000		/* no samples that long: ask for the stream again */
@@ -94,10 +93,7 @@ static float f32(const uint8_t *p)
 void imu_parser_init(struct imu_parser *p)
 {
 	memset(p, 0, sizeof(*p));
-	/* v2's until a status or the info says otherwise */
-	p->gyro_scale = 2000.0f / 32768;
-	p->accel_scale = 4.0f / 32768;
-	p->nominal_us = p->period_us = DEFAULT_US;
+	p->nominal_us = p->period_us = DEFAULT_US;	/* no units, no samples until PKT_INFO */
 }
 
 /* A new rate: measured again from it */
@@ -105,7 +101,7 @@ static void set_nominal(struct imu_parser *p, uint32_t odr_mhz)
 {
 	float us = odr_mhz ? 1e9f / odr_mhz : DEFAULT_US;
 
-	if (us == p->nominal_us && (p->have_info || p->have_status))
+	if (us == p->nominal_us && p->have_info)
 		return;
 	p->nominal_us = p->period_us = us;
 	p->period_measured = false;
@@ -117,30 +113,21 @@ static void set_nominal(struct imu_parser *p, uint32_t odr_mhz)
 static void on_status(struct imu_parser *p, const uint8_t *s)
 {
 	uint8_t flags = s[3];
-	uint32_t odr_mhz = u32(s + 4);
-	uint16_t gyro_fs = u16(s + 8);
-	uint8_t accel_fs = s[10];
 	bool ok = flags & STATUS_IMU_OK;
 
+	if (s[0] != PROTO) {
+		/* firmware 0.1 (protocol 2): nothing of it is read */
+		if (p->proto != s[0])
+			LOGW(TAG, "protocol %u, firmware %u.%u: not supported, update the sensor's "
+			     "firmware (protocol %u)", s[0], s[1], s[2], PROTO);
+		p->proto = s[0];
+		p->have_info = false;
+		return;
+	}
 	if (!p->have_status || p->imu_ok != ok || p->proto != s[0])
 		LOGI(TAG, "protocol %u, firmware %u.%u, sensor %s%s", s[0], s[1], s[2],
 		     ok ? "ok" : "missing", flags & STATUS_FAKE ? " (fake)" : "");
 	p->proto = s[0];
-	if (p->proto < 3) {
-		/* v2: the ICM-20948, its units from the full scales */
-		if (gyro_fs)
-			p->gyro_scale = gyro_fs / 32768.0f;
-		if (accel_fs)
-			p->accel_scale = accel_fs / 32768.0f;
-		if (odr_mhz)
-			set_nominal(p, odr_mhz);
-		if (strcmp(p->name, "ICM-20948")) {
-			snprintf(p->name, sizeof(p->name), "ICM-20948");
-			p->imu_id = 1;
-			p->gyro_noise = 0;
-			p->info_seq++;
-		}
-	}
 	p->have_status = true;
 	p->imu_ok = ok;
 	p->fake = flags & STATUS_FAKE;
@@ -154,6 +141,8 @@ static void on_info(struct imu_parser *p, const uint8_t *s)
 	uint8_t id = s[3];
 	float gs = f32(s + 28), as = f32(s + 32), noise = f32(s + 52);
 
+	if (s[0] != PROTO)
+		return;
 	p->proto = s[0];
 	if (id) {
 		memcpy(name, s + 4, 16);
@@ -237,13 +226,12 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 
 static void on_frame(struct imu_parser *p, uint8_t type, const uint8_t *f, uint8_t len)
 {
-	if (type == PKT_IMU && len == IMU_LEN) {
-		on_sample(p, u32(f), u16(f + 4), f + 12, f + 6, true);
-	} else if (type == PKT_STATUS && len == STATUS_LEN) {
+	if (type == PKT_STATUS && len == STATUS_LEN) {
 		on_status(p, f);
 	} else if (type == PKT_INFO && len == INFO_LEN) {
 		on_info(p, f);
 	} else if (type == PKT_SAMPLES && len >= SAMPLES_HDR && p->have_info && p->imu_id &&
+		   p->proto == PROTO &&
 		   len == SAMPLES_HDR + SAMPLE_LEN * f[6]) {
 		for (int i = 0; i < f[6]; i++) {
 			const uint8_t *s = f + SAMPLES_HDR + SAMPLE_LEN * i;
@@ -251,7 +239,7 @@ static void on_frame(struct imu_parser *p, uint8_t type, const uint8_t *f, uint8
 			on_sample(p, u32(f), (uint16_t)(u16(f + 4) + i), s, s + 6, i == 0);
 		}
 	}
-	/* PKT_MAG: not used for aiming */
+	/* PKT_MAG: not used for aiming; 0x01: protocol 2's samples, not read */
 }
 
 void imu_parser_feed(struct imu_parser *p, const uint8_t *data, size_t n)

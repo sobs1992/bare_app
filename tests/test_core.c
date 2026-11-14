@@ -393,24 +393,41 @@ static size_t imu_frame(uint8_t *out, uint8_t type, const uint8_t *payload, uint
 	return len + 6u;
 }
 
+#define IMU_SAMPLE_FRAME 26	/* a PKT_SAMPLES of one sample */
+
+/* One sample as PKT_SAMPLES: turning gz about z, 1 g on z */
 static size_t imu_sample(uint8_t *out, uint32_t t, uint16_t seq, int16_t gz)
 {
-	uint8_t p[28] = { 0 };
+	uint8_t p[20] = { 0 };
 
 	memcpy(p, &t, 4);
 	memcpy(p + 4, &seq, 2);
-	p[10] = 0x00;
-	p[11] = 0x20;		/* accel z = 8192: 1 g at 4 g full scale */
-	memcpy(p + 16, &gz, 2);
-	return imu_frame(out, 0x01, p, 28);
+	p[6] = 1;
+	memcpy(p + 8 + 4, &gz, 2);
+	p[8 + 10] = 0x00;
+	p[8 + 11] = 0x20;	/* accel z = 8192: 1 g at 4 g full scale */
+	return imu_frame(out, 0x04, p, 20);
+}
+
+/* PKT_INFO of an ICM-20948 at 1125 Hz, +-2000 deg/s, +-4 g */
+static size_t imu_info_icm(uint8_t *out)
+{
+	uint8_t info[56] = { 3, 0, 2, 1, 'I', 'C', 'M', '-', '2', '0', '9', '4', '8' };
+	uint32_t odr = 1125000;
+	float gs = 2000.0f / 32768, as = 4.0f / 32768;
+
+	info[20] = 1 | 2 | 4 | 8;
+	info[21] = 4;
+	memcpy(info + 24, &odr, 4);
+	memcpy(info + 28, &gs, 4);
+	memcpy(info + 32, &as, 4);
+	return imu_frame(out, 0x03, info, 56);
 }
 
 static void test_imu(void)
 {
-	static uint8_t stream[4000 * 34 + 64];
-	uint8_t status[36] = { 2, 0, 1, 0x0b };
-	uint32_t odr = 1125000;
-	uint16_t fs = 2000;
+	static uint8_t stream[4000 * IMU_SAMPLE_FRAME + 256];
+	uint8_t status[36] = { 3, 0, 2, 0x0b }, v2[36] = { 2, 0, 1, 0x0b }, v2imu[28] = { 0 };
 	struct imu_parser p;
 	struct mainloop *ml = mainloop_new("imu");
 	size_t n = 0, off;
@@ -418,12 +435,11 @@ static void test_imu(void)
 
 	CHECK(imu_crc16((const uint8_t *)"123456789", 9) == 0x29B1);	/* CCITT-FALSE check value */
 	input_init(ml, NULL, on_imu_event, NULL);
-	memcpy(status + 4, &odr, 4);
-	memcpy(status + 8, &fs, 2);
-	status[10] = 4;
-	n += imu_frame(stream, 0x02, status, 36);
-	/* 2 s still at 1000 Hz (the sensor's clock), then 1 s turning at 32.8 deg/s:
-	 * raw 537 = 32.78 deg/s at 2000 deg/s full scale; one sample lost */
+	n += imu_info_icm(stream + n);
+	n += imu_frame(stream + n, 0x02, status, 36);
+	/* 2 s still at 1000 Hz (the sensor's clock, 1125 Hz nominal), then 1 s
+	 * turning at 32.8 deg/s: raw 537 = 32.78 deg/s at 2000 deg/s full scale;
+	 * one sample lost */
 	for (i = 0; i < 3000; i++)
 		if (i != 2500)
 			n += imu_sample(stream + n, 1000u * i, (uint16_t)(i + 65000),
@@ -434,6 +450,7 @@ static void test_imu(void)
 	for (off = 0; off < n; off += 77)	/* in pieces that cut frames */
 		imu_parser_feed(&p, stream + off, n - off < 77 ? n - off : 77);
 	CHECK(p.have_status && p.imu_ok && p.samples == 2999 && p.bad_crc == 0);
+	CHECK(p.proto == 3 && !strcmp(p.name, "ICM-20948") && p.info_seq == 1);
 	CHECK(fabsf(p.period_us - 1000) < 1);
 	CHECK(imu_events > 0 && fabsf(imu_turned + 32.78f) < 1.5f);
 	/* a frame with a bad CRC is skipped */
@@ -441,6 +458,16 @@ static void test_imu(void)
 	stream[10] ^= 1;
 	imu_parser_feed(&p, stream, n);
 	CHECK(p.bad_crc > 0 && p.samples == 2999);
+	/* protocol v2 (firmware 0.1) is not read: its samples are dropped */
+	n = imu_frame(stream, 0x02, v2, 36);
+	v2imu[11] = 0x20;
+	n += imu_frame(stream + n, 0x01, v2imu, 28);
+	imu_parser_feed(&p, stream, n);
+	CHECK(p.samples == 2999 && p.proto == 2 && !p.have_info);
+	n = imu_info_icm(stream);
+	n += imu_frame(stream + n, 0x02, status, 36);
+	imu_parser_feed(&p, stream, n);
+	CHECK(p.proto == 3 && p.have_info);
 
 	/* the tune for every game: sensitivity, inverted axes */
 	{
@@ -450,10 +477,11 @@ static void test_imu(void)
 		input_set_motion_tune(&t);
 		imu_turned = 0;
 		for (i = 0; i < 1000; i++)
-			n = imu_sample(stream + 34 * (size_t)i, 3001000u + 1000u * i,
+			n = imu_sample(stream + IMU_SAMPLE_FRAME * (size_t)i, 3001000u + 1000u * i,
 				       (uint16_t)(i + 3001 + 65000), 537);
-		imu_parser_feed(&p, stream, 34 * 1000);
-		CHECK(fabsf(imu_turned - 2 * 32.78f) < 3);
+		imu_parser_feed(&p, stream, IMU_SAMPLE_FRAME * 1000);
+		/* the period starts again from the nominal one after the v2 frames */
+		CHECK(fabsf(imu_turned - 2 * 32.78f * p.period_us / 1000) < 3);
 		input_set_motion_tune(&(struct input_motion_tune){ .sensitivity = 9 });
 		input_motion_tune(&got);
 		CHECK(got.sensitivity == INPUT_GYRO_SENS_MAX && !got.invert_x);
