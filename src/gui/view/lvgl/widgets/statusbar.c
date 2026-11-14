@@ -4,8 +4,8 @@
  * while a keyboard, a mouse or the motion sensor is plugged in (CTX_INPUT),
  * volume (CTX_AUDIO), Wi-Fi (CTX_WIFI) and battery (CTX_POWER). Should the
  * icons reach the time (a narrow screen, more icons) it moves left of them,
- * out of the middle. The time only once the
- * clock has been set (a board without a set RTC starts in 1970 or 2000).
+ * out of the middle. The time only once the clock has been set (a board
+ * without a set RTC starts in 1970 or 2000).
  */
 #include <stdlib.h>
 #include <time.h>
@@ -26,18 +26,27 @@ struct statusbar {
 	int shown_link;		/* enum wifi_link, -1 nothing yet */
 	int shown_devices;	/* INPUT_DEV_*, -1 nothing yet */
 	lv_obj_t *right;	/* the icons */
+	int32_t fit_right, fit_width;	/* fit_clock() placed the time for these */
 };
 
 /* The time in the middle, or left of the icons when they reach it */
 static void fit_clock(struct statusbar *s)
 {
-	int32_t gap = ui_px(GAP_PX);
+	int32_t gap = ui_px(GAP_PX), right, width;
 
-	lv_obj_align(s->clock, LV_ALIGN_CENTER, 0, 0);
 	if (lv_obj_is_hidden(s->clock))
 		return;
 	lv_obj_update_layout(lv_obj_get_parent(s->clock));
-	if (lv_obj_get_x2(s->clock) + gap > lv_obj_get_x(s->right))
+	right = lv_obj_get_x(s->right);
+	width = lv_obj_get_width(s->clock);
+	/* nothing moved: leave it (aligning again redraws it) */
+	if (right == s->fit_right && width == s->fit_width)
+		return;
+	s->fit_right = right;
+	s->fit_width = width;
+	lv_obj_align(s->clock, LV_ALIGN_CENTER, 0, 0);
+	lv_obj_update_layout(lv_obj_get_parent(s->clock));
+	if (lv_obj_get_x2(s->clock) + gap > right)
 		lv_obj_align_to(s->clock, s->right, LV_ALIGN_OUT_LEFT_MID, -gap, 0);
 }
 
@@ -109,6 +118,7 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 	s->shown_flags = -1;
 	s->shown_link = -1;
 	s->shown_devices = -1;
+	s->fit_right = s->fit_width = -1;
 	bar = lv_obj_create(parent);
 	lv_obj_remove_style_all(bar);
 	/* the header rows of the grid, on the screen's background */
