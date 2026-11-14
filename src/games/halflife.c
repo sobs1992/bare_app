@@ -250,6 +250,9 @@ const struct game_def game_halflife = {
 	.title = S_HALFLIFE,
 	.hint = S_HALFLIFE_HINT,
 	.every_frame = true,
+	/* m_yaw, m_pitch 0.022 degrees a count, times sensitivity 3 */
+	.gyro_on = true,
+	.gyro_counts = 1 / (0.022f * 3),
 	.info = halflife_info,
 	.missing = halflife_missing,
 	.start = halflife_start,

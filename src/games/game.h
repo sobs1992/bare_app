@@ -37,6 +37,8 @@ struct game_info {
 	const char *cover;	/* picture of it for the home screen (PNG), NULL none */
 	bool trigger_volume;	/* as game_def.trigger_volume */
 	int minimize;		/* its own minimise button (enum gp_button), -1: the game's */
+	bool gyro_on;		/* as game_def.gyro_on, gyro_counts */
+	float gyro_counts;
 };
 
 struct game_def {
@@ -46,6 +48,15 @@ struct game_def {
 	/* "%s" text that tells what missing() returned; 0: S_GAME_MISSING_FMT */
 	enum str_id missing_fmt;
 	bool trigger_volume;	/* L2, R2: the volume instead of the game */
+	/*
+	 * The motion sensor as the game's mouse (screens/game.c): on unless its
+	 * controls turn it off (a view that turns, not a pointer), and the
+	 * mouse's counts per degree that turn the view by as much as the device
+	 * turned (the game's own mouse settings at their defaults), before the
+	 * sensitivity of the controls. 0: GAME_GYRO_COUNTS.
+	 */
+	bool gyro_on;
+	float gyro_counts;
 	/* Publishes every frame it makes, changed or not (Xash3D): a gap in its
 	 * frames is a stall, never a still picture (view_video_paced()) */
 	bool every_frame;
@@ -95,5 +106,8 @@ const char *game_cover(struct game_ref g);
 /* "<dir>/cover.png" into buf (dir may be "" for none: NULL) */
 const char *game_cover_in(char *buf, size_t size, const char *dir);
 enum gp_button game_minimize_button(struct game_ref g, const struct platform *pf);
+/* The motion sensor's default for it (on or off) and its counts per degree */
+#define GAME_GYRO_COUNTS 10.0f
+bool game_gyro(struct game_ref g, float *counts);
 /* Why it cannot start into buf; false if nothing is missing */
 bool game_missing_text(struct game_ref g, char *buf, size_t size);

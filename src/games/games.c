@@ -33,7 +33,8 @@ int game_entries(const struct game_def *g, bool rescan)
 
 static struct game_info info(struct game_ref g)
 {
-	struct game_info gi = { .trigger_volume = g.def->trigger_volume, .minimize = -1 };
+	struct game_info gi = { .trigger_volume = g.def->trigger_volume, .minimize = -1,
+				.gyro_on = g.def->gyro_on, .gyro_counts = g.def->gyro_counts };
 
 	if (g.def->info)
 		g.def->info(g.entry, &gi);
@@ -102,6 +103,19 @@ enum gp_button game_minimize_button(struct game_ref g, const struct platform *pf
 	if (own >= 0)
 		return own;
 	return g.def && g.def->minimize_for ? g.def->minimize_for(pf) : GP_F5;
+}
+
+bool game_gyro(struct game_ref g, float *counts)
+{
+	struct game_info gi;
+
+	if (!g.def) {
+		*counts = GAME_GYRO_COUNTS;
+		return false;
+	}
+	gi = info(g);
+	*counts = gi.gyro_counts > 0 ? gi.gyro_counts : GAME_GYRO_COUNTS;
+	return gi.gyro_on;
 }
 
 bool game_missing_text(struct game_ref g, char *buf, size_t size)

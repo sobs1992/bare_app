@@ -1,6 +1,8 @@
 #include "remap.h"
 
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define INVERT "invert"
@@ -29,6 +31,8 @@ void gp_remap_reset(struct gp_remap *m)
 	for (b = 0; b < GP_COUNT; b++)
 		m->to[b] = (int8_t)b;
 	m->invert = 0;
+	m->gyro = GP_GYRO_GAME;
+	m->gyro_sens = GP_GYRO_SENS_DEFAULT;
 }
 
 enum gp_button gp_remap_stick_dir(const struct gp_remap *m, enum gp_button b)
@@ -46,7 +50,7 @@ bool gp_remap_is_default(const struct gp_remap *m)
 {
 	int b;
 
-	if (m->invert)
+	if (m->invert || m->gyro != GP_GYRO_GAME || m->gyro_sens != GP_GYRO_SENS_DEFAULT)
 		return false;
 	for (b = 0; b < GP_COUNT; b++)
 		if (m->to[b] != b)
@@ -70,6 +74,25 @@ int gp_remap_parse(struct gp_remap *m, const char *text)
 			name[eq] = '\0';
 			memcpy(to, text + eq + 1, len - eq - 1);
 			to[len - eq - 1] = '\0';
+			if (!strcmp(name, "gyro")) {
+				if (!strcmp(to, "on") || !strcmp(to, "off"))
+					m->gyro = !strcmp(to, "on");
+				else
+					ret = -1;
+				text += len + (text[len] == ',');
+				continue;
+			}
+			if (!strcmp(name, "gyrosens")) {
+				char *end;
+				long t = lrint(strtod(to, &end) * 10);
+
+				if (end != to && !*end && t >= GP_GYRO_SENS_MIN && t <= GP_GYRO_SENS_MAX)
+					m->gyro_sens = (uint8_t)t;
+				else
+					ret = -1;
+				text += len + (text[len] == ',');
+				continue;
+			}
 			if ((a = axis_from_name(name)) >= 0) {
 				if (!strcmp(to, INVERT))
 					m->invert |= (uint8_t)GP_BIT(a);
@@ -116,6 +139,23 @@ bool gp_remap_format(const struct gp_remap *m, char *buf, size_t size)
 		if (!(m->invert & GP_BIT(b)))
 			continue;
 		w = snprintf(buf + n, size - n, "%s%s=" INVERT, n ? "," : "", axis_names[b]);
+		if (w < 0 || (size_t)w >= size - n) {
+			buf[n] = '\0';
+			return false;
+		}
+		n += (size_t)w;
+	}
+	if (m->gyro != GP_GYRO_GAME) {
+		w = snprintf(buf + n, size - n, "%sgyro=%s", n ? "," : "", m->gyro ? "on" : "off");
+		if (w < 0 || (size_t)w >= size - n) {
+			buf[n] = '\0';
+			return false;
+		}
+		n += (size_t)w;
+	}
+	if (m->gyro_sens != GP_GYRO_SENS_DEFAULT) {
+		w = snprintf(buf + n, size - n, "%sgyrosens=%d.%d", n ? "," : "", m->gyro_sens / 10,
+			     m->gyro_sens % 10);
 		if (w < 0 || (size_t)w >= size - n) {
 			buf[n] = '\0';
 			return false;

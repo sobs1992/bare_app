@@ -38,6 +38,8 @@ struct native_game {
 	char hint[512], hint_ru[512];
 	char cover[STR];		/* "cover", relative to dir; "" the default */
 	bool trigger_volume;
+	bool gyro_on;			/* "gyro = <counts a degree>", "on", "off" */
+	float gyro_counts;
 	/* SDL_BAREAPP_*: keys, gamepad, scale, filter, fps */
 	char keys[STR], gamepad[STR], scale[16], filter[16], fps[8];
 	char env[MAX_ENV][STR];		/* "NAME=value" of [env] */
@@ -83,7 +85,13 @@ static bool ini_value(const char *section, const char *key, const char *value, v
 		ini_copy_lines(g->hint_ru, sizeof(g->hint_ru), value);
 	else if (!strcasecmp(key, "volume_triggers"))
 		g->trigger_volume = yes(value);
-	else if (!strcasecmp(key, "keys"))
+	else if (!strcasecmp(key, "gyro")) {
+		char *end;
+		float c = strtof(value, &end);
+
+		g->gyro_on = strcasecmp(value, "off") && strcasecmp(value, "no");
+		g->gyro_counts = end != value && c > 0 ? c : 0;
+	} else if (!strcasecmp(key, "keys"))
 		COPY(g->keys, value);
 	else if (!strcasecmp(key, "gamepad"))
 		COPY(g->gamepad, value);
@@ -203,6 +211,8 @@ static void native_info(int i, struct game_info *gi)
 	gi->name = g->name;
 	gi->hint = !strncmp(i18n_lang(), "ru", 2) && g->hint_ru[0] ? g->hint_ru : g->hint[0] ? g->hint : NULL;
 	gi->trigger_volume = g->trigger_volume;
+	gi->gyro_on = g->gyro_on;
+	gi->gyro_counts = g->gyro_counts;
 	gi->cover = g->cover[0] ? g->cover : NULL;
 }
 

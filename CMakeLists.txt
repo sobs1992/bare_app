@@ -47,6 +47,7 @@ set(CORE_SOURCES
 	src/core/joystick.c
 	src/core/log.c
 	src/core/mainloop.c
+	src/core/motion.c
 	src/core/msgq.c
 	src/core/remap.c
 	src/core/util.c
@@ -87,6 +88,7 @@ add_if(CONFIG_DISPLAY_SDL       src/drivers/sdl.c)
 add_if(CONFIG_INPUT_EVDEV       src/drivers/input_evdev.c)
 add_if(CONFIG_INPUT_HID         src/drivers/input_hid.c)
 add_if(CONFIG_INPUT_SCRIPT      src/drivers/input_script.c)
+add_if(CONFIG_INPUT_IMU         src/drivers/input_imu.c)
 add_if(CONFIG_POWER             src/drivers/sysfs.c)
 add_if(CONFIG_BACKLIGHT         src/drivers/sysfs.c)
 if(CONFIG_PLATFORM_OGA OR CONFIG_PLATFORM_OGU)
@@ -118,7 +120,7 @@ if(CONFIG_DISPLAY_DRM OR CONFIG_DISPLAY_FBDEV)
 elseif(CONFIG_BUILD_TESTS)
 	list(APPEND CORE_SOURCES src/drivers/blit.c)
 endif()
-if(CONFIG_INPUT_HOTPLUG OR CONFIG_POWER_UEVENT OR CONFIG_BUILD_TESTS)
+if(CONFIG_INPUT_HOTPLUG OR CONFIG_POWER_UEVENT OR CONFIG_INPUT_IMU OR CONFIG_BUILD_TESTS)
 	list(APPEND CORE_SOURCES src/core/uevent.c)
 endif()
 if(CONFIG_BUILD_TESTS)
@@ -174,6 +176,9 @@ if(CONFIG_VIEW_LVGL)
 	endif()
 	if(CONFIG_SCREEN_SETTINGS)
 		list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/settings.c)
+		if(CONFIG_INPUT_IMU)
+			list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/motion.c)
+		endif()
 	endif()
 	if(CONFIG_SCREEN_INPUT_TEST)
 		list(APPEND LVGL_SOURCES src/gui/view/lvgl/screens/input_test.c)

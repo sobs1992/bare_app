@@ -35,6 +35,8 @@ struct gp_event {
 		GP_EV_BUTTON, GP_EV_AXIS,
 		/* a keyboard and a mouse as they are (input_report_key()) */
 		GP_EV_KEY, GP_EV_MOUSE_BUTTON, GP_EV_MOUSE_MOVE,
+		/* the motion sensor turned (input_report_motion()): mx, my */
+		GP_EV_MOTION,
 	} type;
 	int code;		/* enum gp_button, enum gp_axis, a Linux KEY_* code, or the
 				 * mouse button: 0 left, 1 right, 2 middle */
@@ -43,6 +45,7 @@ struct gp_event {
 	bool stick;		/* a direction made by the left stick, not the D-pad */
 	float value;		/* axes: -1..1 */
 	int dx, dy, wheel;	/* GP_EV_MOUSE_MOVE: counts, wheel clicks (up +) */
+	float mx, my;		/* GP_EV_MOTION: degrees turned, right and down + */
 };
 
 typedef void (*input_cb)(const struct gp_event *ev, void *ud);
@@ -119,6 +122,36 @@ struct input_stick_tune {
 void input_stick_tune(int stick, struct input_stick_tune *t);
 void input_stick_tune_default(struct input_stick_tune *t);
 void input_set_stick_tune(int stick, const struct input_stick_tune *t);	/* NULL: default */
+
+/*
+ * A motion sensor (drivers/input_imu.c; core/motion.h does the math). The
+ * driver reports each sample, then input_report_motion_end() after a batch
+ * of them hands the listener what the device turned meanwhile (GP_EV_MOTION;
+ * only once it knows the gyro's zero). Its calibration is kept in the
+ * sticks' file ("gyro = <motion_cal_format()>").
+ */
+struct motion;
+struct motion_cal;
+
+struct input_motion_info {
+	bool present;		/* a sensor is plugged in */
+	float rate_hz;		/* its samples a second */
+	bool bias_known;	/* the gyro's zero measured (lain still) or calibrated */
+	bool axes_set;		/* up and down calibrated */
+	bool still;		/* it lay still the last second */
+	float rate_x, rate_y;	/* deg/s now: right, down */
+};
+
+void input_motion_present(bool present, float rate_hz);
+void input_report_motion(const float gyro[3], const float accel[3], float dt);	/* deg/s, g, s */
+void input_report_motion_end(void);
+void input_motion_info(struct input_motion_info *mi);
+const struct motion *input_motion(void);	/* for "up" and the bias */
+/* Every sample as it comes (the calibration), NULL: none */
+typedef void (*input_motion_cb)(const float gyro[3], const float accel[3], float dt, void *ud);
+void input_motion_listen(input_motion_cb cb, void *ud);
+bool input_motion_calibration(struct motion_cal *c);	/* false: none */
+void input_set_motion_calibration(const struct motion_cal *c);	/* NULL: none */
 
 /* What the hardware has: drivers declare it when a device appears */
 void input_declare(uint32_t buttons, uint32_t axes);	/* GP_BIT() masks, added up */

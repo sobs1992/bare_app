@@ -31,6 +31,7 @@ enum gui_action_type {
 	ACT_SET_CONTROL,	/* str = game_key(), arg = ACT_CONTROL_ARG(button, for the game) */
 	ACT_RESET_CONTROLS,	/* str = game_key(): its controls back to the default */
 	ACT_SET_INVERT,		/* str = game_key(), arg = ACT_INVERT_ARG(axis, inverted) */
+	ACT_SET_GYRO,		/* str = game_key(), arg = ACT_GYRO_ARG(on, sensitivity) */
 	ACT_SET_STREAM,		/* arg = 1 stream the screen and the sound, 0 not */
 	ACT_SET_HIBERNATE,	/* arg = 1 sleep by hibernating (platform hibernate), 0 not */
 	ACT_SET_CLOCK,		/* str = "YYYY-MM-DD hh:mm": the date and time to set */
@@ -44,6 +45,11 @@ enum gui_action_type {
 #define ACT_INVERT_ARG(axis, on) ((axis) | !!(on) << 8)
 #define ACT_INVERT_AXIS(arg) ((arg) & 0xff)
 #define ACT_INVERT_ON(arg) (((arg) >> 8) & 1)
+
+/* ACT_SET_GYRO: GP_GYRO_GAME, 0 or 1; the sensitivity in tenths (0: as it was) */
+#define ACT_GYRO_ARG(on, sens) (((on) + 2) | (sens) << 8)
+#define ACT_GYRO_ON(arg) (((arg) & 0xff) - 2)
+#define ACT_GYRO_SENS(arg) (((arg) >> 8) & 0xff)
 
 struct gui_action {
 	enum gui_action_type type;

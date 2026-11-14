@@ -81,6 +81,16 @@ config INPUT_HID
 	  the arrows, Enter (A), Esc (B), Space (X), Tab (Y), Page Up/Down
 	  (L1/R1) and F1..F6 work as the gamepad's buttons.
 
+config INPUT_IMU
+	bool "USB motion sensor (gyro aiming)"
+	default y
+	help
+	  The usb_motion_sensor (ICM-20948 behind a Pico, USB serial
+	  1209:0001 "USB Motion Sensor"), also plugged in later (with
+	  INPUT_HOTPLUG). Its gyro turns the view of a game as a mouse
+	  would; each game has it on or off and its sensitivity in its
+	  controls. Needs the kernel's cdc_acm.
+
 config INPUT_SCRIPT
 	bool "Scripted input from stdin"
 	help

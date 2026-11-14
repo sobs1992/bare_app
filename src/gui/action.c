@@ -77,6 +77,7 @@ const char *action_name(enum gui_action_type type)
 	case ACT_SET_CONTROL:    return "set-control";
 	case ACT_RESET_CONTROLS: return "reset-controls";
 	case ACT_SET_INVERT:     return "set-invert";
+	case ACT_SET_GYRO:       return "set-gyro";
 	case ACT_SET_STREAM:     return "set-stream";
 	case ACT_SET_HIBERNATE:  return "set-hibernate";
 	case ACT_SET_CLOCK:      return "set-clock";

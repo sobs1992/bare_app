@@ -13,6 +13,7 @@
 #include "drivers/display_mem.h"
 #include "drivers/input_script.h"
 #include "drivers/sim.h"
+#include "drivers/input_imu.h"
 #include "hal/platform.h"
 
 #ifdef CONFIG_DISPLAY_SDL
@@ -43,6 +44,10 @@ const struct platform platform_pc = {
 		{ &input_sdl, NULL },
 #endif
 		{ &input_script, &script_params },
+#ifdef CONFIG_INPUT_IMU
+		/* the motion sensor plugged into the computer */
+		{ &input_imu, IMU_PARAMS_PICO },
+#endif
 	},
 #ifdef CONFIG_AUDIO
 	.mixer = { &mixer_sim, NULL },

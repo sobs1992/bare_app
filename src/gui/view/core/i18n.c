@@ -200,6 +200,29 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_HIBERNATE]       = { "Hibernation" RU("Гибернация") },
 	[S_DATE_TIME]       = { "Date and time" RU("Дата и время") },
 	[S_FIELD]           = { "Field" RU("Поле") },
+	[S_GYRO]            = { "Gyro aiming" RU("Прицел гироскопом") },
+	[S_GYRO_SENS]       = { "Gyro sensitivity" RU("Чувствительность гироскопа") },
+	[S_MOTION]          = { "Motion sensor" RU("Датчик движения") },
+	[S_MOTION_NONE]     = { "Not connected: plug the motion sensor into the USB port"
+				RU("Не подключён: вставьте датчик движения в USB") },
+	[S_MOTION_RATE_FMT] = { "Connected, %d samples a second" RU("Подключён, %d измерений в секунду") },
+	[S_MOTION_ZERO_WAIT] = { "Put the device down for a second: the gyro's zero is measured"
+				 RU("Положите консоль на секунду: нужно измерить ноль гироскопа") },
+	[S_MOTION_ZERO_OK]  = { "Gyro zero measured" RU("Ноль гироскопа измерен") },
+	[S_MOTION_AXES_NONE] = { "Up and down not calibrated: only left and right turn"
+				 RU("Вверх-вниз не откалиброван: работает только влево-вправо") },
+	[S_MOTION_AXES_OK]  = { "Up and down calibrated" RU("Вверх-вниз откалиброван") },
+	[S_MOTION_CAL_STILL] = { "Put the device on a table and do not touch it"
+				 RU("Положите консоль на стол и не трогайте") },
+	[S_MOTION_CAL_TILT] = { "Now hold it as in a game and tilt its top towards you"
+				RU("Теперь возьмите её как в игре и наклоните верхним краем к себе") },
+	[S_MOTION_CAL_TURNED] = { "That was a turn, not a tilt: once more"
+				  RU("Это был поворот, а не наклон: ещё раз") },
+	[S_MOTION_CAL_DONE] = { "Motion sensor calibrated" RU("Датчик движения откалиброван") },
+	[S_MOTION_CAL_NONE] = { "Calibration removed" RU("Калибровка удалена") },
+	[S_MOTION_TRY]      = { "Turn and tilt the device: the cross follows"
+				RU("Поворачивайте и наклоняйте консоль: крестик следует за ней") },
+	[S_CENTER]          = { "Center" RU("В центр") },
 };
 
 static int lang = LANG_EN;

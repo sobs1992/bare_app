@@ -24,7 +24,13 @@
  * keeps (the minimise button, the triggers for the volume). Directions of
  * the left stick are not buttons to map, but they follow its axes when the
  * controls invert them, as the axes the game gets do.
+ *
+ * The motion sensor (GP_EV_MOTION, core/motion.h) moves the game's mouse
+ * while its controls (or the game's default, game_gyro()) say so: the
+ * degrees the device turned times the game's counts per degree times the
+ * sensitivity, the parts of a count kept for the next move.
  */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/wait.h>
@@ -51,6 +57,9 @@ struct game_screen {
 	int battery_next;	/* battery_levels[] index not warned at yet */
 	lv_obj_t *battery_warn, *battery_corner;	/* on the top layer */
 	lv_timer_t *battery_timer;	/* takes the warning away */
+	bool gyro_default;	/* game_gyro() */
+	float gyro_counts;
+	float gyro_rest[2];	/* parts of a count not sent yet */
 };
 
 static bool game_shown;		/* a game screen is up: the battery is said here */
@@ -207,11 +216,37 @@ static void on_wait(lv_timer_t *t)
 	show_hint(g);
 }
 
+/* The device turned: the game's mouse moves */
+static void gyro_move(struct game_screen *g, const struct gp_event *ev, const struct gp_remap *m)
+{
+	struct gp_event mv = { .type = GP_EV_MOUSE_MOVE };
+	float counts, x, y;
+
+	if (!gp_remap_gyro(m, g->gyro_default)) {
+		g->gyro_rest[0] = g->gyro_rest[1] = 0;
+		return;
+	}
+	counts = g->gyro_counts * gp_remap_gyro_sens(m);
+	x = ev->mx * counts + g->gyro_rest[0];
+	y = ev->my * counts + g->gyro_rest[1];
+	mv.dx = (int)lrintf(x);
+	mv.dy = (int)lrintf(y);
+	g->gyro_rest[0] = x - mv.dx;
+	g->gyro_rest[1] = y - mv.dy;
+	if (mv.dx || mv.dy)
+		view_video_input(&mv);
+}
+
 static void on_input(const struct gp_event *ev, void *ud)
 {
 	struct game_screen *g = ud;
 	const struct gp_remap *m;
 	struct gp_event mapped;
+
+	if (ev->type == GP_EV_MOTION) {
+		gyro_move(g, ev, ctx_controls(view_ctx(), g->key));
+		return;
+	}
 
 	if (ev->type == GP_EV_BUTTON && ev->code == view_game_minimize_button()) {
 		if (ev->pressed && !ev->repeat) {
@@ -272,6 +307,7 @@ static void *game_init(lv_obj_t *parent, lv_obj_t **root)
 		return NULL;
 	g->game = view_game_selected();
 	game_key(g->game, g->key);
+	g->gyro_default = game_gyro(g->game, &g->gyro_counts);
 	g->scr = lv_obj_create(NULL);
 	*root = g->scr;
 	game_shown = true;

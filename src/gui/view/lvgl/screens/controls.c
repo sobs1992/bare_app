@@ -10,6 +10,10 @@
  * or not (A, Left or Right turn it over, X back to not; ACT_SET_INVERT).
  * The game's own hint at the top says what its buttons do.
  *
+ * With the motion sensor in the build two rows more: gyro aiming on or off
+ * for the game (A, Left or Right; X back to the game's default) and its
+ * sensitivity (Left and Right, X back to the default); ACT_SET_GYRO.
+ *
  * Not in the list: what bare_app keeps before the game sees it (the power
  * and volume keys, the quit combo, the game's minimise button, L2 and R2
  * of a game that leaves them for the volume).
@@ -32,6 +36,9 @@ struct controls {
 	int8_t shown[GP_COUNT];		/* the button shown in each row, -2 nothing yet */
 	lv_obj_t *axis_rows[GP_AXIS_COUNT], *axis_values[GP_AXIS_COUNT];
 	int8_t axis_shown[GP_AXIS_COUNT];	/* inverted shown: 1, 0, -1 nothing yet */
+	lv_obj_t *gyro_row, *gyro_value, *sens_row, *sens_value;
+	int gyro_shown, sens_shown;	/* -10: nothing yet */
+	bool gyro_default;		/* game_gyro() */
 	struct gp_remap map;		/* the game's, as the context says */
 	lv_group_t *group;		/* the screen's */
 };
@@ -109,12 +116,42 @@ static bool inverted(const struct controls *c, int a)
 	return c->map.invert & GP_BIT(a);
 }
 
+static void set_gyro(struct controls *c, int on, int sens)
+{
+	gui_action_post_str_arg(ACT_SET_GYRO, c->key, ACT_GYRO_ARG(on, sens));
+}
+
+static bool gyro_on(const struct controls *c)
+{
+	return gp_remap_gyro(&c->map, c->gyro_default);
+}
+
 static void on_key(lv_event_t *e)
 {
 	struct controls *c = lv_event_get_user_data(e);
 	lv_obj_t *obj = lv_event_get_target_obj(e);
 	int b = row_button(c, obj), a = row_axis(c, obj);
 	uint32_t key = lv_event_get_key(e);
+
+	if (obj && obj == c->gyro_row) {
+		if (key == LV_KEY_LEFT || key == LV_KEY_RIGHT)
+			set_gyro(c, !gyro_on(c), 0);
+		else if (key == UI_LV_KEY_ALT)
+			set_gyro(c, GP_GYRO_GAME, 0);
+		return;
+	}
+	if (obj && obj == c->sens_row) {
+		int sens = c->map.gyro_sens;
+
+		if (key == LV_KEY_LEFT || key == LV_KEY_RIGHT) {
+			sens += key == LV_KEY_RIGHT ? 1 : -1;
+			if (sens >= GP_GYRO_SENS_MIN && sens <= GP_GYRO_SENS_MAX)
+				set_gyro(c, GP_GYRO_GAME - 1, sens);
+		} else if (key == UI_LV_KEY_ALT) {
+			set_gyro(c, GP_GYRO_GAME - 1, GP_GYRO_SENS_DEFAULT);
+		}
+		return;
+	}
 
 	if (a >= 0) {
 		if (key == LV_KEY_LEFT || key == LV_KEY_RIGHT)
@@ -139,6 +176,8 @@ static void on_click(lv_event_t *e)
 
 	if (obj == c->reset)
 		gui_action_post_str(ACT_RESET_CONTROLS, c->key);
+	else if (obj && obj == c->gyro_row)
+		set_gyro(c, !gyro_on(c), 0);
 	else if (a >= 0)
 		set_invert(c, a, !inverted(c, a));
 	else if (b >= 0)
@@ -200,6 +239,7 @@ static void *controls_init(lv_obj_t *parent, lv_obj_t **root)
 	gp_remap_reset(&c->map);
 	memset(c->shown, -2, sizeof(c->shown));
 	memset(c->axis_shown, -1, sizeof(c->axis_shown));
+	c->gyro_shown = c->sens_shown = -10;
 	snprintf(title, sizeof(title), "%s: %s", tr(S_CONTROLS),
 		 c->game.def ? game_title(c->game) : "");
 	scr = console_screen(LV_SYMBOL_SHUFFLE, title);
@@ -254,6 +294,29 @@ static void *controls_init(lv_obj_t *parent, lv_obj_t **root)
 		c->axis_values[b] = lv_label_create(r);
 		lv_obj_set_style_text_font(c->axis_values[b], UI_FONT_MID, 0);
 	}
+#ifdef CONFIG_INPUT_IMU
+	{
+		float counts;
+
+		c->gyro_default = game_gyro(c->game, &counts);
+	}
+	c->gyro_row = row_new(c, group);
+	lv_obj_add_event_cb(c->gyro_row, on_key, LV_EVENT_KEY, c);
+	label = lv_label_create(c->gyro_row);
+	lv_obj_set_flex_grow(label, 1);
+	lv_obj_set_style_text_font(label, UI_FONT_MID, 0);
+	lv_label_set_text(label, tr(S_GYRO));
+	c->gyro_value = lv_label_create(c->gyro_row);
+	lv_obj_set_style_text_font(c->gyro_value, UI_FONT_MID, 0);
+	c->sens_row = row_new(c, group);
+	lv_obj_add_event_cb(c->sens_row, on_key, LV_EVENT_KEY, c);
+	label = lv_label_create(c->sens_row);
+	lv_obj_set_flex_grow(label, 1);
+	lv_obj_set_style_text_font(label, UI_FONT_MID, 0);
+	lv_label_set_text(label, tr(S_GYRO_SENS));
+	c->sens_value = lv_label_create(c->sens_row);
+	lv_obj_set_style_text_font(c->sens_value, UI_FONT_MID, 0);
+#endif
 	c->reset = row_new(c, group);
 	label = lv_label_create(c->reset);
 	lv_obj_set_style_text_font(label, UI_FONT_MID, 0);
@@ -291,6 +354,19 @@ static void controls_update(void *self, const struct gui_ctx *ctx, uint32_t chan
 		c->axis_shown[b] = (int8_t)on;
 		lv_label_set_text(c->axis_values[b], tr(on ? S_ON : S_OFF));
 		lv_obj_set_style_text_color(c->axis_values[b], on ? UI_COLOR_ACCENT : lv_color_white(), 0);
+	}
+	if (c->gyro_value && c->gyro_shown != gyro_on(c)) {
+		c->gyro_shown = gyro_on(c);
+		lv_label_set_text(c->gyro_value, tr(c->gyro_shown ? S_ON : S_OFF));
+		/* not the game's default: in the accent colour */
+		lv_obj_set_style_text_color(c->gyro_value,
+					    c->map.gyro == GP_GYRO_GAME ? lv_color_white() : UI_COLOR_ACCENT, 0);
+	}
+	if (c->sens_value && c->sens_shown != c->map.gyro_sens) {
+		c->sens_shown = c->map.gyro_sens;
+		lv_label_set_text_fmt(c->sens_value, "%d.%d\xc3\x97", c->sens_shown / 10, c->sens_shown % 10);
+		lv_obj_set_style_text_color(c->sens_value, c->sens_shown == GP_GYRO_SENS_DEFAULT
+								   ? lv_color_white() : UI_COLOR_ACCENT, 0);
 	}
 }
 

@@ -25,6 +25,9 @@ static const struct widget_ops *const screen_ops[SCREEN_COUNT] = {
 	[SCREEN_GAME] = &game_screen,
 	[SCREEN_CONTROLS] = &controls_screen,
 #endif
+#if defined(CONFIG_INPUT_IMU) && defined(CONFIG_SCREEN_SETTINGS)
+	[SCREEN_MOTION] = &motion_screen,
+#endif
 #ifdef CONFIG_SCREEN_USB_DISK
 	[SCREEN_USB_DISK] = &usb_disk_screen,
 #endif

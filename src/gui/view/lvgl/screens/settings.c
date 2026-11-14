@@ -13,7 +13,8 @@
  *   Sound     volume, output (CTX_AUDIO)
  *   Internet  the Wi-Fi network: opens the Wi-Fi screen; the address (CTX_WIFI);
  *             the stream on or off, its address and viewers (CONFIG_STREAM)
- *   Games     the controls hint when a game starts (CTX_SETTINGS)
+ *   Games     the controls hint when a game starts (CTX_SETTINGS); the
+ *             motion sensor: opens its screen (CONFIG_INPUT_IMU)
  *   System    language (CTX_SETTINGS), date and time (set if the platform
  *             can: CTX_SYSTEM), hibernation (CTX_SETTINGS, if the platform
  *             has it), device, platform (CTX_SYSTEM), battery (CTX_POWER)
@@ -38,7 +39,7 @@
 #define ROW_CELLS 2	/* a category, a setting at least */
 
 enum row_id {
-	R_BRIGHTNESS, R_VOLUME, R_OUTPUT, R_WIFI, R_IP, R_STREAM, R_GAME_HINT, R_LANG, R_CLOCK,
+	R_BRIGHTNESS, R_VOLUME, R_OUTPUT, R_WIFI, R_IP, R_STREAM, R_GAME_HINT, R_MOTION, R_LANG, R_CLOCK,
 	R_HIBERNATE, R_DEVICE, R_PLATFORM, R_BATTERY, R_COUNT
 };
 
@@ -285,6 +286,10 @@ static void row_change(struct row *r, int dir)
 		kept_row = R_WIFI;
 		gui_action_post(ACT_OPEN_SCREEN, SCREEN_WIFI);
 		break;
+	case R_MOTION:
+		kept_row = R_MOTION;
+		gui_action_post(ACT_OPEN_SCREEN, SCREEN_MOTION);
+		break;
 	default:
 		break;
 	}
@@ -492,6 +497,16 @@ static void build_internet(struct settings *s)
 static void build_games(struct settings *s)
 {
 	row_new(s, R_GAME_HINT, ROW_CHOICE, S_GAME_HINT);
+#ifdef CONFIG_INPUT_IMU
+	{
+		struct row *r = row_new(s, R_MOTION, ROW_LINK, S_MOTION);
+		struct input_motion_info mi;
+
+		input_motion_info(&mi);
+		lv_obj_set_style_text_color(r->value, mi.present ? UI_COLOR_ON : UI_COLOR_DIM, 0);
+		lv_label_set_text(r->value, tr(mi.present ? S_ON : S_OFF));
+	}
+#endif
 }
 #endif
 

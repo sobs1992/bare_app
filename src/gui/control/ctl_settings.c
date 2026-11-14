@@ -118,16 +118,19 @@ static void load_controls(const char *key, const char *value, void *ud)
 }
 
 /* A change to the controls of a game, kept in the config: one button (from
- * >= 0), one axis inverted or not (axis >= 0), or all back to the default */
-static void change_controls(const char *game, int from, int to, int axis, bool invert)
+ * >= 0), one axis inverted or not (axis >= 0), the motion sensor (gyro >=
+ * GP_GYRO_GAME, sens > 0), or all back to the default */
+static void change_controls(const char *game, int from, int to, int axis, bool invert, int gyro,
+			    int sens)
 {
 	struct gui_ctx *c;
 	struct game_controls *gc;
 	char key[sizeof(CONTROLS_KEY) + GAME_KEY_LEN], text[256];
-	bool keep, one = from >= 0 || axis >= 0;
+	bool keep, gyro_change = gyro >= GP_GYRO_GAME || sens > 0;
+	bool one = from >= 0 || axis >= 0 || gyro_change;
 
 	if (!game_key_ok(game) || from >= GP_COUNT || to < GP_NONE || to >= GP_COUNT ||
-	    axis >= GP_AXIS_COUNT)
+	    axis >= GP_AXIS_COUNT || gyro > 1 || sens > GP_GYRO_SENS_MAX)
 		return;
 	c = ctx_lock();
 	gc = controls_of(c, game, one);
@@ -137,7 +140,12 @@ static void change_controls(const char *game, int from, int to, int axis, bool i
 			LOGW(TAG, "no room for the controls of another game");
 		return;
 	}
-	if (from >= 0)
+	if (gyro_change) {
+		if (gyro >= GP_GYRO_GAME)
+			gc->map.gyro = (int8_t)gyro;
+		if (sens > 0)
+			gc->map.gyro_sens = (uint8_t)(sens < GP_GYRO_SENS_MIN ? GP_GYRO_SENS_MIN : sens);
+	} else if (from >= 0)
 		gc->map.to[from] = (int8_t)to;
 	else if (axis >= 0 && invert)
 		gc->map.invert |= (uint8_t)GP_BIT(axis);
@@ -192,15 +200,19 @@ static void settings_action(const struct gui_action *a)
 		return;
 	}
 	if (a->type == ACT_SET_CONTROL) {
-		change_controls(a->str, ACT_CONTROL_FROM(a->arg), ACT_CONTROL_TO(a->arg), -1, false);
+		change_controls(a->str, ACT_CONTROL_FROM(a->arg), ACT_CONTROL_TO(a->arg), -1, false, -2, 0);
 		return;
 	}
 	if (a->type == ACT_SET_INVERT) {
-		change_controls(a->str, -1, 0, ACT_INVERT_AXIS(a->arg), ACT_INVERT_ON(a->arg));
+		change_controls(a->str, -1, 0, ACT_INVERT_AXIS(a->arg), ACT_INVERT_ON(a->arg), -2, 0);
+		return;
+	}
+	if (a->type == ACT_SET_GYRO) {
+		change_controls(a->str, -1, 0, -1, false, ACT_GYRO_ON(a->arg), ACT_GYRO_SENS(a->arg));
 		return;
 	}
 	if (a->type == ACT_RESET_CONTROLS) {
-		change_controls(a->str, -1, 0, -1, false);
+		change_controls(a->str, -1, 0, -1, false, -2, 0);
 		return;
 	}
 	if (!a->str[0] || strchr(a->str, ','))

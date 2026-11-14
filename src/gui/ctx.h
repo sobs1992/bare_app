@@ -27,6 +27,7 @@ enum screen_id {
 	SCREEN_WIFI_KEY,	/* key for the network in wifi.asked */
 	SCREEN_USB_DISK,	/* the games partition as a USB disk for the computer */
 	SCREEN_CONTROLS,	/* the controls of the game of view_game_selected() */
+	SCREEN_MOTION,		/* the motion sensor: its state, calibration */
 	SCREEN_COUNT
 };
 

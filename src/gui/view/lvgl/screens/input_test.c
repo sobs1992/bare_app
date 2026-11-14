@@ -480,6 +480,8 @@ static void on_input(const struct gp_event *ev, void *ud)
 		}
 		return;
 	}
+	if (ev->type != GP_EV_BUTTON)
+		return;		/* the motion sensor has a screen of its own */
 	if (t->mode == MODE_TUNE) {
 		if (!ev->repeat)
 			show_buttons(t);

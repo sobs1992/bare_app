@@ -241,6 +241,13 @@ void view_on_gamepad(const struct gp_event *ev, void *ud)
 		view_video_input(ev);
 		return;
 	}
+	if (ev->type == GP_EV_MOTION) {
+		/* to the screen that grabbed the gamepad: a game turns its view by
+		 * it (screens/game.c), the motion screen shows it */
+		if (!vcore.screen_off && !vcore.asleep && vcore.grab)
+			vcore.grab(ev, vcore.grab_ud);
+		return;
+	}
 	if (ev->type == GP_EV_BUTTON) {
 		LOGD(TAG, "%s %s%s", gp_button_name(ev->code), ev->pressed ? "down" : "up",
 		     ev->repeat ? " (repeat)" : "");

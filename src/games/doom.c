@@ -89,6 +89,9 @@ const struct game_def game_doom = {
 	.hint = S_DOOM_HINT,
 	.missing_fmt = S_DOOM_NO_WAD_FMT,
 	.trigger_volume = true,
+	/* a count turns Doom by 8 of the 65536 of a circle (mouse sensitivity 5) */
+	.gyro_on = true,
+	.gyro_counts = 65536.0f / 8 / 360,
 	.info = doom_info,
 	.missing = doom_missing,
 	.start = doom_start,

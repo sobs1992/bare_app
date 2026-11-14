@@ -13,6 +13,7 @@
 #include "core/input.h"
 #include "core/joystick.h"
 #include "core/mainloop.h"
+#include "core/motion.h"
 #include "core/msgq.h"
 #include "core/uevent.h"
 #include "core/volume.h"
@@ -28,6 +29,9 @@
 #endif
 #if defined(CONFIG_WIFI) && defined(CONFIG_PLATFORM_OGA)
 #include "drivers/wifi_wpa.h"
+#endif
+#ifdef CONFIG_INPUT_IMU
+#include "drivers/input_imu.h"
 #endif
 
 static int failures;
@@ -245,7 +249,193 @@ static void test_remap(void)
 	CHECK(gp_remap_parse(&m, "ly=on,ry=invert") == -1 && m.invert == GP_BIT(GP_AXIS_RY));
 	m.invert = 0;
 	CHECK(gp_remap_is_default(&m));
+	/* the motion sensor: on, off or the game's; its sensitivity in tenths */
+	CHECK(!gp_remap_gyro(&m, false) && gp_remap_gyro(&m, true));
+	CHECK(gp_remap_gyro_sens(&m) == GP_GYRO_SENS_DEFAULT / 10.0f);
+	CHECK(gp_remap_gyro_sens(NULL) == GP_GYRO_SENS_DEFAULT / 10.0f && gp_remap_gyro(NULL, true));
+	CHECK(gp_remap_parse(&m, "gyro=on,gyrosens=3.5") == 0 && !gp_remap_is_default(&m));
+	CHECK(gp_remap_gyro(&m, false) && m.gyro_sens == 35);
+	CHECK(gp_remap_format(&m, buf, sizeof(buf)) && !strcmp(buf, "gyro=on,gyrosens=3.5"));
+	CHECK(gp_remap_parse(&m, "gyro=off") == 0 && !gp_remap_gyro(&m, true));
+	CHECK(gp_remap_format(&m, buf, sizeof(buf)) && !strcmp(buf, "gyro=off"));
+	CHECK(gp_remap_parse(&m, "gyro=maybe,gyrosens=99,gyrosens=x") == -1 && gp_remap_is_default(&m));
 }
+
+/* n samples of a turn (deg/s) at 1 kHz, the accelerometer at 'up' */
+static void motion_turn(struct motion *m, float wx, float wy, float wz, const float up[3], int n)
+{
+	const float bias[3] = { 0.4f, -0.2f, 0.1f };
+
+	for (int i = 0; i < n; i++) {
+		float g[3] = { wx + bias[0], wy + bias[1], wz + bias[2] };
+
+		/* the noise of the real sensor, about 0.15 deg/s */
+		g[0] += (float)((i * 7919 % 13) - 6) * 0.04f;
+		g[1] += (float)((i * 104729 % 11) - 5) * 0.04f;
+		motion_feed(m, g, up, 0.001f);
+	}
+}
+
+static void test_motion(void)
+{
+	const float z_up[3] = { 0, 0, 1 }, y_up[3] = { 0, 1, 0 };
+	struct motion_cal c, c2;
+	struct motion m;
+	struct motion_rec r;
+	float x, y, right[3], bias[3];
+	char buf[128];
+
+	/* lying still: the bias is measured, nothing is turned */
+	motion_init(&m);
+	motion_turn(&m, 0, 0, 0, z_up, 900);
+	CHECK(!m.bias_known);
+	motion_turn(&m, 0, 0, 0, z_up, 200);
+	CHECK(m.bias_known && m.still && fabsf(m.bias[0] - 0.4f) < 0.02f && fabsf(m.bias[2] - 0.1f) < 0.02f);
+	motion_take(&m, &x, &y);
+	motion_turn(&m, 0, 0, 0, z_up, 500);
+	motion_take(&m, &x, &y);
+	CHECK(fabsf(x) < 0.05f && y == 0);
+
+	/* turned left about "up" by 30 degrees: x goes left; no up and down
+	 * without the calibration */
+	motion_turn(&m, 0, 0, 60, z_up, 500);
+	motion_take(&m, &x, &y);
+	CHECK(fabsf(x + 30) < 1 && y == 0);
+	/* the same with the device upright (the sensor's y up) */
+	motion_init(&m);
+	motion_turn(&m, 0, 0, 0, y_up, 1100);
+	motion_turn(&m, 0, -40, 0, y_up, 500);
+	motion_take(&m, &x, &y);
+	CHECK(fabsf(x - 20) < 1);
+	/* a slow steady turn of a device lying still is not a new zero */
+	motion_turn(&m, 0, 3, 0, y_up, 1100);
+	CHECK(fabsf(m.bias[1] + 0.2f) < 0.05f);
+
+	/* calibrated right = sensor x: the top towards the player looks up */
+	c = (struct motion_cal){ .axes_set = true, .right = { 2, 0, 0 } };
+	motion_set_cal(&m, &c);
+	CHECK(m.cal.axes_set && m.cal.right[0] == 1);
+	motion_take(&m, &x, &y);
+	motion_turn(&m, 20, 0, 0, y_up, 500);
+	motion_take(&m, &x, &y);
+	CHECK(fabsf(y + 10) < 1 && fabsf(x) < 0.5f);
+
+	/* small turns are smoothed, not lost */
+	motion_take(&m, &x, &y);
+	motion_turn(&m, 0, 1, 0, y_up, 1000);
+	motion_turn(&m, 0, 0, 0, y_up, 100);
+	motion_take(&m, &x, &y);
+	CHECK(fabsf(x + 1) < 0.15f);
+
+	/* the calibration: still, then a tilt about the sensor's x */
+	motion_rec_begin(&r);
+	CHECK(motion_rec_still(&r, (float[]){ 0.4f, -0.2f, 0.1f }, z_up));
+	CHECK(motion_rec_still(&r, (float[]){ 0.5f, -0.1f, 0.1f }, z_up));
+	CHECK(!motion_rec_still(&r, (float[]){ 9, 0, 0 }, z_up));
+	CHECK(motion_rec_bias(&r, bias) && fabsf(bias[0] - 9.9f / 3) < 1e-3f);
+	motion_rec_tilt_begin(&r, y_up);
+	for (int i = 0; i < 1000; i++)
+		x = motion_rec_tilt(&r, (float[]){ 30.4f, 2, 0.1f }, (float[]){ 0.4f, 0, 0.1f }, 0.001f);
+	CHECK(fabsf(x - 30) < 0.01f);
+	CHECK(motion_rec_right(&r, right) && fabsf(right[0] - 1) < 1e-3f);
+	motion_rec_tilt_begin(&r, y_up);
+	for (int i = 0; i < 1000; i++)
+		motion_rec_tilt(&r, (float[]){ 2, 40, 0 }, (float[]){ 0, 0, 0 }, 0.001f);
+	CHECK(!motion_rec_right(&r, right));	/* turned about "up" */
+
+	/* kept as text */
+	c = (struct motion_cal){ .bias_set = true, .bias = { 0.5f, -1, 0 }, .axes_set = true,
+				 .right = { 0, 0, -1 } };
+	CHECK(motion_cal_format(&c, buf, sizeof(buf)) > 0);
+	CHECK(!strcmp(buf, "bias 0.5000 -1.0000 0.0000 right 0.0000 0.0000 -1.0000"));
+	CHECK(motion_cal_parse(buf, &c2) && c2.bias_set && c2.axes_set && c2.bias[1] == -1 &&
+	      c2.right[2] == -1);
+	CHECK(motion_cal_parse(" right 0 3 0\n", &c2) && !c2.bias_set && c2.right[1] == 1);
+	CHECK(!motion_cal_parse("bias 1 2", &c2) && !motion_cal_parse("right 0 0 0", &c2) &&
+	      !motion_cal_parse("left 1 0 0", &c2));
+	CHECK(motion_cal_format(&(struct motion_cal){ 0 }, buf, sizeof(buf)) == 0 && !buf[0]);
+}
+
+#ifdef CONFIG_INPUT_IMU
+static float imu_turned;	/* GP_EV_MOTION seen: x */
+static int imu_events;
+
+static void on_imu_event(const struct gp_event *ev, void *ud)
+{
+	(void)ud;
+	if (ev->type == GP_EV_MOTION) {
+		imu_turned += ev->mx;
+		imu_events++;
+	}
+}
+
+static size_t imu_frame(uint8_t *out, uint8_t type, const uint8_t *payload, uint8_t len)
+{
+	uint16_t crc;
+
+	out[0] = 0xA5;
+	out[1] = 0x5A;
+	out[2] = type;
+	out[3] = len;
+	memcpy(out + 4, payload, len);
+	crc = imu_crc16(out + 2, 2u + len);
+	out[4 + len] = (uint8_t)crc;
+	out[5 + len] = (uint8_t)(crc >> 8);
+	return len + 6u;
+}
+
+static size_t imu_sample(uint8_t *out, uint32_t t, uint16_t seq, int16_t gz)
+{
+	uint8_t p[28] = { 0 };
+
+	memcpy(p, &t, 4);
+	memcpy(p + 4, &seq, 2);
+	p[10] = 0x00;
+	p[11] = 0x20;		/* accel z = 8192: 1 g at 4 g full scale */
+	memcpy(p + 16, &gz, 2);
+	return imu_frame(out, 0x01, p, 28);
+}
+
+static void test_imu(void)
+{
+	static uint8_t stream[4000 * 34 + 64];
+	uint8_t status[36] = { 2, 0, 1, 0x0b };
+	uint32_t odr = 1125000;
+	uint16_t fs = 2000;
+	struct imu_parser p;
+	struct mainloop *ml = mainloop_new("imu");
+	size_t n = 0, off;
+	int i;
+
+	CHECK(imu_crc16((const uint8_t *)"123456789", 9) == 0x29B1);	/* CCITT-FALSE check value */
+	input_init(ml, NULL, on_imu_event, NULL);
+	memcpy(status + 4, &odr, 4);
+	memcpy(status + 8, &fs, 2);
+	status[10] = 4;
+	n += imu_frame(stream, 0x02, status, 36);
+	/* 2 s still at 1000 Hz (the sensor's clock), then 1 s turning at 32.8 deg/s:
+	 * raw 537 = 32.78 deg/s at 2000 deg/s full scale; one sample lost */
+	for (i = 0; i < 3000; i++)
+		if (i != 2500)
+			n += imu_sample(stream + n, 1000u * i, (uint16_t)(i + 65000),
+					i < 2000 ? 0 : 537);
+	stream[n++] = 0xA5;	/* junk between frames */
+	stream[n++] = 0x00;
+	imu_parser_init(&p);
+	for (off = 0; off < n; off += 77)	/* in pieces that cut frames */
+		imu_parser_feed(&p, stream + off, n - off < 77 ? n - off : 77);
+	CHECK(p.have_status && p.imu_ok && p.samples == 2999 && p.bad_crc == 0);
+	CHECK(fabsf(p.period_us - 1000) < 1);
+	CHECK(imu_events > 0 && fabsf(imu_turned + 32.78f) < 1.5f);
+	/* a frame with a bad CRC is skipped */
+	n = imu_sample(stream, 3000000, (uint16_t)(3000 + 65000), 0);
+	stream[10] ^= 1;
+	imu_parser_feed(&p, stream, n);
+	CHECK(p.bad_crc > 0 && p.samples == 2999);
+	input_deinit();
+	mainloop_free(ml);
+}
+#endif
 
 struct rtp_capture {
 	uint8_t pkt[16][RTP_HEADER + RTP_MAX_PAYLOAD];
@@ -1082,6 +1272,10 @@ int main(void)
 	test_damage();
 	test_frametimes();
 	test_remap();
+	test_motion();
+#ifdef CONFIG_INPUT_IMU
+	test_imu();
+#endif
 	test_rtp();
 	test_rtcp_in();
 	test_ts();

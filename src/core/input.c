@@ -11,6 +11,7 @@
 #include "joystick.h"
 #include "log.h"
 #include "mainloop.h"
+#include "motion.h"
 #include "util.h"
 
 #define TAG "input"
@@ -56,6 +57,14 @@ static struct {
 	bool (*raw_query)(bool mouse);
 	uint8_t key_raw[KEY_SLOTS / 8], key_btn[KEY_SLOTS / 8];	/* where presses went */
 	uint8_t mouse_raw;	/* bit per mouse button pressed raw */
+	struct {
+		bool present;
+		float rate_hz;
+		struct motion m;
+		bool cal_set;	/* m.cal came from the file or the calibration */
+		input_motion_cb cb;
+		void *ud;
+	} motion;
 } in;
 
 static void emit_button(enum gp_button b, bool pressed, bool repeat)
@@ -134,6 +143,7 @@ void input_init(struct mainloop *ml, const struct input_config *cfg, input_cb cb
 	in.ud = ud;
 	for (s = 0; s < INPUT_STICKS; s++)
 		input_stick_tune_default(&in.stick[s].tune);
+	motion_init(&in.motion.m);
 }
 
 void input_deinit(void)
@@ -355,6 +365,15 @@ int input_load_calibration(const char *path)
 			key++;
 		for (char *e = eq; e > key && e[-1] == ' '; )
 			*--e = '\0';
+		if (!strcmp(key, "gyro")) {
+			struct motion_cal mc;
+
+			if (motion_cal_parse(eq + 1, &mc))
+				input_set_motion_calibration(&mc);
+			else
+				LOGW(TAG, "%s: bad line \"%s\"", in.cal_path, key);
+			continue;
+		}
 		dot = strchr(key, '.');
 		if (dot)
 			*dot = '\0';
@@ -399,6 +418,8 @@ int input_save_calibration(void)
 			(double)in.stick[s].tune.sensitivity, stick_names[s],
 			in.stick[s].tune.snapback);
 	}
+	if (in.motion.cal_set && motion_cal_format(&in.motion.m.cal, buf, sizeof(buf)) > 0)
+		fprintf(f, "gyro = %s\n", buf);
 	if (fflush(f) || fsync(fileno(f)))
 		err = -1;
 	if (fclose(f) || err || rename(tmp, in.cal_path)) {
@@ -408,6 +429,66 @@ int input_save_calibration(void)
 	}
 	LOGI(TAG, "saved %s", in.cal_path);
 	return 0;
+}
+
+/* ---- the motion sensor -------------------------------------------------- */
+
+void input_motion_present(bool present, float rate_hz)
+{
+	if (present && !in.motion.present)
+		motion_drop(&in.motion.m);
+	in.motion.present = present;
+	in.motion.rate_hz = present ? rate_hz : 0;
+}
+
+void input_report_motion(const float gyro[3], const float accel[3], float dt)
+{
+	motion_feed(&in.motion.m, gyro, accel, dt);
+	if (in.motion.cb)
+		in.motion.cb(gyro, accel, dt, in.motion.ud);
+}
+
+void input_report_motion_end(void)
+{
+	struct gp_event ev = { .type = GP_EV_MOTION };
+
+	motion_take(&in.motion.m, &ev.mx, &ev.my);
+	if ((ev.mx != 0 || ev.my != 0) && in.cb)
+		in.cb(&ev, in.ud);
+}
+
+void input_motion_info(struct input_motion_info *mi)
+{
+	const struct motion *m = &in.motion.m;
+
+	*mi = (struct input_motion_info){
+		.present = in.motion.present, .rate_hz = in.motion.rate_hz,
+		.bias_known = m->bias_known, .axes_set = m->cal.axes_set, .still = m->still,
+		.rate_x = in.motion.present ? m->rate_x : 0, .rate_y = in.motion.present ? m->rate_y : 0,
+	};
+}
+
+const struct motion *input_motion(void)
+{
+	return &in.motion.m;
+}
+
+void input_motion_listen(input_motion_cb cb, void *ud)
+{
+	in.motion.cb = cb;
+	in.motion.ud = ud;
+}
+
+bool input_motion_calibration(struct motion_cal *c)
+{
+	*c = in.motion.m.cal;
+	return in.motion.cal_set;
+}
+
+void input_set_motion_calibration(const struct motion_cal *c)
+{
+	in.motion.cal_set = c && (c->bias_set || c->axes_set);
+	motion_set_cal(&in.motion.m, in.motion.cal_set ? c : NULL);
 }
 
 uint32_t input_buttons(void)

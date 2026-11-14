@@ -10,6 +10,7 @@
 #include "drivers/display_fbdev.h"
 #include "drivers/input_evdev.h"
 #include "drivers/input_hid.h"
+#include "drivers/input_imu.h"
 #include "drivers/mixer_alsa.h"
 #include "drivers/pcm_alsa.h"
 #include "drivers/sysfs.h"
@@ -73,6 +74,10 @@ const struct platform platform_ogu = {
 #ifdef CONFIG_INPUT_HID
 		/* the USB-A port */
 		{ &input_hid, NULL },
+#endif
+#ifdef CONFIG_INPUT_IMU
+		/* a motion sensor on the USB port: gyro aiming */
+		{ &input_imu, IMU_PARAMS_PICO },
 #endif
 	},
 #ifdef CONFIG_POWER
