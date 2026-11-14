@@ -4,7 +4,6 @@
  * (CTX_WIFI) and battery (CTX_POWER) on the right. The time only once the
  * clock has been set (a board without a set RTC starts in 1970 or 2000).
  */
-#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
@@ -14,7 +13,7 @@
 
 struct statusbar {
 	lv_obj_t *title, *volume, *wifi, *clock;
-	lv_obj_t *battery, *bat_bolt, *bat_body, *bat_fill, *bat_nub, *bat_text;
+	lv_obj_t *battery, *bat_bolt, *bat_pill;
 	lv_timer_t *tick;
 	int shown_minute;	/* minutes since the epoch, -1 none */
 	int shown_volume;	/* percent, -1 hidden, -2 nothing yet */
@@ -23,106 +22,31 @@ struct statusbar {
 	int shown_link;		/* enum wifi_link, -1 nothing yet */
 };
 
-#define BAT_W 42	/* the battery's pill, in the 480x320 layout */
-#define BAT_H 18
-#define BAT_EMPTY lv_color_hex(0x2a2e36)	/* the pill where it is not filled: red level */
-#define BAT_NUB   lv_color_hex(0x5a5f69)	/* its terminal until full: red level */
-#define BAT_INK   lv_color_hex(0x101216)	/* the digits on a lit pill */
-#define BAT_TINT  LV_OPA_50	/* how much of the level's colour the empty part has */
-#define BAT_RED_OPA LV_OPA_40	/* the red level's fill, see-through */
-
-/* Charging: green; 20 % and less: yellow; 10 % and less: red */
-static lv_color_t battery_color(int cap, bool charging)
-{
-	if (charging)
-		return lv_color_hex(0x40d26e);
-	if (cap <= 10)
-		return lv_color_hex(0xff4040);
-	if (cap <= 20)
-		return lv_color_hex(0xffd23f);
-	return lv_color_white();
-}
-
-static lv_obj_t *plain_obj(lv_obj_t *parent)
-{
-	lv_obj_t *o = lv_obj_create(parent);
-
-	lv_obj_remove_style_all(o);
-	lv_obj_set_scrollable(o, false);
-	return o;
-}
-
-/*
- * A pill filled to the level with the percent inside. The empty part has
- * the fill's colour too, darker, so that one colour of digits reads on both
- * and a digit is never cut in two where the fill ends.
- */
+/* The pill (widgets/battery.c); with the level unknown, a bolt on the charger */
 static void battery_create(struct statusbar *s, lv_obj_t *parent)
 {
-	s->battery = plain_obj(parent);
+	s->battery = lv_obj_create(parent);
+	lv_obj_remove_style_all(s->battery);
 	lv_obj_set_size(s->battery, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-	lv_obj_set_flex_flow(s->battery, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(s->battery, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_column(s->battery, LV_MAX(ui_px(1), 1), 0);
-
-	/* only when the level is unknown: a bolt on the charger */
+	lv_obj_set_scrollable(s->battery, false);
 	s->bat_bolt = lv_label_create(s->battery);
 	lv_obj_set_style_text_font(s->bat_bolt, UI_FONT_MID, 0);
 	lv_label_set_text(s->bat_bolt, LV_SYMBOL_CHARGE);
-
-	s->bat_body = plain_obj(s->battery);
-	lv_obj_set_size(s->bat_body, ui_px(BAT_W), ui_px(BAT_H));
-	lv_obj_set_style_radius(s->bat_body, ui_px(5), 0);
-	lv_obj_set_style_clip_corner(s->bat_body, true, 0);
-	lv_obj_set_style_bg_opa(s->bat_body, LV_OPA_COVER, 0);
-	lv_obj_set_style_bg_color(s->bat_body, BAT_EMPTY, 0);
-
-	s->bat_fill = plain_obj(s->bat_body);
-	lv_obj_set_height(s->bat_fill, LV_PCT(100));
-	lv_obj_set_style_bg_opa(s->bat_fill, LV_OPA_COVER, 0);
-
-	s->bat_text = lv_label_create(s->bat_body);	/* over the fill */
-	lv_obj_set_style_text_font(s->bat_text, UI_FONT_SMALL, 0);
-	lv_obj_center(s->bat_text);
-	lv_label_set_text(s->bat_text, "");
-
-	s->bat_nub = plain_obj(s->battery);
-	lv_obj_set_size(s->bat_nub, LV_MAX(ui_px(2), 2), ui_px(7));
-	lv_obj_set_style_radius(s->bat_nub, 1, 0);
-	lv_obj_set_style_bg_opa(s->bat_nub, LV_OPA_COVER, 0);
+	lv_obj_center(s->bat_bolt);
+	s->bat_pill = battery_pill_create(s->battery);
+	lv_obj_center(s->bat_pill);
 	lv_obj_set_hidden(s->battery, true);
 }
 
 static void update_battery(struct statusbar *s, const struct gui_ctx *c)
 {
-	int cap = c->power.capacity;
-	bool known = c->power.available && cap >= 0;
-	lv_color_t col = battery_color(cap, c->power.charging);
-	char text[16];
+	bool known = c->power.available && c->power.capacity >= 0;
 
 	lv_obj_set_hidden(s->battery, !known && !c->power.online);
 	lv_obj_set_hidden(s->bat_bolt, known);
-	lv_obj_set_hidden(s->bat_body, !known);
-	lv_obj_set_hidden(s->bat_nub, !known);
-	if (!known)
-		return;
-	snprintf(text, sizeof(text), "%s%d", c->power.charging ? LV_SYMBOL_CHARGE " " : "", cap);
-	ui_set_text(s->bat_text, text);
-	lv_obj_set_width(s->bat_fill, ui_px(BAT_W) * cap / 100);
-	if (!c->power.charging && cap <= 10) {
-		/* nearly empty: a dark pill, a faint red fill and red digits */
-		lv_obj_set_style_bg_color(s->bat_body, BAT_EMPTY, 0);
-		lv_obj_set_style_bg_color(s->bat_fill, lv_color_mix(col, BAT_EMPTY, BAT_RED_OPA), 0);
-		lv_obj_set_style_text_color(s->bat_text, col, 0);
-		lv_obj_set_style_bg_color(s->bat_nub, BAT_NUB, 0);
-		return;
-	}
-	/* lit: the level's colour, darker where empty; black digits read on both */
-	lv_obj_set_style_bg_color(s->bat_body, lv_color_mix(col, BAT_EMPTY, BAT_TINT), 0);
-	lv_obj_set_style_bg_color(s->bat_fill, col, 0);
-	lv_obj_set_style_text_color(s->bat_text, BAT_INK, 0);
-	/* the terminal is the pill's last bit: filled only when full */
-	lv_obj_set_style_bg_color(s->bat_nub, cap >= 100 ? col : lv_color_mix(col, BAT_EMPTY, BAT_TINT), 0);
+	lv_obj_set_hidden(s->bat_pill, !known);
+	if (known)
+		battery_pill_set(s->bat_pill, c->power.capacity, c->power.charging);
 }
 
 static void update_clock(struct statusbar *s)

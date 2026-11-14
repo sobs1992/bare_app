@@ -163,6 +163,7 @@ if(CONFIG_VIEW_LVGL)
 		src/gui/view/lvgl/widget.c
 		src/gui/view/lvgl/screens.c
 		src/gui/view/lvgl/widgets/statusbar.c
+		src/gui/view/lvgl/widgets/battery.c
 		src/gui/view/lvgl/widgets/console.c
 		src/gui/view/lvgl/screens/home.c
 	)

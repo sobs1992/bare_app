@@ -13,8 +13,9 @@
  * A low battery is said over the game (CTX_POWER): a warning at the top
  * for a few seconds when the game starts or comes back with the battery at
  * 15 % or less, and again each time it goes down to 10, 5, 3 and 1 %; at
- * 5 % and less a battery stays in the top left corner as well (the right
- * one is the system monitor's frame graph). A charger
+ * 5 % and less the battery pill (widgets/battery.c) stays where the status
+ * bar has it as well (over the system monitor's frame graph, if that is
+ * shown). A charger
  * puts them away and starts over. The application's own "battery low"
  * notice is left out while a game is in front.
  *
@@ -119,14 +120,25 @@ static void battery_corner(struct game_screen *g, int capacity)
 		return;
 	}
 	if (!g->battery_corner) {
-		g->battery_corner = battery_box(lv_color_hex(0x000000));
+		/* the status bar's pill where the status bar has it (its right
+		 * end at the margin, in the middle of the header), on a dark
+		 * backing around it, apart from the game */
+		int32_t pad = ui_px(5);
+
+		g->battery_corner = lv_obj_create(lv_layer_top());
+		lv_obj_remove_style_all(g->battery_corner);
+		lv_obj_set_scrollable(g->battery_corner, false);
+		lv_obj_set_size(g->battery_corner, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 		lv_obj_set_style_bg_opa(g->battery_corner, LV_OPA_50, 0);
-		lv_obj_set_style_pad_hor(g->battery_corner, ui_px(6), 0);
-		lv_obj_set_style_pad_ver(g->battery_corner, ui_px(2), 0);
-		lv_obj_set_style_text_color(g->battery_corner, UI_COLOR_WARN, 0);
-		lv_obj_align(g->battery_corner, LV_ALIGN_TOP_LEFT, ui_px(6), ui_px(6));
+		lv_obj_set_style_bg_color(g->battery_corner, lv_color_black(), 0);
+		lv_obj_set_style_radius(g->battery_corner, ui_px(8), 0);
+		lv_obj_set_style_pad_all(g->battery_corner, pad, 0);
+		battery_pill_create(g->battery_corner);
+		lv_obj_update_layout(g->battery_corner);
+		lv_obj_align(g->battery_corner, LV_ALIGN_TOP_RIGHT, pad - ui_margin(),
+			     (ui_header_h() - lv_obj_get_height(g->battery_corner)) / 2);
 	}
-	lv_label_set_text_fmt(g->battery_corner, LV_SYMBOL_BATTERY_EMPTY " %d%%", capacity);
+	battery_pill_set(lv_obj_get_child(g->battery_corner, 0), capacity, false);
 }
 
 /* The battery as the context says: a warning at each level passed */
