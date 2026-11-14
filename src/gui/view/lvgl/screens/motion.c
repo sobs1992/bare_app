@@ -7,7 +7,10 @@
  * A calibrates (core/motion.h): the device lies still for CAL_STILL_MS
  * (the gyro's zero), then is picked up and held as in a game; once held
  * steady its top is tilted towards the player by CAL_TILT_DEG, which gives
- * the device's right in the sensor's axes (up and down). The result goes
+ * the device's right in the sensor's axes (up and down). A sensor without an
+ * accelerometer is then turned to the left by as much: its vertical (left
+ * and right). One without a gyro does the same with the gyro core/input
+ * makes from gravity. What the sensor lacks is said under its state. The result goes
  * to core/input and is saved with the sticks' calibration, as the
  * calibration of this sensor (another one plugged in has its own). X puts the
  * cross back in the middle, Y removes the calibration, B leaves (or stops
@@ -36,17 +39,18 @@
 #define CAL_STEADY_MS 400
 #define CAL_TILT_DEG 25.0f
 
-enum cal_step { CAL_OFF, CAL_STILL, CAL_PICK_UP, CAL_STEADY, CAL_TILT };
+enum cal_step { CAL_OFF, CAL_STILL, CAL_PICK_UP, CAL_STEADY, CAL_TILT, CAL_TURN };
 enum tune_row { TUNE_SENS, TUNE_INVERT_X, TUNE_INVERT_Y, TUNE_ROWS };
 
 struct motion_screen {
-	lv_obj_t *box, *cross, *status, *zero, *axes, *note, *bar, *footer;
+	lv_obj_t *box, *cross, *status, *chan, *zero, *axes, *note, *bar, *footer;
 	int32_t half;		/* of the box */
 	lv_timer_t *timer;
 	float x, y;		/* the cross: degrees from the middle */
 	enum cal_step step;
 	struct motion_rec rec;
 	float bias[3];
+	float right[3];		/* found by the tilt */
 	float step_s;		/* seconds of samples in this step */
 	struct input_motion_info shown;
 	bool shown_valid;
@@ -141,11 +145,36 @@ static void cal_stop(struct motion_screen *m, enum str_id note, lv_color_t color
 	footer_hints(m);
 }
 
-static void cal_finish(struct motion_screen *m)
+static bool has_accel(void)
 {
-	struct motion_cal c = { .bias_set = true };
+	return input_motion()->channels & MOTION_CH_ACCEL;
+}
 
-	if (!motion_rec_right(&m->rec, c.right)) {
+static void cal_save(struct motion_screen *m, const float *up)
+{
+	struct motion_cal c = { .bias_set = true, .axes_set = true };
+
+	for (int k = 0; k < 3; k++) {
+		c.bias[k] = m->bias[k];
+		c.right[k] = m->right[k];
+	}
+	if (up) {
+		c.up_set = true;
+		for (int k = 0; k < 3; k++)
+			c.up[k] = up[k];
+	}
+	input_set_motion_calibration(&c);
+	input_save_calibration();
+	m->x = m->y = 0;
+	place_cross(m);
+	cal_stop(m, S_MOTION_TRY, UI_COLOR_DIM);
+	ui_toast(tr(S_MOTION_CAL_DONE));
+}
+
+/* The tilt done: the right; without an accelerometer the turn comes next */
+static void cal_tilted(struct motion_screen *m)
+{
+	if (!motion_rec_right(&m->rec, m->right)) {
 		/* turned about "up": a turn, not the tilt asked for */
 		m->step = CAL_PICK_UP;
 		m->step_s = 0;
@@ -153,15 +182,29 @@ static void cal_finish(struct motion_screen *m)
 		show_progress(m, 0);
 		return;
 	}
-	c.axes_set = true;
-	for (int k = 0; k < 3; k++)
-		c.bias[k] = m->bias[k];
-	input_set_motion_calibration(&c);
-	input_save_calibration();
-	m->x = m->y = 0;
-	place_cross(m);
-	cal_stop(m, S_MOTION_TRY, UI_COLOR_DIM);
-	ui_toast(tr(S_MOTION_CAL_DONE));
+	if (has_accel()) {
+		cal_save(m, NULL);
+		return;
+	}
+	motion_rec_tilt_begin(&m->rec, m->right);	/* the turn less the tilt */
+	m->step = CAL_TURN;
+	m->step_s = 0;
+	set_note(m, S_MOTION_CAL_TURN, lv_color_white());
+	show_progress(m, 0);
+}
+
+/* The turn done (no accelerometer): the vertical */
+static void cal_turned(struct motion_screen *m)
+{
+	float up[3];
+
+	if (!motion_rec_right(&m->rec, up)) {
+		motion_rec_tilt_begin(&m->rec, m->right);	/* tilted again: once more */
+		set_note(m, S_MOTION_CAL_TILTED, UI_COLOR_WARN);
+		show_progress(m, 0);
+		return;
+	}
+	cal_save(m, up);
 }
 
 /* Each sample while calibrating (core/input calls it) */
@@ -200,10 +243,12 @@ static void on_sample(const float gyro[3], const float accel[3], float dt, void 
 			m->step_s = 0;
 		else if (m->step_s * 1000 >= CAL_STEADY_MS) {
 			const struct motion *mo = input_motion();
+			static const float none[3];
 
-			if (!mo->up_set)
+			if (has_accel() && !mo->up_set)
 				break;
-			motion_rec_tilt_begin(&m->rec, mo->up);
+			/* the tilt less any turn about gravity, if there is one */
+			motion_rec_tilt_begin(&m->rec, has_accel() ? mo->up : none);
 			m->step = CAL_TILT;
 			m->step_s = 0;
 		}
@@ -213,7 +258,15 @@ static void on_sample(const float gyro[3], const float accel[3], float dt, void 
 
 		show_progress(m, deg / CAL_TILT_DEG);
 		if (deg >= CAL_TILT_DEG)
-			cal_finish(m);
+			cal_tilted(m);
+		break;
+	}
+	case CAL_TURN: {
+		float deg = motion_rec_tilt(&m->rec, gyro, m->bias, dt);
+
+		show_progress(m, deg / CAL_TILT_DEG);
+		if (deg >= CAL_TILT_DEG)
+			cal_turned(m);
 		break;
 	}
 	case CAL_OFF:
@@ -227,8 +280,8 @@ static void cal_start(struct motion_screen *m)
 	struct input_motion_info mi;
 
 	input_motion_info(&mi);
-	if (!mi.present)
-		return;
+	if (!mi.present || !mi.channels)
+		return;		/* nothing to calibrate */
 	m->step = CAL_STILL;
 	m->step_s = 0;
 	motion_rec_begin(&m->rec);
@@ -309,13 +362,15 @@ static void on_timer(lv_timer_t *t)
 	input_motion_info(&mi);
 	if (m->shown_valid && mi.present == m->shown.present && mi.bias_known == m->shown.bias_known &&
 	    mi.axes_set == m->shown.axes_set && fabsf(mi.rate_hz - m->shown.rate_hz) < 1 &&
-	    !strcmp(mi.name, m->shown.name))
+	    !strcmp(mi.name, m->shown.name) && mi.channels == m->shown.channels &&
+	    mi.aim_x == m->shown.aim_x && mi.aim_y == m->shown.aim_y)
 		return;
 	m->shown = mi;
 	m->shown_valid = true;
 	if (!mi.present) {
 		lv_label_set_text(m->status, tr(S_MOTION_NONE));
 		lv_obj_set_style_text_color(m->status, UI_COLOR_WARN, 0);
+		lv_obj_set_hidden(m->chan, true);
 		lv_obj_set_hidden(m->zero, true);
 		lv_obj_set_hidden(m->axes, true);
 		if (m->step != CAL_OFF)
@@ -325,11 +380,18 @@ static void on_timer(lv_timer_t *t)
 	lv_label_set_text_fmt(m->status, tr(S_MOTION_RATE_FMT), mi.name[0] ? mi.name : "?",
 			      (int)lrintf(mi.rate_hz));
 	lv_obj_set_style_text_color(m->status, UI_COLOR_ON, 0);
-	lv_obj_set_hidden(m->zero, false);
-	lv_obj_set_hidden(m->axes, false);
+	/* what the sensor lacks */
+	lv_obj_set_hidden(m->chan, mi.channels == (MOTION_CH_GYRO | MOTION_CH_ACCEL));
+	lv_label_set_text(m->chan, tr(!mi.channels ? S_MOTION_NO_AIM
+				       : !(mi.channels & MOTION_CH_GYRO) ? S_MOTION_NO_GYRO
+				       : S_MOTION_NO_ACCEL));
+	lv_obj_set_style_text_color(m->chan, UI_COLOR_WARN, 0);
+	lv_obj_set_hidden(m->zero, !mi.channels);
+	lv_obj_set_hidden(m->axes, !mi.channels);
 	lv_label_set_text(m->zero, tr(mi.bias_known ? S_MOTION_ZERO_OK : S_MOTION_ZERO_WAIT));
 	lv_obj_set_style_text_color(m->zero, mi.bias_known ? UI_COLOR_DIM : UI_COLOR_WARN, 0);
-	lv_label_set_text(m->axes, tr(mi.axes_set ? S_MOTION_AXES_OK : S_MOTION_AXES_NONE));
+	lv_label_set_text(m->axes, tr(mi.axes_set ? S_MOTION_AXES_OK
+				      : mi.aim_x ? S_MOTION_AXES_NONE : S_MOTION_AXES_NEEDED));
 	lv_obj_set_style_text_color(m->axes, mi.axes_set ? UI_COLOR_DIM : UI_COLOR_WARN, 0);
 }
 
@@ -422,6 +484,7 @@ static void *motion_screen_init(lv_obj_t *parent, lv_obj_t **root)
 		lv_obj_add_state(m->rows[0], LV_STATE_FOCUSED);
 	}
 	m->status = line_new(col);
+	m->chan = line_new(col);
 	m->zero = line_new(col);
 	m->axes = line_new(col);
 	m->note = line_new(col);

@@ -6,7 +6,6 @@
 #include <string.h>
 
 #define DEG2RAD 0.017453292519943295f
-#define MOTION_TIGHT_DPS 0.3f		/* slower still: scaled down (what is left of the bias) */
 #define REC_SPREAD_G 3.0f		/* deg/s: the calibration's "still" */
 #define REC_SPREAD_A 0.05f		/* g */
 
@@ -35,16 +34,68 @@ static bool normalize(float v[3])
 void motion_init(struct motion *m)
 {
 	memset(m, 0, sizeof(*m));
-	m->still_gyro = MOTION_STILL_GYRO;
+	motion_set_sensor(m, MOTION_CH_GYRO | MOTION_CH_ACCEL, 0, 0);
 }
 
-void motion_set_noise(struct motion *m, float rms)
+/* k times the noise within lo..hi, def if the noise is unknown */
+static float by_noise(float rms, float k, float lo, float hi, float def)
 {
-	float t = rms * MOTION_STILL_NOISE;
+	float t = rms * k;
 
-	m->still_gyro = !(rms > 0) ? MOTION_STILL_GYRO
-		      : t < MOTION_STILL_MIN ? MOTION_STILL_MIN
-		      : t > MOTION_STILL_MAX ? MOTION_STILL_MAX : t;
+	return !(rms > 0) ? def : t < lo ? lo : t > hi ? hi : t;
+}
+
+void motion_set_sensor(struct motion *m, unsigned channels, float gyro_rms, float accel_rms)
+{
+	m->channels = channels & (MOTION_CH_GYRO | MOTION_CH_ACCEL);
+	m->still_gyro = by_noise(gyro_rms, MOTION_STILL_NOISE, MOTION_STILL_MIN, MOTION_STILL_MAX,
+				 MOTION_STILL_GYRO);
+	m->still_accel = by_noise(accel_rms, MOTION_STILL_NOISE, MOTION_STILL_ACCEL_MIN,
+				  MOTION_STILL_ACCEL_MAX, MOTION_STILL_ACCEL);
+	m->smooth_dps = by_noise(gyro_rms, MOTION_SMOOTH_NOISE, MOTION_SMOOTH_MIN, MOTION_SMOOTH_MAX_DPS,
+				 MOTION_SMOOTH_DPS);
+	m->tight_dps = by_noise(gyro_rms, MOTION_TIGHT_NOISE, MOTION_TIGHT_MIN, MOTION_TIGHT_MAX,
+				MOTION_TIGHT_DPS);
+	if (!(m->channels & MOTION_CH_GYRO)) {
+		/* the gyro made from gravity has no zero to measure */
+		memset(m->bias, 0, sizeof(m->bias));
+		m->bias_known = true;
+	}
+}
+
+void motion_can_aim(const struct motion *m, bool *x, bool *y)
+{
+	bool accel = m->channels & MOTION_CH_ACCEL;
+
+	/* left and right: about gravity, or the calibrated vertical; without
+	 * a gyro the turn about gravity cannot be seen */
+	*x = m->channels & MOTION_CH_GYRO ? accel || m->cal.up_set : false;
+	*y = m->channels && m->cal.axes_set;
+}
+
+void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, float gyro[3])
+{
+	float a[3] = { accel[0], accel[1], accel[2] }, prev[3], k;
+	int i;
+
+	gyro[0] = gyro[1] = gyro[2] = 0;
+	if (!normalize(a) || !(dt > 0))
+		return;
+	if (!s->set) {
+		memcpy(s->up, a, sizeof(s->up));
+		s->set = true;
+		return;
+	}
+	memcpy(prev, s->up, sizeof(prev));
+	k = dt / (MOTION_SYNTH_S + dt);
+	for (i = 0; i < 3; i++)
+		s->up[i] += (a[i] - s->up[i]) * k;
+	normalize(s->up);
+	/* a vector fixed in the world turns by -w x v as seen from the sensor:
+	 * w (across it) = new x old / dt */
+	gyro[0] = (s->up[1] * prev[2] - s->up[2] * prev[1]) / dt / DEG2RAD;
+	gyro[1] = (s->up[2] * prev[0] - s->up[0] * prev[2]) / dt / DEG2RAD;
+	gyro[2] = (s->up[0] * prev[1] - s->up[1] * prev[0]) / dt / DEG2RAD;
 }
 
 void motion_set_cal(struct motion *m, const struct motion_cal *c)
@@ -53,12 +104,15 @@ void motion_set_cal(struct motion *m, const struct motion_cal *c)
 		m->cal = *c;
 	else
 		memset(&m->cal, 0, sizeof(m->cal));
-	if (c && c->bias_set) {
+	/* the gyro made from gravity (no gyro) has no zero: none is taken */
+	if (c && c->bias_set && (m->channels & MOTION_CH_GYRO)) {
 		memcpy(m->bias, c->bias, sizeof(m->bias));
 		m->bias_known = true;
 	}
 	if (m->cal.axes_set && !normalize(m->cal.right))
 		m->cal.axes_set = false;
+	if (m->cal.up_set && !normalize(m->cal.up))
+		m->cal.up_set = false;
 }
 
 static void still_reset(struct motion *m)
@@ -94,13 +148,14 @@ static void still_add(struct motion *m, const float gyro[3], const float accel[3
 
 		mean[k] = mg;
 		if (vg > (double)m->still_gyro * m->still_gyro ||
-		    va > (double)MOTION_STILL_ACCEL * MOTION_STILL_ACCEL || fabs(mg) > MOTION_BIAS_MAX ||
+		    ((m->channels & MOTION_CH_ACCEL) &&
+		     va > (double)m->still_accel * m->still_accel) || fabs(mg) > MOTION_BIAS_MAX ||
 		    /* a slow steady turn is not a new zero */
 		    (m->bias_known && fabs(mg - m->bias[k]) > MOTION_BIAS_STEP))
 			still = false;
 	}
 	m->still = still;
-	if (still) {
+	if (still && (m->channels & MOTION_CH_GYRO)) {
 		for (k = 0; k < 3; k++)
 			m->bias[k] = (float)mean[k];
 		m->bias_known = true;
@@ -135,16 +190,16 @@ static void gravity(struct motion *m, const float g[3], const float accel[3], fl
 		memcpy(m->up, a, sizeof(m->up));
 }
 
-/* Turns slower than MOTION_SMOOTH_DPS go through an average of the last
+/* Turns slower than m->smooth_dps go through an average of the last
  * MOTION_SMOOTH_S, faster ones as they are, in between some of each */
 static void smooth(struct motion *m, float *rx, float *ry, float dt)
 {
-	float mag = hypotf(*rx, *ry), half = MOTION_SMOOTH_DPS / 2, w, sx = 0, sy = 0, st = 0;
+	float mag = hypotf(*rx, *ry), half = m->smooth_dps / 2, w, sx = 0, sy = 0, st = 0;
 	unsigned i, idx;
 
-	if (mag < MOTION_TIGHT_DPS) {
-		*rx *= mag / MOTION_TIGHT_DPS;
-		*ry *= mag / MOTION_TIGHT_DPS;
+	if (mag < m->tight_dps) {
+		*rx *= mag / m->tight_dps;
+		*ry *= mag / m->tight_dps;
 	}
 	w = (mag - half) / half;
 	w = w < 0 ? 0 : w > 1 ? 1 : w;
@@ -176,11 +231,20 @@ void motion_feed(struct motion *m, const float gyro[3], const float accel[3], fl
 	still_add(m, gyro, accel, dt);
 	for (k = 0; k < 3; k++)
 		g[k] = gyro[k] - m->bias[k];
-	gravity(m, g, accel, dt);
-	if (!m->up_set || !dt)
+	if (m->channels & MOTION_CH_ACCEL) {
+		gravity(m, g, accel, dt);
+		if (!m->up_set)
+			return;
+	}
+	if (!dt)
 		return;
-	yaw = dot(g, m->up);
-	if (m->cal.axes_set) {
+	if (!(m->channels & MOTION_CH_ACCEL)) {
+		/* no gravity: the device's own axes, as calibrated */
+		yaw = m->cal.up_set ? dot(g, m->cal.up) : 0;
+		pitch = m->cal.axes_set ? dot(g, m->cal.right) : 0;
+	} else if (!m->cal.axes_set) {
+		yaw = dot(g, m->up);
+	} else {
 		float perp[3], wy, pl;
 
 		pitch = dot(g, m->cal.right);
@@ -320,6 +384,13 @@ int motion_cal_format(const struct motion_cal *c, char *buf, size_t size)
 			return -1;
 		n += w;
 	}
+	if (c->up_set) {
+		w = snprintf(buf + n, size - n, "%sup %.4f %.4f %.4f", n ? " " : "",
+			     (double)c->up[0], (double)c->up[1], (double)c->up[2]);
+		if (w < 0 || (size_t)w >= size - n)
+			return -1;
+		n += w;
+	}
 	return n;
 }
 
@@ -356,6 +427,11 @@ bool motion_cal_parse(const char *s, struct motion_cal *c)
 			if (!parse3(&s, r.right) || !normalize(r.right))
 				return false;
 			r.axes_set = true;
+		} else if (!strncmp(s, "up", 2)) {
+			s += 2;
+			if (!parse3(&s, r.up) || !normalize(r.up))
+				return false;
+			r.up_set = true;
 		} else {
 			return false;
 		}

@@ -127,9 +127,13 @@ void input_set_stick_tune(int stick, const struct input_stick_tune *t);	/* NULL:
  * A motion sensor (drivers/input_imu.c; core/motion.h does the math). The
  * driver reports each sample, then input_report_motion_end() after a batch
  * of them hands the listener what the device turned meanwhile (GP_EV_MOTION;
- * only once it knows the gyro's zero). The driver names the sensor
- * (input_motion_sensor(): "<chip>-<serial>"); each one has a calibration of
- * its own, kept in the sticks' file ("gyro.<id> = <motion_cal_format()>").
+ * only once it knows the gyro's zero). The driver describes the sensor as
+ * the device says it (input_motion_sensor(): an id "<chip>-<serial>", its
+ * channels and noise); nothing here knows a chip. Each sensor has a
+ * calibration of its own, kept in the sticks' file ("gyro.<id> =
+ * <motion_cal_format()>"). A sensor without a gyro gets one made from
+ * gravity (motion_synth_gyro()), one without an accelerometer aims in its
+ * own calibrated axes (core/motion.h).
  */
 #define INPUT_MOTION_ID_LEN 64
 #define INPUT_MOTION_CALS 8
@@ -138,18 +142,27 @@ struct motion_cal;
 
 struct input_motion_info {
 	bool present;		/* a sensor is plugged in */
-	char name[17];		/* its chip ("ICM-20948", "FAKE"), "" unknown */
+	char name[17];		/* as the device names it, "" unknown */
 	float rate_hz;		/* its samples a second */
 	bool bias_known;	/* the gyro's zero measured (lain still) or calibrated */
-	bool axes_set;		/* up and down calibrated */
+	bool axes_set;		/* calibrated: up and down (and, without an accelerometer, left and right) */
+	unsigned channels;	/* MOTION_CH_* the sensor has */
+	bool aim_x, aim_y;	/* it turns the view left and right, up and down now */
 	bool still;		/* it lay still the last second */
 	float rate_x, rate_y;	/* deg/s now: right, down */
 };
 
 void input_motion_present(bool present, float rate_hz);
-/* Which sensor it is: id [A-Za-z0-9_-] (another one starts afresh: its zero,
- * its calibration), the chip's name, its gyro noise (deg/s rms, 0 unknown) */
-void input_motion_sensor(const char *id, const char *name, float gyro_noise);
+/* Which sensor it is, as the device says: another id (or other channels)
+ * starts afresh: its zero, its calibration */
+struct input_motion_desc {
+	const char *id;		/* [A-Za-z0-9_-] */
+	const char *name;	/* for the user */
+	unsigned channels;	/* MOTION_CH_GYRO, MOTION_CH_ACCEL */
+	float gyro_noise;	/* deg/s rms at rest, 0 unknown */
+	float accel_noise;	/* g rms at rest, 0 unknown */
+};
+void input_motion_sensor(const struct input_motion_desc *d);
 
 /*
  * The sensor as a whole, for every game (the motion screen sets it, saved
@@ -167,7 +180,8 @@ struct input_motion_tune {
 
 void input_motion_tune(struct input_motion_tune *t);
 void input_set_motion_tune(const struct input_motion_tune *t);	/* NULL: the default */
-void input_report_motion(const float gyro[3], const float accel[3], float dt);	/* deg/s, g, s */
+/* deg/s, g, s; a channel the sensor lacks is ignored (0) */
+void input_report_motion(const float gyro[3], const float accel[3], float dt);
 void input_report_motion_end(void);
 void input_motion_info(struct input_motion_info *mi);
 const struct motion *input_motion(void);	/* for "up" and the bias */

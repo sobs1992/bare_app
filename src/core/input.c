@@ -64,7 +64,9 @@ static struct {
 		bool cal_set;	/* m.cal came from the file or the calibration */
 		char id[INPUT_MOTION_ID_LEN];	/* the sensor now ("" none yet) */
 		char name[17];
-		float noise;
+		unsigned channels;
+		float noise, accel_noise;
+		struct motion_synth synth;	/* the gyro of a sensor without one */
 		/* calibrations by sensor id; "" the one from before sensors had ids */
 		struct {
 			char id[INPUT_MOTION_ID_LEN];
@@ -358,7 +360,7 @@ static bool cal_store(const char *id, const struct motion_cal *c)
 {
 	int i = cal_find(id);
 
-	if (!c || !(c->bias_set || c->axes_set)) {
+	if (!c || !(c->bias_set || c->axes_set || c->up_set)) {
 		if (i >= 0)
 			in.motion.cals[i] = in.motion.cals[--in.motion.ncals];
 		return true;
@@ -375,14 +377,11 @@ static bool cal_store(const char *id, const struct motion_cal *c)
 	return true;
 }
 
-/* The sensor's calibration into core/motion: its own, else (an ICM-20948)
- * the one kept before sensors had ids, which was the ICM-20948's */
+/* The sensor's calibration into core/motion */
 static void cal_apply(void)
 {
 	int i = in.motion.id[0] ? cal_find(in.motion.id) : -1;	/* no sensor named yet: none */
 
-	if (i < 0 && in.motion.id[0] && !strncmp(in.motion.name, "ICM-20948", 9))
-		i = cal_find("");
 	in.motion.cal_set = i >= 0;
 	motion_set_cal(&in.motion.m, i >= 0 ? &in.motion.cals[i].cal : NULL);
 }
@@ -398,8 +397,7 @@ static bool id_ok(const char *id)
 
 /*
  * The sensor's lines: "gyro.sensitivity = 1.0", "gyro.invert_x = 1" (the
- * tune), "gyro.<sensor id> = <motion_cal_format()>" (its calibration),
- * "gyro = ..." (field "": the one from before sensors had ids)
+ * tune), "gyro.<sensor id> = <motion_cal_format()>" (its calibration)
  */
 static bool load_gyro_line(const char *field, const char *value)
 {
@@ -410,7 +408,7 @@ static bool load_gyro_line(const char *field, const char *value)
 	if (strcmp(field, "sensitivity") && strcmp(field, "invert_x") && strcmp(field, "invert_y")) {
 		struct motion_cal mc;
 
-		if (!id_ok(field) || !motion_cal_parse(value, &mc) || !cal_store(field, &mc))
+		if (!*field || !id_ok(field) || !motion_cal_parse(value, &mc) || !cal_store(field, &mc))
 			return false;
 		cal_apply();
 		return true;
@@ -584,26 +582,43 @@ void input_set_devices_cb(void (*cb)(uint32_t devices))
 	in.devices_cb = cb;
 }
 
-void input_motion_sensor(const char *id, const char *name, float gyro_noise)
+void input_motion_sensor(const struct input_motion_desc *d)
 {
-	if (!id_ok(id) || strlen(id) >= INPUT_MOTION_ID_LEN)
-		id = "unknown";
-	if (!strcmp(id, in.motion.id) && gyro_noise == in.motion.noise)
+	const char *id = d->id && id_ok(d->id) && strlen(d->id) < INPUT_MOTION_ID_LEN ? d->id : "unknown";
+	unsigned ch = d->channels & (MOTION_CH_GYRO | MOTION_CH_ACCEL);
+
+	if (!strcmp(id, in.motion.id) && ch == in.motion.channels && d->gyro_noise == in.motion.noise &&
+	    d->accel_noise == in.motion.accel_noise)
 		return;
-	if (strcmp(id, in.motion.id)) {
+	if (strcmp(id, in.motion.id) || ch != in.motion.channels) {
 		/* another sensor: its zero, its "up", its calibration */
-		LOGI(TAG, "motion sensor %s", id);
+		LOGI(TAG, "motion sensor %s:%s%s%s", id, ch & MOTION_CH_GYRO ? " gyro" : "",
+		     ch & MOTION_CH_ACCEL ? " accelerometer" : "", ch ? "" : " nothing to aim with");
 		motion_init(&in.motion.m);
+		memset(&in.motion.synth, 0, sizeof(in.motion.synth));
 	}
 	snprintf(in.motion.id, sizeof(in.motion.id), "%s", id);
-	snprintf(in.motion.name, sizeof(in.motion.name), "%s", name ? name : "");
-	in.motion.noise = gyro_noise;
-	motion_set_noise(&in.motion.m, gyro_noise);
+	snprintf(in.motion.name, sizeof(in.motion.name), "%s", d->name ? d->name : "");
+	in.motion.channels = ch;
+	in.motion.noise = d->gyro_noise;
+	in.motion.accel_noise = d->accel_noise;
+	motion_set_sensor(&in.motion.m, ch, d->gyro_noise, d->accel_noise);
 	cal_apply();
 }
 
 void input_report_motion(const float gyro[3], const float accel[3], float dt)
 {
+	static const float none[3];
+	float made[3];
+
+	if (in.motion.id[0] && !in.motion.channels)
+		return;		/* nothing to aim with */
+	if (in.motion.id[0] && !(in.motion.channels & MOTION_CH_ACCEL))
+		accel = none;
+	if (in.motion.id[0] && !(in.motion.channels & MOTION_CH_GYRO)) {
+		motion_synth_gyro(&in.motion.synth, accel, dt, made);
+		gyro = made;
+	}
 	motion_feed(&in.motion.m, gyro, accel, dt);
 	if (in.motion.cb)
 		in.motion.cb(gyro, accel, dt, in.motion.ud);
@@ -626,9 +641,11 @@ void input_motion_info(struct input_motion_info *mi)
 
 	*mi = (struct input_motion_info){
 		.present = in.motion.present, .rate_hz = in.motion.rate_hz,
-		.bias_known = m->bias_known, .axes_set = m->cal.axes_set, .still = m->still,
+		.bias_known = m->bias_known, .still = m->still, .channels = m->channels,
+		.axes_set = m->cal.axes_set && (m->cal.up_set || (m->channels & MOTION_CH_ACCEL)),
 		.rate_x = in.motion.present ? m->rate_x : 0, .rate_y = in.motion.present ? m->rate_y : 0,
 	};
+	motion_can_aim(m, &mi->aim_x, &mi->aim_y);
 	snprintf(mi->name, sizeof(mi->name), "%s", in.motion.name);
 }
 
@@ -651,10 +668,8 @@ bool input_motion_calibration(struct motion_cal *c)
 
 void input_set_motion_calibration(const struct motion_cal *c)
 {
-	cal_store(in.motion.id, c);
-	/* the ICM-20948's from before sensors had ids is replaced by its own */
-	if (in.motion.id[0] && !strncmp(in.motion.name, "ICM-20948", 9))
-		cal_store("", NULL);
+	if (in.motion.id[0])
+		cal_store(in.motion.id, c);
 	cal_apply();
 }
 

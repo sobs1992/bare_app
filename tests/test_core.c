@@ -357,7 +357,7 @@ static void test_motion(void)
 }
 
 #ifdef CONFIG_INPUT_IMU
-static float imu_turned;	/* GP_EV_MOTION seen: x */
+static float imu_turned, imu_my;	/* GP_EV_MOTION seen: x, y */
 static int imu_events;
 
 static uint32_t imu_devices_seen;
@@ -374,6 +374,7 @@ static void on_imu_event(const struct gp_event *ev, void *ud)
 	(void)ud;
 	if (ev->type == GP_EV_MOTION) {
 		imu_turned += ev->mx;
+		imu_my += ev->my;
 		imu_events++;
 	}
 }
@@ -409,19 +410,42 @@ static size_t imu_sample(uint8_t *out, uint32_t t, uint16_t seq, int16_t gz)
 	return imu_frame(out, 0x04, p, 20);
 }
 
-/* PKT_INFO of an ICM-20948 at 1125 Hz, +-2000 deg/s, +-4 g */
-static size_t imu_info_icm(uint8_t *out)
+/* PKT_INFO: a sensor as the device describes it (60 bytes) */
+static size_t imu_info(uint8_t *out, const char *name, uint8_t id, uint8_t channels, uint32_t odr,
+		       float gs, float as, float gnoise, float anoise)
 {
-	uint8_t info[56] = { 3, 0, 2, 1, 'I', 'C', 'M', '-', '2', '0', '9', '4', '8' };
-	uint32_t odr = 1125000;
-	float gs = 2000.0f / 32768, as = 4.0f / 32768;
+	uint8_t info[60] = { 3, 0, 3, id };
 
-	info[20] = 1 | 2 | 4 | 8;
+	strncpy((char *)info + 4, name, 16);
+	info[20] = channels;
 	info[21] = 4;
 	memcpy(info + 24, &odr, 4);
 	memcpy(info + 28, &gs, 4);
 	memcpy(info + 32, &as, 4);
-	return imu_frame(out, 0x03, info, 56);
+	memcpy(info + 52, &gnoise, 4);
+	memcpy(info + 56, &anoise, 4);
+	return imu_frame(out, 0x03, info, 60);
+}
+
+/* A sensor at 1125 Hz, +-2000 deg/s, +-4 g, all channels, noise unknown */
+static size_t imu_info_test(uint8_t *out)
+{
+	return imu_info(out, "TESTIMU", 7, 1 | 2 | 4 | 8, 1125000, 2000.0f / 32768, 4.0f / 32768, 0, 0);
+}
+
+/* n samples of a turn (deg/s) through input_report_motion() at 1 kHz, the
+ * accelerometer turned by 'tilt' degrees about x as it goes (0: flat) */
+static void imu_feed(int n, float wx, float wy, float wz, float tilt0, float tilt1)
+{
+	for (int i = 0; i < n; i++) {
+		float th = (tilt0 + (tilt1 - tilt0) * (i + 1) / n) * 0.017453293f;
+		float g[3] = { wx, wy, wz }, a[3] = { 0, sinf(th), cosf(th) };
+
+		input_report_motion(g, a, 0.001f);
+		if (i % 4 == 3)
+			input_report_motion_end();
+	}
+	input_report_motion_end();
 }
 
 static void test_imu(void)
@@ -435,7 +459,7 @@ static void test_imu(void)
 
 	CHECK(imu_crc16((const uint8_t *)"123456789", 9) == 0x29B1);	/* CCITT-FALSE check value */
 	input_init(ml, NULL, on_imu_event, NULL);
-	n += imu_info_icm(stream + n);
+	n += imu_info_test(stream + n);
 	n += imu_frame(stream + n, 0x02, status, 36);
 	/* 2 s still at 1000 Hz (the sensor's clock, 1125 Hz nominal), then 1 s
 	 * turning at 32.8 deg/s: raw 537 = 32.78 deg/s at 2000 deg/s full scale;
@@ -450,8 +474,9 @@ static void test_imu(void)
 	for (off = 0; off < n; off += 77)	/* in pieces that cut frames */
 		imu_parser_feed(&p, stream + off, n - off < 77 ? n - off : 77);
 	CHECK(p.have_status && p.imu_ok && p.samples == 2999 && p.bad_crc == 0);
-	CHECK(p.proto == 3 && !strcmp(p.name, "ICM-20948") && p.info_seq == 1);
-	CHECK(fabsf(p.period_us - 1000) < 1);
+	CHECK(p.proto == 3 && !strcmp(p.name, "TESTIMU") && p.info_seq == 1 && p.channels == 15);
+	CHECK(fabsf(p.period_us - 1000) < 1);	/* measured over 2 s of the sensor's clock */
+	CHECK(p.batch_bytes == IMU_SAMPLE_FRAME);
 	CHECK(imu_events > 0 && fabsf(imu_turned + 32.78f) < 1.5f);
 	/* a frame with a bad CRC is skipped */
 	n = imu_sample(stream, 3000000, (uint16_t)(3000 + 65000), 0);
@@ -464,7 +489,7 @@ static void test_imu(void)
 	n += imu_frame(stream + n, 0x01, v2imu, 28);
 	imu_parser_feed(&p, stream, n);
 	CHECK(p.samples == 2999 && p.proto == 2 && !p.have_info);
-	n = imu_info_icm(stream);
+	n = imu_info_test(stream);
 	n += imu_frame(stream + n, 0x02, status, 36);
 	imu_parser_feed(&p, stream, n);
 	CHECK(p.proto == 3 && p.have_info);
@@ -504,27 +529,27 @@ static void test_imu(void)
 		input_set_motion_tune(NULL);
 	}
 
-	/* protocol v3: the sensor says its units and rate (a fake one, unlike
-	 * the ICM-20948: 833 Hz, 70 mdps and 0.122 mg a count), batches of 3 */
+	/* the sensor says its units and rate (unlike the one above: 833 Hz, 70
+	 * mdps and 0.122 mg a count, noise 0.12 deg/s and 0.0006 g), batches of
+	 * 3; core/input learns it from the info, before its samples */
 	{
-		uint8_t info[56] = { 3, 0, 2, 2, 'F', 'A', 'K', 'E' }, hdr[8 + 36];
-		uint32_t odr3 = 833000;
-		float gs = 0.07f, as = 0.000122f, noise = 0.12f;
-		uint8_t st3[36] = { 3, 0, 2, 0x1b };
+		uint8_t hdr[8 + 36], st3[36] = { 3, 0, 3, 0x1b };
 		size_t m = 0;
+		struct motion_cal c;
+		FILE *f = fopen("test_cal.conf", "w");
 
+		/* this sensor's calibration is waiting for it */
+		fputs("gyro.FAKE-SER1 = right 0 1 0\n", f);
+		fclose(f);
+		CHECK(input_load_calibration("test_cal.conf") == 0);
+		unlink("test_cal.conf");
 		imu_parser_init(&p);
-		memcpy(info + 24, &odr3, 4);
-		memcpy(info + 28, &gs, 4);
-		memcpy(info + 32, &as, 4);
-		memcpy(info + 52, &noise, 4);
-		info[20] = 1 | 2 | 8;
-		info[21] = 4;
+		snprintf(p.serial, sizeof(p.serial), "SER1");
 		/* samples before the info: units unknown, dropped */
 		memset(hdr, 0, sizeof(hdr));
 		hdr[6] = 3;
 		m += imu_frame(stream + m, 0x04, hdr, 8 + 36);
-		m += imu_frame(stream + m, 0x03, info, 56);
+		m += imu_info(stream + m, "FAKE", 2, 1 | 2 | 8, 833000, 0.07f, 0.000122f, 0.12f, 0.0006f);
 		m += imu_frame(stream + m, 0x02, st3, 36);
 		imu_turned = 0;
 		/* 3 s still, then 1 s at 45 deg/s about z (643 counts of 0.07) */
@@ -546,19 +571,29 @@ static void test_imu(void)
 		for (off = 0; off < m; off += 61)
 			imu_parser_feed(&p, stream + off, m - off < 61 ? m - off : 61);
 		CHECK(p.proto == 3 && p.have_info && p.imu_id == 2 && !strcmp(p.name, "FAKE"));
-		CHECK(p.info_seq == 1 && p.gyro_noise == noise && p.fake && p.imu_ok);
+		CHECK(p.info_seq == 1 && p.gyro_noise == 0.12f && p.accel_noise == 0.0006f);
+		CHECK(p.channels == (1 | 2 | 8) && p.fake && p.imu_ok && p.batch_bytes == 50);
 		CHECK(p.samples == 3 * (4 * 833 / 3) && p.bad_crc == 0);
 		CHECK(p.period_measured && fabsf(p.period_us - 1e6f / 833) < 1);
+		/* core/input: the sensor, its channels and noise, its calibration */
+		CHECK(input_motion()->channels == (MOTION_CH_GYRO | MOTION_CH_ACCEL));
+		CHECK(fabsf(input_motion()->still_gyro - 0.48f) < 1e-5f &&
+		      input_motion()->still_accel == MOTION_STILL_ACCEL_MIN);	/* 4 x 0.0006, at least */
+		CHECK(input_motion_calibration(&c) && c.axes_set && c.right[1] == 1);
 		/* about 45 degrees to the left: x negative (the zero measured meanwhile) */
 		CHECK(fabsf(imu_turned + 45) < 2.5f);
-		/* no sensor on the device: units forgotten, its samples dropped */
-		memset(info + 3, 0, 17);
-		n = imu_frame(stream, 0x03, info, 56);
+		/* a channel without units is not there */
+		n = imu_info(stream, "FAKE", 2, 1 | 2 | 8, 833000, 0, 0.000122f, 0.12f, 0.0006f);
 		imu_parser_feed(&p, stream, n);
-		CHECK(p.imu_id == 0 && !p.name[0] && p.info_seq == 2);
+		CHECK(p.channels == (2 | 8) && p.info_seq == 2 && input_motion()->channels == MOTION_CH_ACCEL);
+		/* no sensor on the device: units forgotten, its samples dropped */
+		n = imu_info(stream, "", 0, 0, 0, 0, 0, 0, 0);
+		imu_parser_feed(&p, stream, n);
+		CHECK(p.imu_id == 0 && !p.name[0] && !p.channels && p.info_seq == 3);
+		input_set_motion_calibration(NULL);
 	}
 
-	/* each sensor its own calibration; the old "gyro =" line is the ICM-20948's */
+	/* each sensor its own calibration, by its id alone */
 	{
 		struct motion_cal c;
 		FILE *f = fopen("test_cal.conf", "w");
@@ -567,19 +602,22 @@ static void test_imu(void)
 		fputs("gyro = bias 0.1 0.2 0.3 right -1 0 0\ngyro.FAKE-X1 = right 0 1 0\n", f);
 		fclose(f);
 		CHECK(input_load_calibration("test_cal.conf") == 0);
-		/* no sensor named yet: no calibration, not even the old line */
+		/* no sensor named yet: no calibration; a line without a sensor is no one's */
 		CHECK(!input_motion_calibration(&c) && !input_motion()->cal.axes_set);
-		input_motion_sensor("ICM-20948-AB12", "ICM-20948", 0.15f);
-		CHECK(input_motion_calibration(&c) && c.axes_set && c.right[0] == -1);
-		CHECK(input_motion()->still_gyro == 0.6f);
-		input_motion_sensor("FAKE-X1", "FAKE", 0.12f);
+		input_motion_sensor(&(struct input_motion_desc){ "AAA-1", "AAA", 3, 0.15f, 0.0022f });
+		CHECK(!input_motion_calibration(&c));
+		CHECK(fabsf(input_motion()->still_gyro - 0.6f) < 1e-5f &&
+		      fabsf(input_motion()->still_accel - 0.0088f) < 1e-6f);
+		CHECK(fabsf(input_motion()->smooth_dps - 3.75f) < 1e-5f &&
+		      fabsf(input_motion()->tight_dps - 0.3f) < 1e-6f);
+		input_motion_sensor(&(struct input_motion_desc){ "FAKE-X1", "FAKE", 3, 0.12f, 0 });
 		CHECK(input_motion_calibration(&c) && c.right[1] == 1 && !c.bias_set);
-		CHECK(!input_motion()->bias_known && input_motion()->still_gyro == 0.48f);
-		input_motion_sensor("FAKE-X2", "FAKE", 0);
+		CHECK(!input_motion()->bias_known && input_motion()->still_accel == MOTION_STILL_ACCEL);
+		input_motion_sensor(&(struct input_motion_desc){ "FAKE-X2", "FAKE", 3, 0, 0 });
 		CHECK(!input_motion_calibration(&c) && input_motion()->still_gyro == MOTION_STILL_GYRO);
+		CHECK(input_motion()->smooth_dps == MOTION_SMOOTH_DPS);
 		input_set_motion_calibration(&(struct motion_cal){ .bias_set = true, .bias = { 1, 2, 3 } });
-		/* the ICM-20948's own calibration replaces the old line */
-		input_motion_sensor("ICM-20948-AB12", "ICM-20948", 0.15f);
+		input_motion_sensor(&(struct input_motion_desc){ "AAA-1", "AAA", 3, 0.15f, 0.0022f });
 		input_set_motion_calibration(&(struct motion_cal){ .axes_set = true, .right = { 0, 0, 1 } });
 		CHECK(input_save_calibration() == 0);
 		f = fopen("test_cal.conf", "r");
@@ -588,13 +626,72 @@ static void test_imu(void)
 			fclose(f);
 		CHECK(strstr(text, "gyro.FAKE-X1 = right 0.0000 1.0000 0.0000\n"));
 		CHECK(strstr(text, "gyro.FAKE-X2 = bias 1.0000 2.0000 3.0000\n"));
-		CHECK(strstr(text, "gyro.ICM-20948-AB12 = right 0.0000 0.0000 1.0000\n"));
+		CHECK(strstr(text, "gyro.AAA-1 = right 0.0000 0.0000 1.0000\n"));
 		CHECK(!strstr(text, "\ngyro = "));
 		CHECK(input_load_calibration("test_cal.conf") == 0);
-		input_motion_sensor("FAKE-X2", "FAKE", 0);
+		input_motion_sensor(&(struct input_motion_desc){ "FAKE-X2", "FAKE", 3, 0, 0 });
 		CHECK(input_motion_calibration(&c) && c.bias[2] == 3);
 		unlink("test_cal.conf");
 		input_set_motion_calibration(NULL);
+	}
+
+	/* a sensor without an accelerometer: its own axes, from the calibration */
+	{
+		struct input_motion_info mi;
+		struct motion_cal c = { .axes_set = true, .right = { 1, 0, 0 }, .up_set = true, .up = { 0, 0, 1 } };
+
+		input_motion_sensor(&(struct input_motion_desc){ "GYRO-1", "GYRO", MOTION_CH_GYRO, 0.15f, 0 });
+		input_motion_info(&mi);
+		CHECK(mi.channels == MOTION_CH_GYRO && !mi.aim_x && !mi.aim_y && !mi.axes_set);
+		imu_feed(1100, 0, 0, 0, 0, 0);	/* still: the zero, by the gyro alone */
+		CHECK(input_motion()->bias_known);
+		imu_turned = 0;
+		imu_feed(500, 0, 0, 60, 0, 0);
+		CHECK(imu_turned == 0);		/* no vertical known: nothing */
+		input_set_motion_calibration(&c);
+		input_motion_info(&mi);
+		CHECK(mi.aim_x && mi.aim_y && mi.axes_set);
+		imu_turned = 0;
+		imu_feed(500, 0, 0, 60, 0, 0);	/* 30 degrees to the left about its vertical */
+		CHECK(fabsf(imu_turned + 30) < 1);
+		input_set_motion_calibration(NULL);
+	}
+
+	/* a sensor without a gyro: one made from gravity; up and down only */
+	{
+		struct input_motion_info mi;
+		float y0;
+
+		imu_my = 0;
+		input_motion_sensor(&(struct input_motion_desc){ "ACC-1", "ACC", MOTION_CH_ACCEL, 0, 0.002f });
+		/* a gyro's zero in the calibration is not this sensor's to take */
+		input_set_motion_calibration(&(struct motion_cal){ .axes_set = true, .right = { 1, 0, 0 },
+								   .bias_set = true, .bias = { 1, 1, 1 } });
+		CHECK(input_motion()->bias[0] == 0);
+		input_motion_info(&mi);
+		CHECK(mi.bias_known && !mi.aim_x && mi.aim_y);
+		imu_feed(300, 0, 0, 0, 0, 0);
+		y0 = imu_my;
+		imu_turned = 0;
+		imu_feed(500, 0, 0, 0, 0, 20);	/* the top 20 degrees towards the player */
+		imu_feed(200, 0, 0, 0, 20, 20);
+		CHECK(fabsf(imu_my - y0 - 20) < 1.5f && fabsf(imu_turned) < 0.5f);
+		imu_turned = 0;
+		imu_feed(500, 0, 0, 90, 20, 20);	/* a gyro's turn is not seen */
+		CHECK(fabsf(imu_turned) < 0.5f);
+		input_set_motion_calibration(NULL);
+	}
+
+	/* neither: nothing to aim with, the samples are not used */
+	{
+		struct input_motion_info mi;
+
+		input_motion_sensor(&(struct input_motion_desc){ "MAG-1", "MAG", 0, 0, 0 });
+		input_motion_info(&mi);
+		CHECK(!mi.aim_x && !mi.aim_y && !mi.channels);
+		imu_turned = 0;
+		imu_feed(1500, 0, 0, 60, 0, 0);
+		CHECK(imu_turned == 0);
 	}
 
 	/* devices plugged in: the listener hears each change once */

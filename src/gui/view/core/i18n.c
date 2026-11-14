@@ -226,6 +226,17 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_UNPLUGGED]       = { "Unplugged" RU("Откл.") },
 	[S_GYRO_INVERT_X]   = { "Invert X" RU("Инверсия X") },
 	[S_GYRO_INVERT_Y]   = { "Invert Y" RU("Инверсия Y") },
+	[S_MOTION_NO_ACCEL] = { "No accelerometer: its axes come from the calibration"
+				RU("Нет акселерометра: оси задаёт калибровка") },
+	[S_MOTION_NO_GYRO]  = { "No gyro: only up and down, by the tilt"
+				RU("Нет гироскопа: только вверх-вниз, по наклону") },
+	[S_MOTION_NO_AIM]   = { "Neither a gyro nor an accelerometer: no aiming"
+				RU("Нет ни гироскопа, ни акселерометра: прицел недоступен") },
+	[S_MOTION_AXES_NEEDED] = { "Not calibrated: aiming after the calibration (A)"
+				   RU("Не откалиброван: прицел заработает после калибровки (A)") },
+	[S_MOTION_CAL_TURN] = { "Now turn it to the left" RU("Теперь поверните её влево") },
+	[S_MOTION_CAL_TILTED] = { "That was a tilt, not a turn: once more"
+				  RU("Это был наклон, а не поворот: ещё раз") },
 };
 
 static int lang = LANG_EN;
