@@ -379,7 +379,7 @@ static bool cal_store(const char *id, const struct motion_cal *c)
  * the one kept before sensors had ids, which was the ICM-20948's */
 static void cal_apply(void)
 {
-	int i = cal_find(in.motion.id);
+	int i = in.motion.id[0] ? cal_find(in.motion.id) : -1;	/* no sensor named yet: none */
 
 	if (i < 0 && in.motion.id[0] && !strncmp(in.motion.name, "ICM-20948", 9))
 		i = cal_find("");

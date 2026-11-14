@@ -567,6 +567,8 @@ static void test_imu(void)
 		fputs("gyro = bias 0.1 0.2 0.3 right -1 0 0\ngyro.FAKE-X1 = right 0 1 0\n", f);
 		fclose(f);
 		CHECK(input_load_calibration("test_cal.conf") == 0);
+		/* no sensor named yet: no calibration, not even the old line */
+		CHECK(!input_motion_calibration(&c) && !input_motion()->cal.axes_set);
 		input_motion_sensor("ICM-20948-AB12", "ICM-20948", 0.15f);
 		CHECK(input_motion_calibration(&c) && c.axes_set && c.right[0] == -1);
 		CHECK(input_motion()->still_gyro == 0.6f);
