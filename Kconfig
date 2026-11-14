@@ -89,7 +89,8 @@ config INPUT_IMU
 	  1209:0001 "USB Motion Sensor"), also plugged in later (with
 	  INPUT_HOTPLUG). Its gyro turns the view of a game as a mouse
 	  would; each game has it on or off and its sensitivity in its
-	  controls. Needs the kernel's cdc_acm.
+	  controls, the motion sensor's screen a sensitivity and inverted
+	  axes for every game. Needs the kernel's cdc_acm.
 
 config INPUT_SCRIPT
 	bool "Scripted input from stdin"

@@ -77,7 +77,7 @@
 - **Контекст** — это снимок состояния, в нём только значения: проценты, флаги,
   `enum`. Цвета, иконки и готовый текст в контекст не кладутся. Секции
   (`CTX_POWER`, `CTX_DISPLAY`, `CTX_NAV`, `CTX_SYSTEM`, `CTX_SETTINGS`, `CTX_AUDIO`,
-  `CTX_WIFI`, `CTX_USB_DISK`, `CTX_SYSMON`) — единицы изменения.
+  `CTX_WIFI`, `CTX_USB_DISK`, `CTX_SYSMON`, `CTX_INPUT`) — единицы изменения.
   `ctx_unlock(mask)` будит view, а view берёт снимок один раз за итерацию. Поэтому
   несколько записей между двумя кадрами приходят как одно изменение с последними
   значениями.
@@ -98,7 +98,7 @@ control делится по областям данных, а не по видж
 |---|---|---|
 | `ctl_app` | `ACT_QUIT`, `ACT_POWER_OFF` | останавливает цикл control; после `ACT_POWER_OFF` main() запускает `poweroff` платформы, если он есть |
 | `ctl_nav` | `ACT_OPEN_SCREEN`, `ACT_BACK` | `CTX_NAV` (стек экранов) |
-| `ctl_system` | — | `CTX_SYSTEM` (платформа, модель из DT) |
+| `ctl_system` | `ACT_SET_CLOCK`, `ACT_INPUT_DEVICES` | `CTX_SYSTEM` (платформа, модель из DT); `CTX_INPUT` (клавиатуры, мыши, датчик движения: маска, которую прислал view по `input_report_devices()` драйверов) |
 | `ctl_power` | `EV_POWER_CHANGED`, `ACT_SUSPEND` | `CTX_POWER`, уведомления; для `ACT_SUSPEND` запускает `suspend` платформы и ждёт пробуждения, затем `NOTIFY_RESUMED` |
 | `ctl_display` | `ACT_SET_BRIGHTNESS`, `ACT_SCREEN_OFF` | `CTX_DISPLAY` (то, что подсветка реально приняла); экран гасится питанием подсветки (`bl_power`), уровень сохраняется |
 | `ctl_audio` | `EV_MIXER_CHANGED`, `ACT_SET_VOLUME`, `ACT_VOLUME_STEP`, `ACT_SET_AUDIO_OUT` | `CTX_AUDIO`, `NOTIFY_VOLUME`; в режиме «авто» переключает выход по штекеру |

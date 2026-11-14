@@ -48,7 +48,6 @@ struct motion_screen {
 	float step_s;		/* seconds of samples in this step */
 	struct input_motion_info shown;
 	bool shown_valid;
-	lv_obj_t *col;		/* the text column, scrolled to the row chosen */
 	lv_obj_t *rows[TUNE_ROWS], *values[TUNE_ROWS];
 	int sel;		/* enum tune_row chosen */
 	bool tuned;		/* changed: saved when the screen closes */
@@ -386,7 +385,6 @@ static void *motion_screen_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_style_pad_row(col, ui_cell() / 2, 0);
 	lv_obj_set_scroll_dir(col, LV_DIR_VER);
 	lv_obj_set_scrollbar_mode(col, LV_SCROLLBAR_MODE_OFF);
-	m->col = col;
 	{
 		static const enum str_id names[TUNE_ROWS] = { S_SENSITIVITY, S_GYRO_INVERT_X,
 							       S_GYRO_INVERT_Y };

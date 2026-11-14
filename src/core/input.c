@@ -345,7 +345,7 @@ static bool load_gyro_line(const char *field, const char *value)
 
 	while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')
 		end++;
-	if (end == value || *end)
+	if (end == value || *end || !isfinite(v))
 		return false;
 	if (!strcmp(field, "sensitivity"))
 		t.sensitivity = v;
@@ -490,6 +490,8 @@ void input_set_motion_tune(const struct input_motion_tune *t)
 		return;
 	}
 	*to = *t;
+	if (!isfinite(to->sensitivity))
+		to->sensitivity = 1;
 	/* tenths, as the screen steps it */
 	to->sensitivity = roundf(clampf(t->sensitivity, INPUT_GYRO_SENS_MIN, INPUT_GYRO_SENS_MAX) * 10) / 10;
 }
