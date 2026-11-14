@@ -45,6 +45,7 @@ struct imu_parser {
 	char name[17];			/* the sensor, as the device names it; "" none */
 	uint8_t imu_id;			/* 0 none */
 	uint8_t channels;		/* PKT_INFO.channels: 1 gyro, 2 accel, 4 mag, 8 temp */
+	uint32_t odr_mhz;		/* PKT_INFO's rate */
 	unsigned info_seq;		/* +1 each time the sensor (or its units) changed */
 	float gyro_scale, accel_scale;	/* deg/s, g per count */
 	float gyro_noise;		/* deg/s rms at rest, 0 unknown */

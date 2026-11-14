@@ -81,6 +81,8 @@ float motion_synth_setup(struct motion_synth *s, float accel_rms, float rate_hz)
 
 	memset(s, 0, sizeof(*s));
 	s->span = span < MOTION_SYNTH_MIN_S ? MOTION_SYNTH_MIN_S : span > MOTION_SYNTH_MAX_S ? MOTION_SYNTH_MAX_S : span;
+	if (rate_hz > 0 && s->span < 3 / rate_hz)
+		s->span = 3 / rate_hz;	/* a slow sensor: a few of its samples at least */
 	/* the turn of an "up" smoothed over 'span' seen 'span' apart: about
 	 * 3.85 n / span^1.5 deg/s (measured on a real accelerometer at rest,
 	 * 1139 Hz: 0.28 deg/s for 0.0022 g, span 0.1 s) */
@@ -89,8 +91,8 @@ float motion_synth_setup(struct motion_synth *s, float accel_rms, float rate_hz)
 
 void motion_synth_reset(struct motion_synth *s)
 {
+	/* the usual step stays: the next gap is told by it as well */
 	s->set = false;
-	s->dt_avg = 0;
 	s->count = 0;
 	s->head = 0;
 }
@@ -104,9 +106,10 @@ void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, f
 	if (!normalize(a) || !(dt > 0))
 		return;
 	/* a gap (samples lost): "up" then is not now's */
-	if (s->set && ((s->span > 0 && dt > s->span) || (s->dt_avg > 0 && dt > MOTION_SYNTH_GAP * s->dt_avg)))
-		motion_synth_reset(s);
-	s->dt_avg = s->dt_avg > 0 ? s->dt_avg + (dt - s->dt_avg) * 0.01f : dt;
+	if (s->dt_avg > 0 ? dt > MOTION_SYNTH_GAP * s->dt_avg : s->set && dt > s->span)
+		motion_synth_reset(s);	/* a gap: not a step, the average keeps */
+	else
+		s->dt_avg = s->dt_avg > 0 ? s->dt_avg + (dt - s->dt_avg) * 0.01f : dt;
 	if (!s->set) {
 		memcpy(s->up, a, sizeof(s->up));
 		s->set = true;

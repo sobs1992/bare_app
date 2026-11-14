@@ -744,12 +744,13 @@ static void test_imu(void)
 		input_motion_present(true, 1000);
 		imu_feed(2000, 0, 0, 0, 0, 0);
 		input_motion_present(false, 0);
-		/* as the driver does it: the port opened (a gap), samples, then present */
+		/* as the driver does it: the port opened (a gap), then what one read
+		 * gave (here 40 samples), then present */
 		input_motion_gap();
 		imu_my = 0;
-		imu_feed(4, 0, 0, 0, 60, 60);
+		imu_feed(40, 0, 0, 0, 60, 60);
 		input_motion_present(true, 1000);
-		imu_feed(1996, 0, 0, 0, 60, 60);
+		imu_feed(1960, 0, 0, 0, 60, 60);
 		CHECK(fabsf(imu_my) < 1);
 		imu_feed(500, 0, 0, 0, 0, 0);	/* the gap in the stream */
 		input_motion_gap();
@@ -760,21 +761,40 @@ static void test_imu(void)
 		input_set_motion_calibration(NULL);
 	}
 
-	/* no gyro, gaps in the stream shorter than the parser's "lost" (1 s) but
-	 * longer than the made-up gyro's span: the turn made meanwhile is not
-	 * the view's (no jump) */
+	/* no gyro, gaps in the stream (samples lost, or none for a while with
+	 * their numbers going on) while the device tilts by 20 degrees each
+	 * time: the turn made meanwhile is never the view's (no jump) */
 	{
-		static const float gaps[] = { 0.05f, 0.2f, 0.5f, 0.9f };
+		/* rate, then segments: seconds of samples, and before them a gap of
+		 * lost samples (seconds) or of time alone (seconds) */
+		static const struct { float hz; float seg[3][3]; } sc[] = {
+			{ 1000, { { 1, 0, 0 }, { 1, 0.05f, 0 } } },
+			{ 1000, { { 1, 0, 0 }, { 1, 0.2f, 0 } } },
+			{ 1000, { { 1, 0, 0 }, { 1, 0.5f, 0 } } },
+			{ 1000, { { 1, 0, 0 }, { 1, 0.9f, 0 } } },
+			/* two gaps close together */
+			{ 1000, { { 1, 0, 0 }, { 0.1f, 0.05f, 0 }, { 1, 0.05f, 0 } } },
+			{ 1000, { { 1, 0, 0 }, { 0.05f, 0.09f, 0 }, { 1, 0.02f, 0 } } },
+			{ 1000, { { 1, 0, 0 }, { 0.3f, 0.05f, 0 }, { 1, 0.05f, 0 } } },
+			{ 104, { { 2, 0, 0 }, { 0.5f, 0.09f, 0 }, { 2, 0.09f, 0 } } },
+			{ 104, { { 2, 0, 0 }, { 1, 0.09f, 0 }, { 2, 0.06f, 0 } } },
+			/* the numbers go on, the time jumps (the sensor set up again) */
+			{ 1000, { { 1, 0, 0 }, { 1, 0, 0.2f } } },
+			{ 1000, { { 1, 0, 0 }, { 1, 0, 1.1f } } },
+			{ 1000, { { 1, 0, 0 }, { 1, 0, 1.5f } } },
+		};
 
-		for (unsigned gi = 0; gi < sizeof(gaps) / sizeof(gaps[0]); gi++) {
-			uint8_t hdr[8 + 48], st3[36] = { 3, 0, 3, 0x0b };
-			size_t m = 0;
+		for (unsigned si = 0; si < sizeof(sc) / sizeof(sc[0]); si++) {
+			uint8_t hdr[8 + 12], st3[36] = { 3, 0, 3, 0x0b };
 			uint16_t sq = 100;
-			uint32_t t = 0;
+			uint32_t t = 0, per = (uint32_t)lrintf(1e6f / sc[si].hz);
+			float tilt = 0;
+			size_t m = 0;
 
 			imu_parser_init(&p);
-			snprintf(p.serial, sizeof(p.serial), "GAP%u", gi);
-			m += imu_info(stream + m, "ACCONLY", 9, 2, 1000000, 0, 1.0f / 8192, 0, 0.002f);
+			snprintf(p.serial, sizeof(p.serial), "GAP%u", si);
+			m += imu_info(stream + m, "ACCONLY", 9, 2, (uint32_t)(sc[si].hz * 1000), 0, 1.0f / 8192,
+				      0, 0.002f);
 			m += imu_frame(stream + m, 0x02, st3, 36);
 			/* the sensor known first, then its calibration */
 			imu_parser_feed(&p, stream, m);
@@ -782,36 +802,32 @@ static void test_imu(void)
 			input_set_motion_calibration(&(struct motion_cal){ .axes_set = true,
 									   .right = { 1, 0, 0 } });
 			m = 0;
-			/* 1 s flat, a gap while it tilts 20 degrees about x, 1 s so */
-			for (int part = 0; part < 2; part++) {
-				int16_t ay = part ? (int16_t)lrintf(sinf(0.3490659f) * 8192) : 0;
-				int16_t az = part ? (int16_t)lrintf(cosf(0.3490659f) * 8192) : 8192;
+			for (int sg = 0; sg < 3 && sc[si].seg[sg][0] > 0; sg++) {
+				int16_t ay = (int16_t)lrintf(sinf(tilt * 0.017453293f) * 8192);
+				int16_t az = (int16_t)lrintf(cosf(tilt * 0.017453293f) * 8192);
+				int ns = (int)lrintf(sc[si].seg[sg][0] * sc[si].hz);
 
-				if (part) {
-					sq = (uint16_t)(sq + lrintf(gaps[gi] * 1000));
-					t += (uint32_t)lrintf(gaps[gi] * 1e6f);
-				}
-				for (int b = 0; b < 250; b++) {
+				sq = (uint16_t)(sq + lrintf(sc[si].seg[sg][1] * sc[si].hz));
+				t += (uint32_t)lrintf((sc[si].seg[sg][1] + sc[si].seg[sg][2]) * 1e6f);
+				for (int i = 0; i < ns; i++) {
 					memcpy(hdr, &t, 4);
 					memcpy(hdr + 4, &sq, 2);
-					hdr[6] = 4;
+					hdr[6] = 1;
 					hdr[7] = 0;
-					for (int k = 0; k < 4; k++) {
-						memset(hdr + 8 + 12 * k, 0, 12);
-						memcpy(hdr + 8 + 12 * k + 8, &ay, 2);
-						memcpy(hdr + 8 + 12 * k + 10, &az, 2);
-					}
-					m += imu_frame(stream + m, 0x04, hdr, 8 + 48);
-					sq = (uint16_t)(sq + 4);
-					t += 4000;
+					memset(hdr + 8, 0, 12);
+					memcpy(hdr + 8 + 8, &ay, 2);
+					memcpy(hdr + 8 + 10, &az, 2);
+					m += imu_frame(stream + m, 0x04, hdr, 8 + 12);
+					sq++;
+					t += per;
 				}
+				tilt += 20;	/* during the next gap */
 			}
 			imu_my = 0;
 			imu_parser_feed(&p, stream, m);
 			CHECK(input_motion()->cal.axes_set && fabsf(imu_my) < 1);
 			if (fabsf(imu_my) >= 1)
-				fprintf(stderr, "gap %.2f s: the view moved %.2f deg\n", (double)gaps[gi],
-					(double)imu_my);
+				fprintf(stderr, "gap scenario %u: the view moved %.2f deg\n", si, (double)imu_my);
 			input_set_motion_calibration(NULL);
 		}
 	}

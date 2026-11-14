@@ -50,6 +50,8 @@
 #define DEFAULT_US 1000.0f	/* the period until PKT_INFO says it */
 #define SPAN_US 2000000u		/* the period is measured over that much time */
 #define LOST_US 1000000.0f	/* a gap longer than that: lost track, one period */
+#define TIME_GAP_PERIODS 4	/* samples' times further apart than their numbers say by */
+#define TIME_GAP_US 20000.0f	/* ...this many periods and this much: a gap in time */
 #define RETRY_MS 100
 #define RETRIES 20
 #define SILENT_MS 2000		/* no samples that long: ask for the stream again */
@@ -189,6 +191,7 @@ static void on_info(struct imu_parser *p, const uint8_t *s)
 		anoise = 0;
 	set_nominal(p, id ? u32(s + 24) : 0);
 	changed = id != p->imu_id || strcmp(name, p->name) || ch != p->channels ||
+		  u32(s + 24) != p->odr_mhz ||
 		  gs != p->gyro_scale || as != p->accel_scale || noise != p->gyro_noise ||
 		  anoise != p->accel_noise;
 	if (changed && id)
@@ -199,6 +202,7 @@ static void on_info(struct imu_parser *p, const uint8_t *s)
 	else if (changed)
 		LOGI(TAG, "no sensor on the device");
 	p->imu_id = id;
+	p->odr_mhz = u32(s + 24);
 	memcpy(p->name, name, sizeof(p->name));
 	p->channels = ch;
 	p->gyro_scale = ch & 1 ? gs : 0;
@@ -236,8 +240,13 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 	}
 	if (timed && p->have_real) {
 		uint16_t gap = (uint16_t)(seq - p->real_seq);
+		float expected = gap * p->period_us, elapsed = (float)(uint32_t)(t - p->real_t);
 
-		if (gap >= 1 && gap * p->period_us < LOST_US) {
+		if (elapsed > expected + fmaxf(TIME_GAP_PERIODS * p->period_us, TIME_GAP_US)) {
+			/* samples numbered on, but none came for a while (the device
+			 * set its sensor up again): a gap all the same */
+			input_motion_gap();
+		} else if (gap >= 1 && expected < LOST_US) {
 			p->span_us += t - p->real_t;
 			p->span_n += gap;
 		}
@@ -351,7 +360,7 @@ static void report_present(struct imu *h)
 }
 
 /* poll() wakes for a whole batch of samples (VMIN: as long as the device's
- * PKT_SAMPLES frames are, 1 until one came) */
+ * PKT_SAMPLES frames are), 1 while no samples come */
 static void set_vmin(struct imu *h, size_t bytes)
 {
 	struct termios tio;
