@@ -848,7 +848,31 @@ static void test_motion_matrix(void)
 			mm_check("plugged in again", mode, hz, 0, 0, 1);
 		}
 	}
+	/* the samples' times as a real one's: found late by a delay that creeps
+	 * (the firmware's polling beats with the sensor's clock) and wraps; the
+	 * intervals are skewed (most a little long, a few short): the period
+	 * is their long-run mean, not their median */
+	{
+		const float real_us = 1e6f / 1137.0f;
+		uint32_t delay = 0;
+
+		mm_start2(&p, &s, MM_GA, 1125, 1137, id++);
+		for (int b = 0; b < 1500; b++) {	/* 6000 samples, 5.3 s */
+			uint32_t at = (uint32_t)lrintf(4 * b * real_us) + 1000000;
+
+			delay = (delay + 40) % 200;
+			s.t = at + delay;
+			ms_run(&s, 4, 0, 0);
+		}
+		ms_feed(&p, &s);
+		if (fabsf(p.period_us - real_us) >= 0.0015f * real_us) {
+			fprintf(stderr, "matrix jittered times: period %.2f us, real %.2f\n",
+				(double)p.period_us, (double)real_us);
+			failures++;
+		}
+	}
 	input_set_motion_calibration(NULL);
+
 	free(s.buf);
 	input_deinit();
 	mainloop_free(ml);

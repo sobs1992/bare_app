@@ -226,9 +226,10 @@ static int cmp_float(const void *a, const void *b)
 
 /*
  * The real period, from the samples' own times: each interval between two
- * timed samples gives one (elapsed / samples); over SPAN_US their median is
- * taken, so a pause (rare) does not count while a rate off the info's
- * (every interval) does. Within 0.5..2x of the info's rate.
+ * timed samples gives one (elapsed / samples); over SPAN_US the mean of
+ * those within 25 % of their median is taken, so a pause (rare, far off)
+ * does not count, a rate off the info's (every interval) does, and the
+ * timing's skewed jitter averages out. Within 0.5..2x of the info's rate.
  */
 static void measure_rate(struct imu_parser *p, float elapsed, unsigned n)
 {
@@ -243,6 +244,19 @@ static void measure_rate(struct imu_parser *p, float elapsed, unsigned n)
 		return;
 	qsort(p->span_vals, p->span_n, sizeof(p->span_vals[0]), cmp_float);
 	m = p->span_vals[p->span_n / 2];
+	/* the mean of those near the median: a pause is far off, the times'
+	 * jitter (skewed: found late by a creeping delay) averages out */
+	{
+		double sum = 0;
+		unsigned used = 0;
+
+		for (unsigned i = 0; i < p->span_n; i++)
+			if (fabsf(p->span_vals[i] - m) <= 0.25f * m) {
+				sum += p->span_vals[i];
+				used++;
+			}
+		m = (float)(sum / used);	/* the median itself is among them */
+	}
 	if (m > 0.5f * p->nominal_us && m < 2 * p->nominal_us) {
 		p->period_us = p->period_measured ? 0.7f * p->period_us + 0.3f * m : m;
 		p->period_measured = true;
