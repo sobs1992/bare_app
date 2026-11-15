@@ -1016,22 +1016,60 @@ static void apply_gamma(void)
 	}
 }
 
+/* S, shown, covers the whole screen (surfaces are opaque) */
+static bool covers_screen(const struct surface *s)
+{
+	return s->x <= 0 && s->y <= 0 && s->x + (int)s->shown_w >= (int)mode.width &&
+	       s->y + (int)s->shown_h >= (int)mode.height;
+}
+
+#define MAX_DRAWN 128
+
 static void compose(void)
 {
-	struct surface *s;
-	int i;
+	struct surface *s, *order[MAX_DRAWN];
+	int i, n = 0, from = 0;
 	unsigned layer;
 
-	memset(screen, 0, (size_t)mode.width * mode.height * 4);
-	/* windows not in the z-order (yet): at the bottom */
+	/* bottom first: windows not in the z-order (yet), then the z-order
+	 * up, a window's GDI pixels under its GL ones; past MAX_DRAWN
+	 * (n > MAX_DRAWN) all of them, cleared first, as they come */
 	for (s = surfaces; s; s = s->next)
-		if (drawable(s) && z_index(s->hwnd) < 0)
-			blit(s);
+		if (drawable(s) && z_index(s->hwnd) < 0 && n++ < MAX_DRAWN)
+			order[n - 1] = s;
 	for (i = (int)zorder_count - 1; i >= 0; i--)
 		for (layer = WB_LAYER_GDI; layer <= WB_LAYER_GL; layer++)
 			for (s = surfaces; s; s = s->next)
-				if (s->hwnd == zorder[i] && s->layer == layer && drawable(s))
-					blit(s);
+				if (s->hwnd == zorder[i] && s->layer == layer && drawable(s) && n++ < MAX_DRAWN)
+					order[n - 1] = s;
+	if (n > MAX_DRAWN) {
+		memset(screen, 0, (size_t)mode.width * mode.height * 4);
+		for (s = surfaces; s; s = s->next)
+			if (drawable(s) && z_index(s->hwnd) < 0)
+				blit(s);
+		for (i = (int)zorder_count - 1; i >= 0; i--)
+			for (layer = WB_LAYER_GDI; layer <= WB_LAYER_GL; layer++)
+				for (s = surfaces; s; s = s->next)
+					if (s->hwnd == zorder[i] && s->layer == layer && drawable(s))
+						blit(s);
+		if (gamma_on)
+			apply_gamma();
+		return;
+	}
+	/*
+	 * What a surface over the whole screen hides is not drawn: a game's
+	 * GL pixels over its window's GDI ones, the screen not cleared
+	 * (bare_app_wine took 39 % of a core at 60 frames a second)
+	 */
+	for (i = n - 1; i >= 0; i--)
+		if (covers_screen(order[i])) {
+			from = i;
+			break;
+		}
+	if (i < 0)
+		memset(screen, 0, (size_t)mode.width * mode.height * 4);
+	for (i = from; i < n; i++)
+		blit(order[i]);
 	if (gamma_on)
 		apply_gamma();
 }
