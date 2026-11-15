@@ -50,6 +50,8 @@
 #define STATUS_FAKE 16u
 #define DEFAULT_US 1000.0f	/* the period until PKT_INFO says it */
 #define SPAN_US 2000000u		/* the period is measured over that much time */
+#define SPAN_FIRST_US 250000u	/* ...the first time (and SPAN_FIRST_MIN intervals) */
+#define SPAN_FIRST_MIN 8
 #define GAP_MISSING 3		/* samples missing (by number or by time) that are no gap yet */
 #define RETRY_MS 100
 #define RETRIES 20
@@ -227,21 +229,23 @@ static int cmp_float(const void *a, const void *b)
 /*
  * The real period, from the samples' own times: each interval between two
  * timed samples gives one (elapsed / samples); over SPAN_US and SPAN_MIN
- * intervals at least, the mean of those within 25 % of their median is
- * taken, so a pause (rare, far off; a short one near is one of many) does
- * not count, a rate off the info's (every interval) does, and the timing's
- * skewed jitter averages out. Within 0.5..2x of the info's rate.
+ * intervals at least (the first time over SPAN_FIRST_US and SPAN_FIRST_MIN,
+ * so a rate off the info's counts soon after the plug), the mean of those
+ * within 25 % of their median is taken: a pause (rare, far off; a short one
+ * near is one of many) does not count, a rate off the info's (every
+ * interval) does, and the timing's skewed jitter averages out. Taken within
+ * 0.5..2x of the info's rate; else the info's stays.
  */
 static void measure_rate(struct imu_parser *p, float elapsed, unsigned n)
 {
 	float one = elapsed / n, m;
+	/* the first measure is quick: until then the info's rate counts */
+	bool first = !p->period_measured;
 
-	if (one < 0.25f * p->nominal_us || one > 4 * p->nominal_us)
-		return;		/* nonsense, or a long pause */
 	if (p->span_n < SPAN_MAX)
 		p->span_vals[p->span_n++] = one;
 	p->span_us += (uint64_t)elapsed;
-	if (p->span_us < SPAN_US || p->span_n < SPAN_MIN)
+	if (p->span_us < (first ? SPAN_FIRST_US : SPAN_US) || p->span_n < (first ? SPAN_FIRST_MIN : SPAN_MIN))
 		return;
 	qsort(p->span_vals, p->span_n, sizeof(p->span_vals[0]), cmp_float);
 	m = p->span_vals[p->span_n / 2];
@@ -259,7 +263,7 @@ static void measure_rate(struct imu_parser *p, float elapsed, unsigned n)
 		m = (float)(sum / used);	/* the median itself is among them */
 	}
 	if (m >= 0.495f * p->nominal_us && m <= 2.02f * p->nominal_us) {	/* 0.5..2x, rounding */
-		p->period_us = m;	/* 2 s of it, trimmed: no further smoothing */
+		p->period_us = m;	/* trimmed: no further smoothing */
 		p->period_measured = true;
 	}
 	p->span_us = 0;
@@ -302,7 +306,10 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 		float expected = n * p->period_us, elapsed = (float)(uint32_t)(t - p->real_t);
 
 		/* time beyond what the numbers say: more missing samples */
-		if (elapsed > expected)
+		/* time beyond what the numbers say, once the period is known
+		 * (before, the info's may be far off: a whole batch would look
+		 * missing) */
+		if (elapsed > expected && p->period_measured)
 			missing += (elapsed - expected) / p->period_us;
 		if (n >= 1)
 			measure_rate(p, elapsed, n);

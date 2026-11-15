@@ -57,13 +57,13 @@
 #define MOTION_TIGHT_NOISE 2.0f
 #define MOTION_TIGHT_MIN 0.1f
 #define MOTION_TIGHT_MAX 0.6f
-/* No gyro: gravity smoothed over a time, then its turn over as much time (one
- * sample apart is noise): MOTION_SYNTH_PER_G seconds per g of the
- * accelerometer's noise as it would be at MOTION_SYNTH_REF_HZ (white noise:
- * rms * sqrt(REF_HZ / rate)), within MOTION_SYNTH_MIN_S..MAX_S (noise
- * unknown: MAX; a slower sensor looks one sample back). It starts afresh
- * after a gap in the stream, which only the stream's reader can tell
- * (input_motion_gap(), motion_synth_reset()). */
+/* No gyro: gravity smoothed over a time, then its mean over as much time (a
+ * turn from one sample to the next of the raw one is noise): the span,
+ * MOTION_SYNTH_PER_G seconds per g of the accelerometer's noise as it would
+ * be at MOTION_SYNTH_REF_HZ (white noise: rms * sqrt(REF_HZ / rate)), within
+ * MOTION_SYNTH_MIN_S..MAX_S (noise unknown: MAX; a sensor slower than that
+ * has one sample in it). It starts afresh after a gap in the stream, which
+ * only the stream's reader can tell (input_motion_gap(), motion_synth_reset()). */
 #define MOTION_SYNTH_PER_G 45.0f
 #define MOTION_SYNTH_REF_HZ 1139.0f
 #define MOTION_SYNTH_MIN_S 0.03f

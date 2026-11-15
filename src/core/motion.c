@@ -81,9 +81,9 @@ float motion_synth_setup(struct motion_synth *s, float accel_rms, float rate_hz)
 
 	memset(s, 0, sizeof(*s));
 	s->span = span < MOTION_SYNTH_MIN_S ? MOTION_SYNTH_MIN_S : span > MOTION_SYNTH_MAX_S ? MOTION_SYNTH_MAX_S : span;
-	/* the turn of an "up" smoothed over 'span' seen 'span' apart: about
-	 * 3.85 n / span^1.5 deg/s (measured on a real accelerometer at rest,
-	 * 1139 Hz: 0.28 deg/s for 0.0022 g, span 0.1 s) */
+	/* the turn, sample to sample, of the 'span' mean of an "up" smoothed
+	 * over 'span': about 3.85 n / span^1.5 deg/s (measured on a real
+	 * accelerometer at rest, 1139 Hz: 0.29 deg/s for 0.0022 g, span 0.1 s) */
 	return n > 0 ? 3.85f * n / powf(s->span, 1.5f) : 0;
 }
 
@@ -134,11 +134,17 @@ void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, f
 		return;
 	if (s->have_v) {
 		/* the turn of that mean since the sample before: these add up to
-		 * the whole turn whatever the steps (a vector fixed in the world
-		 * turns by -w x v as seen from the sensor: w = new x old / dt) */
-		gyro[0] = (v[1] * s->v_prev[2] - v[2] * s->v_prev[1]) / dt / DEG2RAD;
-		gyro[1] = (v[2] * s->v_prev[0] - v[0] * s->v_prev[2]) / dt / DEG2RAD;
-		gyro[2] = (v[0] * s->v_prev[1] - v[1] * s->v_prev[0]) / dt / DEG2RAD;
+		 * the whole turn whatever the steps. A vector fixed in the world
+		 * turns by -w x v as seen from the sensor: w is along new x old,
+		 * by the angle between them (atan2: right for a big step too) */
+		float c[3] = { v[1] * s->v_prev[2] - v[2] * s->v_prev[1],
+			       v[2] * s->v_prev[0] - v[0] * s->v_prev[2],
+			       v[0] * s->v_prev[1] - v[1] * s->v_prev[0] };
+		float sn = len3(c), angle = atan2f(sn, dot(v, s->v_prev));
+
+		if (sn > 1e-9f)
+			for (int i2 = 0; i2 < 3; i2++)
+				gyro[i2] = c[i2] / sn * angle / dt / DEG2RAD;
 	}
 	memcpy(s->v_prev, v, sizeof(v));
 	s->have_v = true;

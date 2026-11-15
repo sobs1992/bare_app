@@ -33,8 +33,9 @@ extern const struct hal_input_ops input_imu;
  * that changes the sensor tells core/input at once, before its samples
  * (input_motion_sensor(): id "<name>-<serial>", channels, noise). The
  * sample period is measured by the sensor's own clock, from samples that
- * carry their own time: over SPAN_US, the mean of the intervals within 25 %
- * of their median, accepted within 0.5..2x of the info's rate.
+ * carry their own time: over SPAN_US (the first time a quarter second), the
+ * mean of the intervals within 25 % of their median, taken within 0.5..2x
+ * of the info's rate. Missing samples by time count once it is measured.
  */
 #define SPAN_MAX 1024		/* intervals kept over SPAN_US (their median, then the mean near it) */
 #define SPAN_MIN 16		/* ...at least this many (a slow sensor's: one pause is little) */
