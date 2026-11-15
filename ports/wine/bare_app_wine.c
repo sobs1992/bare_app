@@ -107,6 +107,7 @@ static struct {
 	int rows_top;			/* shown, from row TOP (0: the top ones), */
 	uint32_t rows_w, rows_h;	/* in display mode WxH only (0: in any) */
 	struct action button[GP_COUNT];
+	struct action rstick_dir[4];	/* rstick = arrows: up, down, left, right pushed */
 } cfg;
 
 static const struct { const char *name; uint16_t vk; } key_names[] = {
@@ -241,6 +242,11 @@ static char *trim(char *s)
 	return s;
 }
 
+/* [keys] names of the right stick's directions (rstick = arrows), as cfg.rstick_dir */
+static const char *const rstick_dir_names[4] = {
+	"rstick_up", "rstick_down", "rstick_left", "rstick_right",
+};
+
 static void set_defaults(void)
 {
 	static const char *const keys[][2] = {
@@ -266,6 +272,8 @@ static void set_defaults(void)
 		for (b = 0; b < GP_COUNT; b++)
 			if (button_names[b] && !strcmp(button_names[b], keys[i][0]))
 				parse_action(keys[i][1], &cfg.button[b]);
+	for (i = 0; i < 4; i++)
+		parse_action(button_names[GP_UP + i], &cfg.rstick_dir[i]);
 }
 
 static int read_ini(const char *path)
@@ -320,10 +328,15 @@ static int read_ini(const char *path)
 			else if (!strcmp(key, "arrows"))
 				cfg.cursor_keys = !strcmp(value, "cursor");
 			else {
-				for (b = 0; b < GP_COUNT; b++)
+				struct action *a = NULL;
+
+				for (b = 0; b < GP_COUNT && !a; b++)
 					if (button_names[b] && !strcmp(button_names[b], key))
-						break;
-				if (b == GP_COUNT || parse_action(value, &cfg.button[b]) < 0)
+						a = &cfg.button[b];
+				for (b = 0; b < 4 && !a; b++)
+					if (!strcmp(rstick_dir_names[b], key))
+						a = &cfg.rstick_dir[b];
+				if (!a || parse_action(value, a) < 0)
 					msg("%s:%d: %s = %s?", path, lineno, key, value);
 			}
 		} else if (!strcmp(key, "exe")) {
@@ -2143,17 +2156,16 @@ static void on_axis(enum gp_axis a, int value)
 			send_mouse_at(x, y, 0, 0);
 	}
 	if (cfg.rstick == STICK_ARROWS && (a == GP_AXIS_RX || a == GP_AXIS_RY)) {
-		/* a direction held while the stick is out */
+		/* a direction held while the stick is out: rstick_up... (the arrows) */
 		static bool out[4];
-		static const uint16_t arrows[4] = { 0x26, 0x28, 0x25, 0x27 };
 		float v = axis[a];
 		int neg = a == GP_AXIS_RX ? 2 : 0, pos = neg + 1;
 		bool n = v < -0.5f, p = v > 0.5f;
 
 		if (n != out[neg])
-			send_key(arrows[neg], out[neg] = n);
+			do_action(&cfg.rstick_dir[neg], out[neg] = n);
 		if (p != out[pos])
-			send_key(arrows[pos], out[pos] = p);
+			do_action(&cfg.rstick_dir[pos], out[pos] = p);
 	}
 }
 
