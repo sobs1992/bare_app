@@ -766,14 +766,29 @@ static void test_motion_matrix(void)
 			int nturn = ms_n(hz, 0.1f, 4);		/* 20 degrees in these */
 			float w = 20 * hz / nturn;
 
-			/* a steady stream: a turn of 45 degrees left, a tilt of 20 */
-			mm_start(&p, &s, mode, hz, id++);
-			ms_run(&s, ms_n(hz, 1, 4), 0, 45 * hz / ms_n(hz, 1, 4));
-			ms_run(&s, ms_n(hz, 2, 3), 0, 0);
-			ms_run(&s, ms_n(hz, 1, 4), 20 * hz / ms_n(hz, 1, 4), 0);
-			ms_run(&s, ms_n(hz, 3, 4), 0, 0);
-			ms_feed(&p, &s);
-			mm_check("steady", mode, hz, gyro ? -45 : 0, 20, hz >= 104 ? 0.6f : 2.5f);
+			/* a steady stream: a turn of 45 degrees left, a tilt of 20;
+			 * read in pieces, "present" said after each (the driver says
+			 * it every second): nothing of it changes */
+			{
+				int n1 = ms_n(hz, 1, 4);
+
+				mm_start(&p, &s, mode, hz, id++);
+				for (int h = 0; h < 2; h++) {
+					ms_run(&s, n1 / 2 + (h ? n1 % 2 : 0), 0, 45 * hz / n1);
+					ms_feed(&p, &s);
+					input_motion_present(true, hz);
+				}
+				ms_run(&s, ms_n(hz, 2, 3), 0, 0);
+				for (int h = 0; h < 2; h++) {
+					ms_run(&s, n1 / 2 + (h ? n1 % 2 : 0), 20 * hz / n1, 0);
+					ms_feed(&p, &s);
+					input_motion_present(true, hz);
+				}
+				ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+				ms_feed(&p, &s);
+				input_motion_present(false, 0);
+				mm_check("steady", mode, hz, gyro ? -45 : 0, 20, hz >= 104 ? 0.6f : 2.5f);
+			}
 
 			/* the real rate other than the info says (0.5x to 2x, the
 			 * ends too): measured from the samples' times, the turn as it
@@ -803,11 +818,7 @@ static void test_motion_matrix(void)
 					/* ...and a gap (50 lost) keeps the measure: a turn
 					 * right after it as it was (about the world's
 					 * vertical, tilted by 60 by now: a gyro alone cos 60
-					 * of it). Not at a slow sensor's 0.5x: its 8 intervals
-					 * hold the pauses above, its measure is 2.025x then
-					 * (refused: README) */
-					if (hz < 104 && off[oi] <= 0.5f)
-						continue;
+					 * of it) */
 					imu_turned = imu_my = 0;
 					ms_gap(&s, 50, 0, 0);
 					ms_run_vert(&s, ms_n(rh, 0.2f, 4), 20 * rh / ms_n(rh, 0.2f, 4));
@@ -927,6 +938,28 @@ static void test_motion_matrix(void)
 					mm_check("new info, twice the rate", mode, 2 * hz,
 						 mode == MM_GA ? -45 : mode == MM_G ? -22.5f : 0, 0, 0.6f);
 				}
+				/* a new info (twice the rate) while the real rate stays:
+				 * no measure for it yet, nothing told, and no batch is a
+				 * gap (an accelerometer alone sees a tilt right after it;
+				 * a gyro's counts by the new info's period till measured) */
+				{
+					uint8_t f[80];
+					struct imu_rate_told told = { 0 };
+					int nt2 = ms_n(hz, 0.1f, 4);
+
+					mm_start(&p, &s, mode, hz, id++);
+					imu_rate_news(&p, &told);
+					ms_flush(&s);
+					ms_put(&s, f, mm_info(f, mode, 2 * hz));
+					s.batch = (int)fminf(4, fmaxf(1, 2 * hz * 0.004f));
+					ms_run(&s, 2 * s.batch, 0, 0);	/* (its first sample: a gap) */
+					ms_run(&s, nt2, 20 * hz / nt2, 0);
+					ms_feed(&p, &s);
+					CHECK(imu_rate_news(&p, &told) == 0 && !p.period_measured);
+					ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+					ms_feed(&p, &s);
+					mm_check("new info, the real rate stays", mode, hz, 0, gyro ? 10 : 20, 1);
+				}
 				/* at the very edge (0.5x, 1/2.015x of the info's), a pause
 				 * in the measure's window, wherever it falls in it: samples
 				 * lost (3 + 0.4 period, 3 + 0.6: a gap, 1 + 0.3) or time
@@ -961,6 +994,25 @@ static void test_motion_matrix(void)
 				}
 			}
 
+			/* "present" said again (every second) is no gap: gravity's
+			 * "up" kept, a knock in the first sample after it (70 degrees
+			 * off in one sample: beyond what the yaw's relaxing hides) is
+			 * not taken for it; a turn about the vertical right then as
+			 * it was */
+			if (mode == MM_GA && hz >= 104) {
+				int nt = ms_n(hz, 1, 4);
+
+				mm_start(&p, &s, mode, hz, id++);
+				input_motion_present(true, hz);
+				ms_gap(&s, 0, 0, 70);
+				ms_run(&s, 1, 0, 0);
+				ms_gap(&s, 0, 0, -70);
+				ms_run_vert(&s, nt, 45 * hz / nt);
+				ms_run(&s, ms_n(hz, 2, 4), 0, 0);
+				ms_feed(&p, &s);
+				input_motion_present(false, 0);
+				mm_check("present again, a jolt, a turn", mode, hz, -45, 0, 0.6f);
+			}
 			/* a gap keeps the measure: right after it a pause of 3.6
 			 * measured periods is a gap again (an accelerometer alone
 			 * does not take the tilt in it) */
@@ -1026,7 +1078,7 @@ static void test_motion_matrix(void)
 			 * the part of the tilt the made-up gyro has not given yet is
 			 * lost in a gap (not told from a jolt): 0.3 s after the tilt
 			 * 15 % at most, 0.5 s after 3 %; right at the end of a tilt
-			 * over 1 s 15..20 % (at 104 Hz and more) */
+			 * over 1 s 14..18 % (at 104 Hz and more) */
 			for (int si = 0; si < (gyro ? 1 : 3); si++) {
 				int nt = ms_n(hz, 1, 4);
 
@@ -1041,7 +1093,7 @@ static void test_motion_matrix(void)
 				ms_run(&s, ms_n(hz, 2, 4), 0, 0);
 				ms_feed(&p, &s);
 				if (si == 2)
-					mm_check2("tilted over 1 s, then a gap at once", mode, hz, 0, 17, 0.6f, 1);
+					mm_check2("tilted over 1 s, then a gap at once", mode, hz, 0, 16.8f, 0.6f, 0.4f);
 				else if (si)
 					mm_check2("tilted, 0.3 s, then a gap", mode, hz, 0, 18.8f, 0.6f, 1.8f);
 				else
@@ -1322,45 +1374,51 @@ static void test_motion_matrix(void)
 	 * is their long-run mean, not their median */
 	/* the delay creeps slowly (7 us a batch, wraps at 200 us: every ~100
 	 * ms) or fast (70 us, wraps at 350 us: every 5 batches, as wide as on
-	 * the real sensor): a few dozen intervals hold no wrap or one, so only
-	 * a measure over long enough is right; it must be right from the first
-	 * measure on, all along */
-	for (int ji = 0; ji < 2; ji++) {
-		const float real_us = 1e6f / 1137.0f;
-		const uint32_t creep = ji ? 70 : 7, wrap = ji ? 350 : 200;
-		uint32_t delay = 0, base;
-		float worst = 0;
+	 * the real sensor), and now and then a frame's time is found 0.9 ms
+	 * late: a window's intervals hold no wrap or a few, so only a measure
+	 * over several windows is right. Within 0.15 % from the first measure
+	 * on, 0.05 % after the first second, all along; a second without
+	 * samples and 900 lost in it, in 6 places each, change none of it */
+	for (int ji = 0; ji < 2; ji++)
+		for (int pk = 0; pk < 6; pk++) {
+			const float real_us = 1e6f / 1137.0f;
+			const uint32_t creep = ji ? 70 : 7, wrap = ji ? 350 : 200;
+			uint32_t delay = 0, base;
+			float worst = 0, worst1 = 0;
 
-		mm_start3(&p, &s, MM_GA, 1125, 1137, id++, 0.01f);
-		base = s.t;
-		for (int b = 0; b < 3000; b++) {	/* 12000 samples, 10.6 s */
-			uint32_t at;
+			mm_start3(&p, &s, MM_GA, 1125, 1137, id++, 0.01f);
+			base = s.t;
+			for (int b = 0; b < 3000; b++) {	/* 12000 samples, 10.6 s */
+				uint32_t at;
 
-			/* a second without samples, then 900 lost: the windows
-			 * after them as right */
-			if (b == 1000)
-				base += 1000000;
-			if (b == 2000) {
-				base += (uint32_t)lrintf(900 * real_us);
-				s.seq = (uint16_t)(s.seq + 900);
+				if (b == 1000 + 3 * pk)
+					base += 1000000;
+				if (b == 2000 + 5 * pk) {
+					base += (uint32_t)lrintf(900 * real_us);
+					s.seq = (uint16_t)(s.seq + 900);
+				}
+				at = base + (uint32_t)lrintf(4 * b * real_us);
+				delay = (delay + creep) % wrap;
+				s.t = at + delay + (b % 50 == 25 ? 900 : 0);
+				ms_run(&s, 4, 0, 0);
+				if (b % 10 == 9) {
+					ms_feed(&p, &s);
+					if (p.period_measured) {
+						float off = fabsf(p.period_us - real_us) / real_us;
+
+						worst = fmaxf(worst, off);
+						if (b >= 285)	/* a second on */
+							worst1 = fmaxf(worst1, off);
+					}
+				}
 			}
-			at = base + (uint32_t)lrintf(4 * b * real_us);
-
-			delay = (delay + creep) % wrap;
-			s.t = at + delay;
-			ms_run(&s, 4, 0, 0);
-			if (b % 10 == 9) {
-				ms_feed(&p, &s);
-				if (p.period_measured)
-					worst = fmaxf(worst, fabsf(p.period_us - real_us) / real_us);
+			if (!p.period_measured || worst >= 0.0015f || worst1 >= 0.0005f) {
+				fprintf(stderr, "matrix jittered times (%u us, place %d): off by %.3f %%, "
+					"%.3f %% after a second\n", (unsigned)wrap, pk, (double)worst * 100,
+					(double)worst1 * 100);
+				failures++;
 			}
 		}
-		if (!p.period_measured || worst >= 0.0015f) {
-			fprintf(stderr, "matrix jittered times (%u us): off by %.3f %% at worst\n",
-				(unsigned)wrap, (double)worst * 100);
-			failures++;
-		}
-	}
 	/* what the driver logs of the rate (imu_rate_news()): refused once;
 	 * a new info does not tell the old refusal; its measure, once; a
 	 * change within 0.5..2x nothing; beyond: refused, back: measured;
