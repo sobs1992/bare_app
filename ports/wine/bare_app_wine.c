@@ -1293,8 +1293,25 @@ static void put_full(void)
 	game_link_full_publish(&app, mode.width, shown_rows(&mode));
 }
 
+static uint64_t mono_ns(void)
+{
+	struct timespec t;
+
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (uint64_t)t.tv_sec * 1000000000u + (uint64_t)t.tv_nsec;
+}
+
+/*
+ * When the next frame may go: TICK_NS after the last one. A frame is
+ * published as soon as it may, not a tick after it came: a timer started
+ * by each new frame published a game of 59 fps at 34, a frame waiting
+ * 16.7 ms and the next one coming just after.
+ */
+static uint64_t next_publish;
+
 static int publish(void)
 {
+	next_publish = mono_ns() + TICK_NS;
 	compose();
 	if (magnify && !view_detached)
 		follow_cursor(false);
@@ -2310,7 +2327,8 @@ static bool read_app(void)
 
 /* ---- main ------------------------------------------------------------------ */
 
-static void set_timer(int fd, bool on)
+/* The tick: on, the first one after first_ns (> 0), then every TICK_NS */
+static void set_timer(int fd, bool on, long first_ns)
 {
 	static bool armed;
 	struct itimerspec it = { 0 };
@@ -2318,8 +2336,10 @@ static void set_timer(int fd, bool on)
 	if (on == armed)
 		return;
 	armed = on;
-	if (on)
-		it.it_interval.tv_nsec = it.it_value.tv_nsec = TICK_NS;
+	if (on) {
+		it.it_interval.tv_nsec = TICK_NS;
+		it.it_value.tv_nsec = first_ns > 0 ? first_ns : 1;
+	}
 	timerfd_settime(fd, 0, &it, NULL);
 }
 
@@ -2438,7 +2458,17 @@ int main(int argc, char **argv)
 	for (;;) {
 		unsigned n = 0, first_client;
 
-		set_timer(tick_fd, dirty || moving());
+		if (dirty && !moving()) {
+			uint64_t now = mono_ns();
+
+			if (now >= next_publish && publish() < 0) {
+				msg("bare_app is gone");
+				break;
+			}
+			set_timer(tick_fd, dirty, (long)(next_publish - now));
+		} else {
+			set_timer(tick_fd, dirty || moving(), TICK_NS);
+		}
 		pfd[n++] = (struct pollfd){ .fd = GAME_IPC_SOCK, .events = POLLIN };
 		pfd[n++] = (struct pollfd){ .fd = listen_fd, .events = POLLIN };
 		pfd[n++] = (struct pollfd){ .fd = sig_fd, .events = POLLIN };
