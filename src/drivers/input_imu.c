@@ -53,6 +53,7 @@
 #define SPAN_FIRST_US 250000u	/* ...the first time (and SPAN_FIRST_MIN intervals) */
 #define SPAN_FIRST_MIN 8
 #define GAP_MISSING 3		/* samples missing (by number or by time) that are no gap yet */
+#define RATE_SLOWEST 2.02f	/* a measured period is taken within 1/x..x of the info's (2x, rounding) */
 #define RETRY_MS 100
 #define RETRIES 20
 #define SILENT_MS 2000		/* the first check of the stream */
@@ -262,9 +263,12 @@ static void measure_rate(struct imu_parser *p, float elapsed, unsigned n)
 			}
 		m = (float)(sum / used);	/* the median itself is among them */
 	}
-	if (m >= 0.495f * p->nominal_us && m <= 2.02f * p->nominal_us) {	/* 0.5..2x, rounding */
+	if (m >= p->nominal_us / RATE_SLOWEST && m <= RATE_SLOWEST * p->nominal_us) {
 		p->period_us = m;	/* trimmed: no further smoothing */
 		p->period_measured = true;
+		p->period_refused = 0;
+	} else {
+		p->period_refused = m;	/* beyond 0.5..2x: the info's stays */
 	}
 	p->span_us = 0;
 	p->span_n = 0;
@@ -285,6 +289,7 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 		      const uint8_t *accel_raw, bool timed)
 {
 	float accel[3], gyro[3];
+	float missing = 0;	/* samples missing before this one: by number, then by time */
 	uint16_t steps = 1;
 	bool gap = !p->have_prev;
 	int k;
@@ -293,8 +298,6 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 		gyro[k] = s16(gyro_raw + 2 * k) * p->gyro_scale;
 		accel[k] = s16(accel_raw + 2 * k) * p->accel_scale;
 	}
-	float missing = 0;	/* samples missing before this one: by number, then by time */
-
 	if (p->have_prev) {
 		steps = (uint16_t)(seq - p->prev_seq);
 		if (steps == 0)
@@ -304,13 +307,15 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 	if (timed && p->have_real) {
 		uint16_t n = (uint16_t)(seq - p->real_seq);
 		float expected = n * p->period_us, elapsed = (float)(uint32_t)(t - p->real_t);
+		/* time beyond what the numbers say: more missing samples. Before
+		 * the period is measured (or with the measure refused) the
+		 * info's may be off by up to RATE_SLOWEST: only the time beyond
+		 * that counts, in such periods (a whole batch at half the info's
+		 * rate is no pause) */
+		float slow = p->period_measured ? 1 : RATE_SLOWEST;
 
-		/* time beyond what the numbers say: more missing samples */
-		/* time beyond what the numbers say, once the period is known
-		 * (before, the info's may be far off: a whole batch would look
-		 * missing) */
-		if (elapsed > expected && p->period_measured)
-			missing += (elapsed - expected) / p->period_us;
+		if (elapsed > expected * slow)
+			missing += (elapsed - expected * slow) / (p->period_us * slow);
 		if (n >= 1)
 			measure_rate(p, elapsed, n);
 	}
@@ -511,6 +516,10 @@ static void on_watch(void *ud)
 	if (!h->told_rate && h->parser.period_measured) {
 		h->told_rate = true;
 		LOGI(TAG, "%s: %.1f samples a second", h->node, 1e6 / h->parser.period_us);
+	} else if (!h->told_rate && h->parser.period_refused > 0) {
+		h->told_rate = true;
+		LOGW(TAG, "%s: %.1f samples a second, beyond 0.5..2x of the info's %.1f: the info's kept",
+		     h->node, 1e6 / h->parser.period_refused, 1e6 / h->parser.nominal_us);
 	}
 	{
 		struct input_motion_info mi;

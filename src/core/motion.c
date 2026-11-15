@@ -336,6 +336,13 @@ void motion_drop(struct motion *m)
 	m->sm_count = 0;
 }
 
+void motion_gap(struct motion *m)
+{
+	m->up_set = false;	/* gravity: from the next sample on */
+	m->sm_count = 0;	/* no smoothing with rates from before */
+	still_reset(m);		/* no "still" window across it */
+}
+
 /* ---- calibration -------------------------------------------------------- */
 
 void motion_rec_begin(struct motion_rec *r)

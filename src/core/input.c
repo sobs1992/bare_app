@@ -614,6 +614,7 @@ void input_motion_gap(void)
 {
 	/* the reader's word: what came before the gap is stale */
 	motion_synth_reset(&in.motion.synth);
+	motion_gap(&in.motion.m);
 }
 
 void input_report_motion(const float gyro[3], const float accel[3], float dt)

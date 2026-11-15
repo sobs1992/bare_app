@@ -58,6 +58,7 @@ struct imu_parser {
 	float nominal_us;		/* of a sample, as the device says */
 	float period_us;		/* measured */
 	bool period_measured;
+	float period_refused;		/* a measure beyond 0.5..2x of the info's, 0 none */
 	bool have_prev;
 	uint16_t prev_seq;
 	bool have_real;			/* the last sample with a time of its own */
