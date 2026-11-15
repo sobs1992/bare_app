@@ -65,11 +65,10 @@ struct imu_parser {
 	float period_us;		/* measured */
 	bool period_measured;
 	float period_refused;		/* the last measure, beyond 0.5..2x of the info's; 0 none */
-	bool have_prev;
+	bool have_prev;			/* a sample of this stream came */
 	uint16_t prev_seq;
-	bool have_real;			/* the last sample with a time of its own */
-	uint32_t real_t;
-	uint16_t real_seq;
+	uint32_t real_t;		/* the last one with a time of its own (each */
+	uint16_t real_seq;		/* ...frame's first: one came if any did) */
 	uint64_t span_us;		/* measuring the period: time so far, */
 	uint32_t span_n;		/* ...the intervals: their time, their samples */
 	float span_el[SPAN_MAX];

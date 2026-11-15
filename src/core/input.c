@@ -65,7 +65,6 @@ static struct {
 		char id[INPUT_MOTION_ID_LEN];	/* the sensor now ("" none yet) */
 		char name[17];
 		unsigned channels;
-		float noise, accel_noise, rate_nominal;
 		struct motion_synth synth;	/* the gyro of a sensor without one */
 		/* calibrations by sensor id; "" the one from before sensors had ids */
 		struct {
@@ -585,11 +584,10 @@ void input_motion_sensor(const struct input_motion_desc *d)
 {
 	const char *id = d->id && id_ok(d->id) && strlen(d->id) < INPUT_MOTION_ID_LEN ? d->id : "unknown";
 	unsigned ch = d->channels & (MOTION_CH_GYRO | MOTION_CH_ACCEL);
+	bool other = strcmp(id, in.motion.id) || ch != in.motion.channels;
 
-	if (!strcmp(id, in.motion.id) && ch == in.motion.channels && d->gyro_noise == in.motion.noise &&
-	    d->accel_noise == in.motion.accel_noise && d->rate_hz == in.motion.rate_nominal)
-		return;
-	if (strcmp(id, in.motion.id) || ch != in.motion.channels) {
+	/* (said for each changed info; the gap of its stream's first sample follows) */
+	if (other) {
 		/* another sensor: its zero, its "up", its calibration */
 		LOGI(TAG, "motion sensor %s:%s%s%s", id, ch & MOTION_CH_GYRO ? " gyro" : "",
 		     ch & MOTION_CH_ACCEL ? " accelerometer" : "", ch ? "" : " nothing to aim with");
@@ -598,16 +596,16 @@ void input_motion_sensor(const struct input_motion_desc *d)
 	snprintf(in.motion.id, sizeof(in.motion.id), "%s", id);
 	snprintf(in.motion.name, sizeof(in.motion.name), "%s", d->name ? d->name : "");
 	in.motion.channels = ch;
-	in.motion.noise = d->gyro_noise;
-	in.motion.accel_noise = d->accel_noise;
-	in.motion.rate_nominal = d->rate_hz;
 	/* no gyro: the one made from gravity, as noisy as the accelerometer makes it */
 	motion_set_sensor(&in.motion.m, ch,
 			  ch & MOTION_CH_GYRO ? d->gyro_noise
 					      : motion_synth_setup(&in.motion.synth, d->accel_noise,
 								   d->rate_hz),
 			  d->accel_noise);
-	cal_apply();
+	/* its calibration; the same sensor (its noises, rate or magnetometer
+	 * told anew) keeps its own and the zero measured since */
+	if (other)
+		cal_apply();
 }
 
 void input_motion_gap(void)

@@ -114,7 +114,7 @@ static void new_stream(struct imu_parser *p, uint32_t odr_mhz)
 	p->nominal_us = p->period_us = us;
 	p->period_measured = false;
 	p->period_refused = 0;	/* (of the rate before) */
-	p->have_prev = p->have_real = false;
+	p->have_prev = false;
 	p->span_us = 0;
 	p->span_n = 0;
 	p->win_n = p->win_head = 0;
@@ -312,9 +312,11 @@ static void take_rate(struct imu_parser *p, float m)
  * make the period (add_window()). An interval adds no more to the window's
  * time than WINDOW_MOST periods (the one in use) for each of its samples
  * that came: a window with a pause or lost samples in it is as long (and
- * one at half the rate in use, twice its period, is not slowed). A rate off the info's after the
- * plug, or changed by more than RATE_SAME without an info, counts within
- * two windows; a smaller change over RATE_WINDOWS.
+ * one at half the rate in use, twice its period, is not slowed). A rate off
+ * the info's after the plug counts from the first window; one changed by
+ * more than RATE_SAME without an info within two windows to about half of
+ * RATE_SAME (the window it changed in stays among them), all of it, and a
+ * smaller change, over RATE_WINDOWS.
  */
 static void measure_rate(struct imu_parser *p, float elapsed, unsigned n, unsigned came)
 {
@@ -368,7 +370,7 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 		steps = (uint16_t)(seq - p->prev_seq);
 		missing = steps - 1;
 	}
-	if (timed && p->have_real) {
+	if (timed && p->have_prev) {
 		uint16_t n = (uint16_t)(seq - p->real_seq);
 		float expected = n * p->period_us, elapsed = (float)(uint32_t)(t - p->real_t);
 		/* time beyond what the numbers say: more missing samples. With
@@ -390,7 +392,6 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 		steps = 1;
 	}
 	if (timed) {
-		p->have_real = true;
 		p->real_t = t;
 		p->real_seq = seq;
 		p->since_real = 0;

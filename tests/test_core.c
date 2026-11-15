@@ -669,13 +669,47 @@ static int ms_n(float hz, float secs, int at_least)
 	return n < at_least ? at_least : n;
 }
 
+static float mm_noise_k = 1;	/* the infos' noises times this */
+
 static size_t mm_info(uint8_t *f, int mode, float hz)
 {
 	uint8_t ch = mm_channels[mode];
 
 	/* (both scales, as the firmware sends them: the channels say which count) */
 	return imu_info(f, "MATRIX", 9, ch, (uint32_t)lrintf(hz * 1000), 0.1f, 1.0f / 8192,
-			ch & 1 ? 0.1f : 0, ch & 2 ? 0.002f : 0);
+			ch & 1 ? 0.1f * mm_noise_k : 0, ch & 2 ? 0.002f * mm_noise_k : 0);
+}
+
+/* The same sensor's info changed (its name, serial, gyro and accelerometer
+ * the same): 1 twice the rate (the real one stays), 2 its noises, 3 a
+ * magnetometer and a thermometer as well */
+static size_t mm_info_changed(uint8_t *f, int mode, float hz, int kind)
+{
+	uint8_t ch = mm_channels[mode];
+	float k = kind == 2 ? 1.2f : 1;
+
+	return imu_info(f, "MATRIX", 9, (uint8_t)(ch | (kind == 3 ? 4 | 8 : 0)),
+			(uint32_t)lrintf((kind == 1 ? 2 : 1) * hz * 1000), 0.1f, 1.0f / 8192,
+			ch & 1 ? 0.1f * k : 0, ch & 2 ? 0.002f * k : 0);
+}
+
+/* What breaks a stream of the same sensor: 0 a gap (50 lost), 1..3 a
+ * changed info (mm_info_changed()): what the samples showed stays alike */
+enum { MM_BREAKS = 4 };
+static const char *const mm_break_names[MM_BREAKS] = {
+	"a gap", "an info at twice the rate", "an info with other noises", "an info with more channels"
+};
+
+static void ms_break(struct mstream *s, int mode, float hz, int how)
+{
+	uint8_t f[80];
+
+	if (!how) {
+		ms_gap(s, 50, 0, 0);
+		return;
+	}
+	ms_flush(s);
+	ms_put(s, f, mm_info_changed(f, mode, hz, how));
 }
 
 /* A fresh sensor of the mode, hz in its info, real_hz its real rate,
@@ -895,28 +929,38 @@ static void test_motion_matrix(void)
 					 2.4f);
 				/* the rate halves or doubles (or changes a little: 1.18x,
 				 * 1.03x and 0.97x, beyond RATE_SAME's 2 %) without a new
-				 * info (the firmware never does it): taken
-				 * within two windows of the measure (0.25 s each: the one
-				 * it falls in counts its majority), a turn 0.55 s later as
-				 * it was, wherever in a window it falls (4 places) */
+				 * info (the firmware never does it): taken within two
+				 * windows of the measure (0.25 s each) to 1.1 %, all of it
+				 * (0.01 %) within 8 (the window it fell in stays among
+				 * them till then); a turn 0.55 s later as it was,
+				 * wherever in a window it falls (4 places) */
 				for (int ki = 0; ki < 5; ki++)
 					for (int ph = 0; ph < 4; ph++) {
 						static const float k[5] = { 0.5f, 2.0f, 1.18f, 1.03f, 0.97f };
 						char what[64];
+						float want = (float)lrintf(1e6f / (hz * k[ki])), off2, off8;
 
 						mm_start(&p, &s, mode, hz, id++);
 						ms_run(&s, ph * ms_n(hz, 0.25f / 4, 1), 0, 0);
 						s.hz = hz * k[ki];
 						ms_run(&s, ms_n(s.hz, 0.55f, 8), 0, 0);
 						ms_feed(&p, &s);
+						off2 = fabsf(p.period_us - want) / want;
 						imu_turned = imu_my = 0;
 						nt = ms_n(s.hz, 1, 4);
 						ms_run(&s, nt, 0, 45 * s.hz / nt);
 						ms_run(&s, nt, 20 * s.hz / nt, 0);
+						ms_feed(&p, &s);	/* 2.55 s after */
+						off8 = fabsf(p.period_us - want) / want;
 						ms_run(&s, ms_n(s.hz, 2, 4), 0, 0);
 						ms_feed(&p, &s);
 						snprintf(what, sizeof(what), "rate %gx, no info, phase %d", (double)k[ki], ph);
 						mm_check(what, mode, s.hz, gyro ? -45 : 0, 20, 0.6f);
+						if (!(off2 < 0.011f && off8 < 1e-4f)) {
+							fprintf(stderr, "matrix %s, %g Hz: off %.3f %% after 0.55 s, %.4f %% after 2.55 s\n",
+								what, (double)hz, (double)off2 * 100, (double)off8 * 100);
+							failures++;
+						}
 					}
 				/* a new info mid-stream: twice the rate (it does run so),
 				 * a turn right after (about the world's vertical: with
@@ -962,11 +1006,14 @@ static void test_motion_matrix(void)
 					ms_feed(&p, &s);
 					mm_check("new info, the real rate stays", mode, hz, 0, gyro ? 10 : 20, 1);
 				}
-				/* a new info 1.95 % off the old rate (the real one with
-				 * it): measured anew, not from the old rate's windows */
-				{
+				/* a new info off the old rate (1.95 %: within RATE_SAME,
+				 * and more; the real one with it): its first window its
+				 * own, no interval of the old rate in it (the stream's
+				 * period, whole microseconds, to 0.01 %) */
+				for (int ki = 0; ki < 4; ki++) {
+					static const float k[4] = { 1.0195f, 1.05f, 1.12f, 0.9f };
 					uint8_t f[80];
-					float nh = hz * 1.0195f;
+					float nh = hz * k[ki], want = (float)lrintf(1e6f / nh);
 
 					mm_start(&p, &s, mode, hz, id++);
 					ms_flush(&s);
@@ -974,21 +1021,32 @@ static void test_motion_matrix(void)
 					s.hz = nh;
 					ms_run(&s, ms_n(nh, 0.3f, 8), 0, 0);
 					ms_feed(&p, &s);
-					CHECK(p.period_measured && fabsf(p.period_us - 1e6f / nh) < 0.005f * 1e6f / nh);
+					if (!(p.period_measured && fabsf(p.period_us - want) < 1e-4f * want)) {
+						fprintf(stderr, "matrix new info at %gx, %g Hz: first window %.3f us, %.3f wanted\n",
+							(double)k[ki], (double)hz, (double)p.period_us, (double)want);
+						failures++;
+					}
 				}
-				/* a new info with the same rate (another sensor: the fake
-				 * one's modes): measured anew too, nothing told before */
+				/* a new info with the same rate, the same name and serial
+				 * but another gyro and accelerometer (the fake one's
+				 * modes): another sensor, afresh (what the old one turned
+				 * and tilted, not taken yet, is not the view's); measured
+				 * anew too, nothing told before */
 				{
 					uint8_t f[80];
 					struct imu_rate_told told = { 0 };
 					int other = mode == MM_GA ? MM_G : MM_GA;
+					int nt = ms_n(hz, 1, 4);
 
 					mm_start(&p, &s, mode, hz, id++);
 					imu_rate_news(&p, &told);
+					ms_run(&s, nt, 0, 45 * hz / nt);
+					ms_run(&s, nt, 20 * hz / nt, 0);
 					ms_flush(&s);
 					ms_put(&s, f, mm_info(f, other, hz));
 					ms_run(&s, 2 * s.batch, 0, 0);
 					ms_feed(&p, &s);
+					mm_check("turned, then another gyro and accelerometer", mode, hz, 0, 0, 0.01f);
 					CHECK(imu_rate_news(&p, &told) == 0 && !p.period_measured);
 					ms_run(&s, ms_n(hz, 0.3f, 8), 0, 0);
 					ms_feed(&p, &s);
@@ -1176,36 +1234,82 @@ static void test_motion_matrix(void)
 				ms_feed(&p, &s);
 				mm_check("half the rate, a tilt before the measure", mode, hz / 2, 0, 20, 2);
 			}
-			/* turned 45 and tilted 20, a gap right after, all in one read:
-			 * what the samples showed is the view's whole. Without a gyro
-			 * the part of the tilt the made-up gyro has not given yet is
-			 * lost in a gap (not told from a jolt): 0.3 s after the tilt
-			 * 15 % at most, 0.5 s after 3 %; right at the end of a tilt
-			 * over 1 s 14..18 % (at 104 Hz and more) */
-			for (int si = 0; si < (gyro ? 1 : 3); si++) {
-				int nt = ms_n(hz, 1, 4);
+			/* turned 45 and tilted 20, a gap right after (or a changed
+			 * info of the same sensor: its first sample is a gap), all in
+			 * one read: what the samples showed is the view's whole.
+			 * Without a gyro the part of the tilt the made-up gyro has not
+			 * given yet is lost in a gap (not told from a jolt): 0.3 s
+			 * after the tilt 15 % at most, 0.5 s after 3 % at most; right
+			 * at the end of a tilt over 1 s 14..18 % (at 104 Hz and more) */
+			for (int bi = 0; bi < MM_BREAKS; bi++)
+				for (int si = 0; si < (gyro ? 1 : 3); si++) {
+					int nt = ms_n(hz, 1, 4);
+					char what[96];
 
-				if (si == 2 && hz < 104)
-					continue;
-				mm_start(&p, &s, mode, hz, id++);
-				ms_run(&s, nt, 0, 45 * hz / nt);
-				ms_run(&s, nt, 20 * hz / nt, 0);
-				if (!gyro && si < 2)
-					ms_run(&s, ms_n(hz, si ? 0.3f : 0.5f, 2), 0, 0);
-				ms_gap(&s, 50, 0, 0);
-				ms_run(&s, ms_n(hz, 2, 4), 0, 0);
-				ms_feed(&p, &s);
-				if (si == 2)
-					mm_check2("tilted over 1 s, then a gap at once", mode, hz, 0, 16.8f, 0.6f, 0.4f);
-				else if (si)
-					mm_check2("tilted, 0.3 s, then a gap", mode, hz, 0, 18.8f, 0.6f, 1.8f);
-				else
-					mm_check("turned, then a gap at once", mode, hz, gyro ? -45 : 0, 20,
-						 hz >= 104 ? 0.6f : 2.5f);
+					if (si == 2 && hz < 104)
+						continue;
+					mm_start(&p, &s, mode, hz, id++);
+					ms_run(&s, nt, 0, 45 * hz / nt);
+					ms_run(&s, nt, 20 * hz / nt, 0);
+					if (!gyro && si < 2)
+						ms_run(&s, ms_n(hz, si ? 0.3f : 0.5f, 2), 0, 0);
+					ms_break(&s, mode, hz, bi);
+					ms_run(&s, ms_n(hz, 2, 4), 0, 0);
+					ms_feed(&p, &s);
+					snprintf(what, sizeof(what), "%s, then %s at once",
+						 si == 2 ? "tilted over 1 s" : si ? "tilted, 0.3 s" : "turned",
+						 mm_break_names[bi]);
+					if (si == 2)
+						mm_check2(what, mode, hz, 0, 16.8f, 0.6f, 0.4f);
+					else if (si)
+						mm_check2(what, mode, hz, 0, 18.8f, 0.6f, 1.8f);
+					else
+						mm_check(what, mode, hz, gyro ? -45 : 0, 20,
+							 hz >= 104 ? 0.6f : 2.5f);
+				}
+			/* the same sensor's info anew (noises 5x): from then on as
+			 * one plugged in with it (and a gap at the same place): its
+			 * thresholds, its made-up gyro. A slow turn (0.4 deg/s: the
+			 * noise's zero tightens it more), a tilt over 1 s, a gap at
+			 * once (what the made-up gyro has not given is lost) */
+			if (hz >= 104) {
+				float x[2], y[2];
+
+				for (int pi = 0; pi < 2; pi++) {
+					uint8_t f[80];
+
+					mm_noise_k = pi ? 1 : 5;
+					mm_start(&p, &s, mode, hz, id++);
+					mm_noise_k = 5;
+					if (pi) {
+						ms_flush(&s);
+						ms_put(&s, f, mm_info(f, mode, hz));
+					} else {
+						ms_gap(&s, 50, 0, 0);
+					}
+					mm_noise_k = 1;
+					ms_run(&s, ms_n(hz, 2, 4), 0, 0);
+					ms_feed(&p, &s);
+					imu_turned = imu_my = 0;
+					ms_run(&s, ms_n(hz, 0.6f, 4), 0, 0.4f);
+					ms_run(&s, ms_n(hz, 1, 4), 20 * hz / ms_n(hz, 1, 4), 0);
+					ms_gap(&s, 50, 0, 0);
+					ms_run(&s, ms_n(hz, 2, 4), 0, 0);
+					ms_feed(&p, &s);
+					x[pi] = imu_turned;
+					y[pi] = imu_my;
+				}
+				if (!(fabsf(x[1] - x[0]) < 0.005f && fabsf(y[1] - y[0]) < 0.005f)) {
+					fprintf(stderr, "matrix info anew as plugged with it, %s, %g Hz: %.3f %.3f, plugged %.3f %.3f\n",
+						mode == MM_GA ? "gyro+accel" : mode == MM_G ? "gyro" : "accel",
+						(double)hz, (double)x[1], (double)y[1], (double)x[0], (double)y[0]);
+					failures++;
+				}
 			}
-			/* the gyro's zero measured across a gap: 0.6 s still, 50 lost,
-			 * 0.6 s still is a still second (the window keeps its samples) */
-			if (gyro && hz >= 104) {
+			/* the gyro's zero measured across a gap (or a changed info of
+			 * the same sensor): 0.6 s still, the gap, 0.6 s still is a
+			 * still second (the window keeps its samples) */
+			for (int bi = 0; bi < MM_BREAKS && gyro && hz >= 104; bi++) {
 				struct input_motion_info mi;
 
 				mm_no_bias = true;
@@ -1213,31 +1317,78 @@ static void test_motion_matrix(void)
 				mm_no_bias = false;
 				input_motion_info(&mi);
 				CHECK(!mi.bias_known);
-				ms_gap(&s, 50, 0, 0);
+				ms_break(&s, mode, hz, bi);
 				ms_run(&s, ms_n(hz, 0.6f, 4), 0, 0);
 				ms_feed(&p, &s);
 				input_motion_info(&mi);
 				if (!mi.bias_known) {
-					fprintf(stderr, "matrix zero across a gap, %s, %g Hz: not known\n",
+					fprintf(stderr, "matrix zero across %s, %s, %g Hz: not known\n",
+						mm_break_names[bi], mode == MM_GA ? "gyro+accel" : "gyro",
+						(double)hz);
+					failures++;
+				}
+			}
+			/* the same sensor's info with another noise: its thresholds
+			 * anew. Gyro noise 0.1 deg/s, then 0.3: lying still is now
+			 * 1.2 deg/s rms (4x), not 0.4, and 0.8 deg/s of it is still */
+			if (gyro && hz >= 104) {
+				struct input_motion_info mi;
+				uint8_t f[80];
+
+				mm_no_bias = true;
+				mm_start3(&p, &s, mode, hz, hz, id++, 0.1f);
+				mm_no_bias = false;
+				ms_flush(&s);
+				ms_put(&s, f, imu_info(f, "MATRIX", 9, mm_channels[mode], (uint32_t)lrintf(hz * 1000),
+						       0.1f, 1.0f / 8192, 0.3f, mm_channels[mode] & 2 ? 0.002f : 0));
+				for (int i = 0; i < ms_n(hz, 1.2f, 4); i++)
+					ms_run(&s, 1, 0, i & 1 ? 0.8f : -0.8f);
+				ms_feed(&p, &s);
+				input_motion_info(&mi);
+				if (!mi.bias_known) {
+					fprintf(stderr, "matrix another noise, %s, %g Hz: not still\n",
 						mode == MM_GA ? "gyro+accel" : "gyro", (double)hz);
 					failures++;
 				}
 			}
+			/* the zero kept: one of 0.8 deg/s measured (lain still 2.5 s
+			 * at it), a gap or a changed info of the same sensor, 0.5 s
+			 * more at it: no turn (the calibration's zero, 0, is not
+			 * taken again: that would turn it 0.4 degrees) */
+			for (int bi = 0; bi < MM_BREAKS && gyro && hz >= 104; bi++) {
+				mm_start(&p, &s, mode, hz, id++);
+				ms_run(&s, ms_n(hz, 2.5f, 4), 0, 0.8f);
+				ms_feed(&p, &s);
+				imu_turned = imu_my = 0;
+				ms_break(&s, mode, hz, bi);
+				ms_run(&s, ms_n(hz, 0.5f, 4), 0, 0.8f);
+				ms_feed(&p, &s);
+				if (!(fabsf(imu_turned) < 0.05f)) {
+					fprintf(stderr, "matrix zero kept across %s, %s, %g Hz: turned %.3f\n",
+						mm_break_names[bi], mode == MM_GA ? "gyro+accel" : "gyro",
+						(double)hz, (double)imu_turned);
+					failures++;
+				}
+			}
 			/* a slow turn (smoothed: slower than the smoothing's 2.5 deg/s),
-			 * then a gap: the smoothing's tail still comes after it (about
-			 * 1.2 deg/s * 20 ms), what was turned is not lost */
-			if (gyro && hz >= 104) {
+			 * then a gap (or a changed info of the same sensor: other noises
+			 * or channels; twice the rate halves the samples' time): the
+			 * smoothing's tail still comes after it (about 1.2 deg/s * 20
+			 * ms), what was turned is not lost */
+			for (int bi = 0; bi < MM_BREAKS && gyro && hz >= 104; bi++) {
+				if (bi == 1)
+					continue;
 				mm_start(&p, &s, mode, hz, id++);
 				ms_run(&s, ms_n(hz, 0.4f, 4), 0, 1.2f);
 				ms_feed(&p, &s);
 				imu_turned = imu_my = 0;
-				ms_gap(&s, 50, 0, 0);
+				ms_break(&s, mode, hz, bi);
 				ms_run(&s, ms_n(hz, 0.05f, 4), 0, 0);
 				ms_feed(&p, &s);
 				if (!(imu_turned < -0.012f && imu_turned > -0.035f)) {
-					fprintf(stderr, "matrix slow turn, then a gap, %s, %g Hz: tail %.4f\n",
-						mode == MM_GA ? "gyro+accel" : "gyro", (double)hz,
-						(double)imu_turned);
+					fprintf(stderr, "matrix slow turn, then %s, %s, %g Hz: tail %.4f\n",
+						mm_break_names[bi], mode == MM_GA ? "gyro+accel" : "gyro",
+						(double)hz, (double)imu_turned);
 					failures++;
 				}
 			}

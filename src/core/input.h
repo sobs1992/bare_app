@@ -153,8 +153,9 @@ struct input_motion_info {
 };
 
 void input_motion_present(bool present, float rate_hz);
-/* Which sensor it is, as the device says: another id (or other channels)
- * starts afresh: its zero, its calibration */
+/* Which sensor it is, as the device says: another id (or another gyro and
+ * accelerometer) starts afresh: its zero, its calibration; the same one keeps
+ * them, its noises and rate taken anew */
 struct input_motion_desc {
 	const char *id;		/* [A-Za-z0-9_-] */
 	const char *name;	/* for the user */
