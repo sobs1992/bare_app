@@ -229,8 +229,10 @@ static void backend_notify(const struct gui_notify *n)
 
 	switch (n->kind) {
 	case NOTIFY_BATTERY_LOW:
+#ifdef CONFIG_GAMES
 		if (game_screen_battery())
 			return;	/* the game's screen warns in its own way */
+#endif
 		lv_snprintf(text, sizeof(text), "%s  ", LV_SYMBOL_WARNING);
 		lv_snprintf(text + strlen(text), sizeof(text) - strlen(text), tr(S_BATTERY_LOW_FMT),
 			    n->value);
