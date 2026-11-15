@@ -33,10 +33,10 @@ extern const struct hal_input_ops input_imu;
  * that changes the sensor tells core/input at once, before its samples
  * (input_motion_sensor(): id "<name>-<serial>", channels, noise). The
  * sample period is measured by the sensor's own clock, from samples that
- * carry their own time. A window of SPAN_US (a quarter second) takes all
- * the time over all the samples of its intervals within the times' jitter
- * of their median (a time found late with the interval that makes up for
- * it); the period is that of the last RATE_WINDOWS windows of
+ * carry their own time. A window of SPAN_US (a quarter second; a pause
+ * does not shorten it) takes all the time over all the samples of its
+ * intervals within twice the times' jitter of their median; the period is
+ * that of the last RATE_WINDOWS windows of
  * the same rate (2 s; a window RATE_SAME off them starts anew: the rate
  * changed), taken within 0.5..2x of the info's rate (beyond it the info's
  * again). Missing samples by time count beyond the period measured, or
@@ -77,7 +77,8 @@ struct imu_parser {
 	double win_el[RATE_WINDOWS];	/* the windows of the period: their time, */
 	uint32_t win_cnt[RATE_WINDOWS];	/* ...their samples */
 	unsigned win_n, win_head;
-	uint8_t frame_n;		/* samples in the last PKT_SAMPLES */
+	uint16_t since_real;		/* samples that came from the last timed one on */
+	uint16_t frame_seq;		/* the last PKT_SAMPLES' first number */
 	uint32_t samples, bad_crc;
 	uint8_t bad_info;		/* length of an info not understood (logged once) */
 	bool streaming, imu_ok, fake;

@@ -50,7 +50,7 @@
 #define STATUS_FAKE 16u
 #define DEFAULT_US 1000.0f	/* the period until PKT_INFO says it */
 #define SPAN_US 250000u		/* the period is measured anew over that much time */
-#define JITTER_US 500.0f	/* the samples' times are off by less (the firmware's polling) */
+#define PAUSE_US 1000.0f	/* an interval off by more: a pause (the times' delay spread, ~0.35 ms, twice over) */
 #define RATE_SAME 0.02f		/* a window this close to the period is of its rate */
 #define GAP_MISSING 3		/* samples missing (by number or by time) that are no gap yet */
 #define RATE_SLOWEST 2.02f	/* a measured period is taken within 1/x..x of the info's (2x, rounding) */
@@ -103,20 +103,19 @@ void imu_parser_init(struct imu_parser *p)
 	p->nominal_us = p->period_us = DEFAULT_US;	/* no units, no samples until PKT_INFO */
 }
 
-/* A new rate: measured again from it */
-static void set_nominal(struct imu_parser *p, uint32_t odr_mhz)
+/* A sensor (or its rate, units, channels) as the info says it anew: a new
+ * stream, its rate measured anew (its first sample a gap) */
+static void new_stream(struct imu_parser *p, uint32_t odr_mhz)
 {
 	float us = odr_mhz ? 1e9f / odr_mhz : DEFAULT_US;
 
-	if (us == p->nominal_us && p->have_info)
-		return;
 	p->nominal_us = p->period_us = us;
 	p->period_measured = false;
 	p->period_refused = 0;	/* (of the rate before) */
 	p->have_prev = p->have_real = false;
 	p->span_us = 0;
 	p->span_n = 0;
-	/* (the windows stay: one of another rate starts them anew) */
+	p->win_n = p->win_head = 0;
 }
 
 static void on_status(struct imu_parser *p, const uint8_t *s)
@@ -194,8 +193,7 @@ static void on_info(struct imu_parser *p, const uint8_t *s)
 		noise = 0;
 	if (!(anoise > 0 && anoise < 1))
 		anoise = 0;
-	set_nominal(p, id ? u32(s + 24) : 0);
-	changed = id != p->imu_id || strcmp(name, p->name) || ch != p->channels ||
+	changed = !p->have_info || id != p->imu_id || strcmp(name, p->name) || ch != p->channels ||
 		  u32(s + 24) != p->odr_mhz ||
 		  gs != p->gyro_scale || as != p->accel_scale || noise != p->gyro_noise ||
 		  anoise != p->accel_noise;
@@ -206,6 +204,8 @@ static void on_info(struct imu_parser *p, const uint8_t *s)
 		     (double)noise, (double)anoise);
 	else if (changed)
 		LOGI(TAG, "no sensor on the device");
+	if (changed)
+		new_stream(p, id ? u32(s + 24) : 0);
 	p->imu_id = id;
 	p->odr_mhz = u32(s + 24);
 	memcpy(p->name, name, sizeof(p->name));
@@ -230,15 +230,17 @@ static int cmp_float(const void *a, const void *b)
 }
 
 /* The window's time and samples: of its intervals, against the median of
- * their periods m, all those off n m by JITTER_US at most, and a time
- * found late (more than that) with the next interval when that one makes
- * up for it (the two within JITTER_US of 2 n m). What is left out is time
- * beyond the numbers with nothing to make up for it, a pause, or another
- * rate than the window's majority. The times' jitter (skewed: found late
- * by a creeping delay) adds up to the delay's spread over the window */
+ * their periods m, all those off n m by PAUSE_US at most, and one off by
+ * more that with the one before or after it is within PAUSE_US of their
+ * n m (a time found late: the next interval makes up for it). An interval
+ * is off by the difference of its two times' delays, the median by as
+ * much: twice the delay's spread is still jitter. What is left out is a
+ * pause (nothing makes up for it), or another rate than the window's
+ * majority. The jitter adds up to the delay's spread over the window */
 static void window_sums(const struct imu_parser *p, double *el_out, unsigned *cnt_out)
 {
 	float v[SPAN_MAX], m;
+	uint8_t keep[SPAN_MAX];
 	double el = 0;
 	unsigned cnt = 0;
 
@@ -247,18 +249,18 @@ static void window_sums(const struct imu_parser *p, double *el_out, unsigned *cn
 	qsort(v, p->span_n, sizeof(v[0]), cmp_float);
 	m = v[p->span_n / 2];
 	for (unsigned i = 0; i < p->span_n; i++) {
-		float off = p->span_el[i] - p->span_cnt[i] * m;
-
-		if (fabsf(off) <= JITTER_US) {
+		v[i] = p->span_el[i] - p->span_cnt[i] * m;	/* now: how far off */
+		keep[i] = fabsf(v[i]) <= PAUSE_US;
+	}
+	for (unsigned i = 0; i < p->span_n; i++)
+		if (!keep[i] && ((i > 0 && fabsf(v[i - 1] + v[i]) <= PAUSE_US) ||
+				 (i + 1 < p->span_n && fabsf(v[i] + v[i + 1]) <= PAUSE_US)))
+			keep[i] = 2;	/* (its neighbour, if out, by the same test) */
+	for (unsigned i = 0; i < p->span_n; i++)
+		if (keep[i]) {
 			el += p->span_el[i];
 			cnt += p->span_cnt[i];
-		} else if (off > 0 && i + 1 < p->span_n &&
-			   fabsf(off + p->span_el[i + 1] - p->span_cnt[i + 1] * m) <= JITTER_US) {
-			el += p->span_el[i] + p->span_el[i + 1];	/* late, then on time */
-			cnt += p->span_cnt[i] + p->span_cnt[i + 1];
-			i++;
 		}
-	}
 	*el_out = el;	/* (the median's own is among them) */
 	*cnt_out = cnt;
 }
@@ -309,17 +311,23 @@ static void take_rate(struct imu_parser *p, float m)
  * The real period, from the samples' own times: each interval between two
  * timed samples (its time, its n numbers: lost ones too) goes into a window
  * of SPAN_US and SPAN_MIN intervals at least (window_sums()); the windows
- * make the period (add_window()). A rate off the info's after the plug, or
- * changed without an info, counts within two windows.
+ * make the period (add_window()). An interval adds no more to the window's
+ * time than its samples that came could take (RATE_SLOWEST times the
+ * period in use each) and PAUSE_US: a window with a pause or lost samples
+ * in it is as long. A rate off the info's after the
+ * plug, or changed by more than RATE_SAME without an info, counts within
+ * two windows; a smaller change over RATE_WINDOWS.
  */
-static void measure_rate(struct imu_parser *p, float elapsed, unsigned n)
+static void measure_rate(struct imu_parser *p, float elapsed, unsigned n, unsigned came)
 {
+	float most = came * p->period_us * RATE_SLOWEST + PAUSE_US;
+
 	if (p->span_n < SPAN_MAX) {
 		p->span_el[p->span_n] = elapsed;
 		p->span_cnt[p->span_n] = (uint16_t)n;
 		p->span_n++;
 	}
-	p->span_us += (uint64_t)elapsed;
+	p->span_us += (uint64_t)(elapsed < most ? elapsed : most);
 	if (p->span_us < SPAN_US || p->span_n < SPAN_MIN)
 		return;
 	{
@@ -327,7 +335,7 @@ static void measure_rate(struct imu_parser *p, float elapsed, unsigned n)
 		unsigned cnt;
 
 		window_sums(p, &el, &cnt);
-		take_rate(p, add_window(p, el, cnt));	/* (a short one, after a pause: little of it) */
+		take_rate(p, add_window(p, el, cnt));
 	}
 	p->span_us = 0;
 	p->span_n = 0;
@@ -337,7 +345,7 @@ static void measure_rate(struct imu_parser *p, float elapsed, unsigned n)
  * One sample; 'timed': t is its own time (not made up from the period).
  *
  * Gaps are decided here and only here: the first sample of a stream (a new
- * port, a new rate), or more than GAP_MISSING samples missing (and a half,
+ * port, a changed info), or more than GAP_MISSING samples missing (and a half,
  * for the timing's jitter), counting together those missing by number and
  * those missing by time with the numbers going on (the device set its
  * sensor up again). A gap tells core/input (input_motion_gap()) and the
@@ -374,7 +382,7 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 		if (elapsed > expected * slow)
 			missing += (elapsed - expected * slow) / (p->period_us * slow);
 		if (n >= 1)
-			measure_rate(p, elapsed, n);
+			measure_rate(p, elapsed, n, p->since_real);
 	}
 	if (missing > GAP_MISSING + 0.5f)
 		gap = true;
@@ -386,7 +394,9 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 		p->have_real = true;
 		p->real_t = t;
 		p->real_seq = seq;
+		p->since_real = 0;
 	}
+	p->since_real++;
 	p->have_prev = true;
 	p->prev_seq = seq;
 	p->samples++;
@@ -408,11 +418,11 @@ static void on_frame(struct imu_parser *p, uint8_t type, const uint8_t *f, uint8
 	} else if (type == PKT_SAMPLES && len >= SAMPLES_HDR && p->have_info && p->imu_id &&
 		   p->proto == PROTO &&
 		   len == SAMPLES_HDR + SAMPLE_LEN * f[6]) {
-		/* the last frame again (its first number among the last frame's) */
-		if (p->have_prev && (uint16_t)(p->prev_seq - u16(f + 4)) < p->frame_n)
+		/* the last frame again (its first number the last frame's) */
+		if (p->have_prev && u16(f + 4) == p->frame_seq)
 			return;
 		p->batch_bytes = (size_t)len + FRAME_OVERHEAD;
-		p->frame_n = f[6];
+		p->frame_seq = u16(f + 4);
 		for (int i = 0; i < f[6]; i++) {
 			const uint8_t *s = f + SAMPLES_HDR + SAMPLE_LEN * i;
 

@@ -960,6 +960,38 @@ static void test_motion_matrix(void)
 					ms_feed(&p, &s);
 					mm_check("new info, the real rate stays", mode, hz, 0, gyro ? 10 : 20, 1);
 				}
+				/* a new info 1.95 % off the old rate (the real one with
+				 * it): measured anew, not from the old rate's windows */
+				{
+					uint8_t f[80];
+					float nh = hz * 1.0195f;
+
+					mm_start(&p, &s, mode, hz, id++);
+					ms_flush(&s);
+					ms_put(&s, f, mm_info(f, mode, nh));
+					s.hz = nh;
+					ms_run(&s, ms_n(nh, 0.3f, 8), 0, 0);
+					ms_feed(&p, &s);
+					CHECK(p.period_measured && fabsf(p.period_us - 1e6f / nh) < 0.005f * 1e6f / nh);
+				}
+				/* a new info with the same rate (another sensor: the fake
+				 * one's modes): measured anew too, nothing told before */
+				{
+					uint8_t f[80];
+					struct imu_rate_told told = { 0 };
+					int other = mode == MM_GA ? MM_G : MM_GA;
+
+					mm_start(&p, &s, mode, hz, id++);
+					imu_rate_news(&p, &told);
+					ms_flush(&s);
+					ms_put(&s, f, mm_info(f, other, hz));
+					ms_run(&s, 2 * s.batch, 0, 0);
+					ms_feed(&p, &s);
+					CHECK(imu_rate_news(&p, &told) == 0 && !p.period_measured);
+					ms_run(&s, ms_n(hz, 0.3f, 8), 0, 0);
+					ms_feed(&p, &s);
+					CHECK(imu_rate_news(&p, &told) == IMU_RATE_MEASURED && p.period_measured);
+				}
 				/* at the very edge (0.5x, 1/2.015x of the info's), a pause
 				 * in the measure's window, wherever it falls in it: samples
 				 * lost (3 + 0.4 period, 3 + 0.6: a gap, 1 + 0.3) or time
@@ -1374,15 +1406,20 @@ static void test_motion_matrix(void)
 	 * is their long-run mean, not their median */
 	/* the delay creeps slowly (7 us a batch, wraps at 200 us: every ~100
 	 * ms) or fast (70 us, wraps at 350 us: every 5 batches, as wide as on
-	 * the real sensor), and now and then a frame's time is found 0.9 ms
-	 * late: a window's intervals hold no wrap or a few, so only a measure
-	 * over several windows is right. Within 0.15 % from the first measure
-	 * on, 0.05 % after the first second, all along; a second without
-	 * samples and 900 lost in it, in 6 places each, change none of it */
-	for (int ji = 0; ji < 2; ji++)
-		for (int pk = 0; pk < 6; pk++) {
+	 * the real sensor), or every other batch is found 270 us late (two
+	 * intervals' times apart by twice the delay's spread); and now and
+	 * then a frame's time is found 0.9 ms late: a window's intervals hold
+	 * no wrap or a few, so only a measure over several windows is right.
+	 * Within 0.3 % from the first measure on (a pause in the first window
+	 * takes its interval's delay out), 0.1 % after the first second, all
+	 * along, a second without samples and 900 lost in it in 8 places each
+	 * (in the first window too) */
+	for (int ji = 0; ji < 3; ji++)
+		for (int pk = 0; pk < 8; pk++) {
+			static const int pause_b[8] = { 5, 33, 70, 1000, 1006, 1015, 1500, 1501 };
+			static const int lost_b[8] = { 12, 50, 2000, 2007, 2013, 2025, 6, 9 };
 			const float real_us = 1e6f / 1137.0f;
-			const uint32_t creep = ji ? 70 : 7, wrap = ji ? 350 : 200;
+			const uint32_t creep = ji == 1 ? 70 : 7, wrap = ji == 1 ? 350 : ji == 2 ? 1 : 200;
 			uint32_t delay = 0, base;
 			float worst = 0, worst1 = 0;
 
@@ -1391,14 +1428,14 @@ static void test_motion_matrix(void)
 			for (int b = 0; b < 3000; b++) {	/* 12000 samples, 10.6 s */
 				uint32_t at;
 
-				if (b == 1000 + 3 * pk)
+				if (b == pause_b[pk])
 					base += 1000000;
-				if (b == 2000 + 5 * pk) {
+				if (b == lost_b[pk]) {
 					base += (uint32_t)lrintf(900 * real_us);
 					s.seq = (uint16_t)(s.seq + 900);
 				}
 				at = base + (uint32_t)lrintf(4 * b * real_us);
-				delay = (delay + creep) % wrap;
+				delay = ji == 2 ? (uint32_t)(b % 2) * 270u : (delay + creep) % wrap;
 				s.t = at + delay + (b % 50 == 25 ? 900 : 0);
 				ms_run(&s, 4, 0, 0);
 				if (b % 10 == 9) {
@@ -1412,9 +1449,9 @@ static void test_motion_matrix(void)
 					}
 				}
 			}
-			if (!p.period_measured || worst >= 0.0015f || worst1 >= 0.0005f) {
-				fprintf(stderr, "matrix jittered times (%u us, place %d): off by %.3f %%, "
-					"%.3f %% after a second\n", (unsigned)wrap, pk, (double)worst * 100,
+			if (!p.period_measured || worst >= 0.003f || worst1 >= 0.001f) {
+				fprintf(stderr, "matrix jittered times (model %d, place %d): off by %.3f %%, "
+					"%.3f %% after a second\n", ji, pk, (double)worst * 100,
 					(double)worst1 * 100);
 				failures++;
 			}
