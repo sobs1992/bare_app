@@ -27,6 +27,7 @@
 #include <limits.h>
 #include <math.h>
 #include <poll.h>
+#include <pwd.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdarg.h>
@@ -97,6 +98,7 @@ static struct {
 	char locale[32];
 	char env[1024];			/* NAME=value, space separated */
 	char writable[512];		/* entries the game writes to, see make_tree() */
+	char profile[PATH_MAX];		/* files for the user's profile, see fill_profile() */
 	char reg[MAX_REG][512];		/* KEY\NAME=DATA, see set_registry() */
 	unsigned reg_count;
 	enum stick_use lstick, rstick, dpad;
@@ -370,6 +372,8 @@ static int read_ini(const char *path)
 			snprintf(cfg.env, sizeof(cfg.env), "%s", value);
 		} else if (!strcmp(key, "writable")) {
 			snprintf(cfg.writable, sizeof(cfg.writable), "%s", value);
+		} else if (!strcmp(key, "profile")) {
+			snprintf(cfg.profile, sizeof(cfg.profile), "%s", value);
 		} else if (!strcmp(key, "locale")) {
 			snprintf(cfg.locale, sizeof(cfg.locale), "%s", value);
 		} else if (!strcmp(key, "reg")) {
@@ -732,6 +736,69 @@ static int make_tree(void)
 		return -1;
 	snprintf(cfg.dir, sizeof(cfg.dir), "%s", tree);
 	return 0;
+}
+
+/* SRC's files in DST where DST has none of that name, see fill_profile() */
+static void copy_missing(const char *src, const char *dst)
+{
+	struct stat st;
+	struct dirent *e;
+	DIR *d;
+
+	if (stat(src, &st) < 0) {
+		msg("%s: %s", src, strerror(errno));
+		return;
+	}
+	if (!S_ISDIR(st.st_mode)) {
+		if (lstat(dst, &st) == 0 || errno != ENOENT)
+			return;	/* the game's own, as the player left it */
+		msg("copying %s to %s", src, dst);
+		if (copy_tree(src, dst) < 0) {
+			msg("%s: %s", dst, strerror(errno));
+			unlink(dst);	/* never half a file */
+		}
+		return;
+	}
+	if (mkdir(dst, 0755) < 0 && errno != EEXIST) {
+		msg("%s: %s", dst, strerror(errno));
+		return;
+	}
+	if (!(d = opendir(src))) {
+		msg("%s: %s", src, strerror(errno));
+		return;
+	}
+	while ((e = readdir(d))) {
+		char s2[PATH_MAX], d2[PATH_MAX];
+
+		if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+			continue;
+		snprintf(s2, sizeof(s2), "%s/%s", src, e->d_name);
+		snprintf(d2, sizeof(d2), "%s/%s", dst, e->d_name);
+		copy_missing(s2, d2);
+	}
+	closedir(d);
+}
+
+/*
+ * "profile = DIR" of wine.ini: files the game finds in the Windows user's
+ * profile (C:\users\<user>: Documents, AppData) on its first start, as the
+ * device wants them (Tales of Monkey Island: its settings, a display mode
+ * and quality that fit the screen). DIR, relative to the game's directory,
+ * holds them at their places in the profile; a file the profile has
+ * already, the game's own as the player changed it, is kept.
+ */
+static void fill_profile(void)
+{
+	const char *prefix = getenv("WINEPREFIX");
+	struct passwd *pw = getpwuid(getuid());
+	char src[PATH_MAX], dst[PATH_MAX];
+
+	if (!cfg.profile[0])
+		return;
+	snprintf(src, sizeof(src), "%s/%s", cfg.dir, cfg.profile);
+	/* Wine names the profile after the Unix user */
+	snprintf(dst, sizeof(dst), "%s/drive_c/users/%s", prefix, pw ? pw->pw_name : "root");
+	copy_missing(src, dst);
 }
 
 /* ---- the screen ----------------------------------------------------------- */
@@ -1414,6 +1481,7 @@ static struct client *input_client(void)
 static float axis[GP_AXIS_COUNT];
 static bool dpad_dir[4];		/* dpad = mouse, scroll: held */
 static bool real_mouse_used;		/* the cursor last moved by a real mouse */
+static bool input_seen;			/* bare_app's input or a command since the start */
 static int pointer_x = -1, pointer_y = -1;	/* where the pointer was sent last */
 
 static int edge_keep(int v, int size, float push)
@@ -2359,6 +2427,7 @@ static bool read_app(void)
 			real_mouse_flush();
 			return true;
 		}
+		input_seen = true;
 		if (m.type == GAME_MSG_BUTTON)
 			on_button(m.code, m.pressed, m.flags & GAME_BTN_STICK);
 		else if (m.type == GAME_MSG_AXIS)
@@ -2370,6 +2439,152 @@ static bool read_app(void)
 		else if (m.type == GAME_MSG_MOUSE_MOVE)
 			on_real_mouse_move(m.code, m.value);
 	}
+}
+
+/* ---- commands (tests and tools) --------------------------------------------- */
+
+/*
+ * CTL_PATH, a FIFO of command lines for tests and tools, the SDK's scripts
+ * over ssh among them (Windows games' own cursors are hard to steer by the
+ * stick from outside):
+ *   move X Y        the cursor to X,Y of the Windows screen
+ *   fmove X Y       the cursor to the pixel X,Y of bare_app's frame, as a
+ *                   screenshot of the device shows it (not while magnified)
+ *   click [right]   a click where the cursor is (pressed for 0.1 s)
+ *   key NAME        a key or button as wine.ini's [keys] names it (enter,
+ *                   esc, f1, ctrl+s, lbutton...), pressed for 0.1 s
+ */
+#define CTL_PATH "/tmp/bare_app_wine.ctl"
+#define CTL_PRESS_US 100000
+
+static int ctl_fd = -1;
+static char ctl_buf[256];
+static size_t ctl_len;
+
+static void ctl_open(void)
+{
+	unlink(CTL_PATH);
+	if (mkfifo(CTL_PATH, 0600) < 0) {
+		msg("%s: %s", CTL_PATH, strerror(errno));
+		return;
+	}
+	/* read and write: no end of file when a writer closes it */
+	ctl_fd = open(CTL_PATH, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+	if (ctl_fd < 0)
+		msg("%s: %s", CTL_PATH, strerror(errno));
+}
+
+static void ctl_close(void)
+{
+	if (ctl_fd >= 0) {
+		close(ctl_fd);
+		unlink(CTL_PATH);
+	}
+	ctl_fd = -1;
+}
+
+/* The cursor to x,y of the rows shown, the pointer after it */
+static void ctl_cursor(long x, long y)
+{
+	long rows = (long)shown_rows(&mode);
+	int px, py;
+
+	cur_x = (float)(x < 0 ? 0 : x >= (long)mode.width ? (long)mode.width - 1 : x);
+	cur_y = (float)(y < 0 ? 0 : y >= rows ? rows - 1 : y);
+	pointer_at(&px, &py);
+	send_mouse_at(px, py, 0, 0);
+	dirty = true;
+}
+
+static void ctl_line(char *line)
+{
+	char cmd[16], arg[64];
+	long x, y;
+	int n = sscanf(line, "%15s %ld %ld", cmd, &x, &y);
+
+	if (n < 1)
+		return;
+	input_seen = true;
+	if (!strcmp(cmd, "move") && n == 3) {
+		ctl_cursor(x, y - (long)shown_top(&mode));
+	} else if (!strcmp(cmd, "fmove") && n == 3 && dst_w > 0 && dst_h > 0 && !magnify) {
+		ctl_cursor((x - dst_x) * (long)mode.width / dst_w,
+			   (y - dst_y) * (long)shown_rows(&mode) / dst_h);
+	} else if (!strcmp(cmd, "click")) {
+		struct action a = { 0 };
+
+		parse_action(sscanf(line, "%*s %63s", arg) == 1 && !strcmp(arg, "right") ? "rbutton" : "lbutton", &a);
+		do_action(&a, true);
+		usleep(CTL_PRESS_US);	/* a game polling its input sees it down */
+		do_action(&a, false);
+	} else if (!strcmp(cmd, "key") && sscanf(line, "%*s %63s", arg) == 1) {
+		struct action a = { 0 };
+
+		if (parse_action(arg, &a) < 0) {
+			msg("ctl: key %s?", arg);
+			return;
+		}
+		do_action(&a, true);
+		usleep(CTL_PRESS_US);
+		do_action(&a, false);
+	} else {
+		msg("ctl: %s?", line);
+	}
+}
+
+static void ctl_read(void)
+{
+	ssize_t n;
+	char *nl;
+
+	while ((n = read(ctl_fd, ctl_buf + ctl_len, sizeof(ctl_buf) - 1 - ctl_len)) > 0) {
+		ctl_len += (size_t)n;
+		ctl_buf[ctl_len] = '\0';
+		while ((nl = strchr(ctl_buf, '\n'))) {
+			*nl = '\0';
+			ctl_line(ctl_buf);
+			ctl_len -= (size_t)(nl + 1 - ctl_buf);
+			memmove(ctl_buf, nl + 1, ctl_len + 1);
+		}
+		if (ctl_len == sizeof(ctl_buf) - 1)
+			ctl_len = 0;	/* a line too long: dropped */
+	}
+}
+
+/*
+ * A game that draws its own cursor and hides Windows' learns where the
+ * pointer is, and hides it, only from a mouse message: until then the
+ * screen showed Windows' arrow in the middle and the game's cursor at its
+ * 0,0 (Tales of Monkey Island). Until the first input, the pointer is
+ * nudged a pixel and back every second, for at most SYNC_MAX_NS.
+ */
+#define SYNC_EVERY_MS 1000
+#define SYNC_MAX_NS (120ULL * 1000000000ULL)
+
+static uint64_t sync_start, sync_next;
+
+static int sync_timeout(int timeout)
+{
+	uint64_t now = mono_ns();
+	int ms;
+
+	if (input_seen || now - sync_start > SYNC_MAX_NS)
+		return timeout;
+	ms = now >= sync_next ? 0 : (int)((sync_next - now) / 1000000) + 1;
+	return timeout < 0 || ms < timeout ? ms : timeout;
+}
+
+static void sync_tick(void)
+{
+	uint64_t now = mono_ns();
+	int px, py;
+
+	if (input_seen || now - sync_start > SYNC_MAX_NS || now < sync_next || !client_count)
+		return;
+	sync_next = now + SYNC_EVERY_MS * 1000000ULL;
+	pointer_at(&px, &py);
+	send_mouse_at(px > 0 ? px - 1 : px + 1, py, 0, 0);
+	send_mouse_at(px, py, 0, 0);
 }
 
 /* ---- main ------------------------------------------------------------------ */
@@ -2430,7 +2645,7 @@ static int listen_socket(char *path, size_t size)
 int main(int argc, char **argv)
 {
 	char ini[PATH_MAX + 16], sock_path[108], exe[PATH_MAX * 2], *wargv[64];
-	struct pollfd pfd[4 + MAX_CLIENTS];
+	struct pollfd pfd[5 + MAX_CLIENTS];
 	pid_t game = -1, waiter = -1;
 	int listen_fd, sig_fd, tick_fd, status = 0, wargc = 0, i;
 	sigset_t mask;
@@ -2468,7 +2683,12 @@ int main(int argc, char **argv)
 
 	/* children get the signals back (posix_spawn keeps the mask) */
 	sigprocmask(SIG_UNBLOCK, &mask, NULL);
-	if (prepare_prefix() < 0 || make_tree() < 0) {
+	if (prepare_prefix() < 0) {
+		unlink(sock_path);
+		return 1;
+	}
+	fill_profile();	/* from the game's directory, before make_tree() moves it */
+	if (make_tree() < 0) {
 		unlink(sock_path);
 		return 1;
 	}
@@ -2502,9 +2722,13 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	msg("%s started (pid %d), prefix %s", exe, (int)game, getenv("WINEPREFIX"));
+	ctl_open();
+	sync_start = mono_ns();
+	sync_next = sync_start + SYNC_EVERY_MS * 1000000ULL;
 
 	for (;;) {
 		unsigned n = 0, first_client;
+		int ctl_idx;
 
 		if (dirty && !moving()) {
 			uint64_t now = mono_ns();
@@ -2521,12 +2745,17 @@ int main(int argc, char **argv)
 		pfd[n++] = (struct pollfd){ .fd = listen_fd, .events = POLLIN };
 		pfd[n++] = (struct pollfd){ .fd = sig_fd, .events = POLLIN };
 		pfd[n++] = (struct pollfd){ .fd = tick_fd, .events = POLLIN };
+		ctl_idx = -1;
+		if (ctl_fd >= 0) {
+			ctl_idx = (int)n;
+			pfd[n++] = (struct pollfd){ .fd = ctl_fd, .events = POLLIN };
+		}
 		first_client = n;
 		for (i = 0; i < (int)client_count; i++)
 			pfd[n++] = (struct pollfd){ .fd = clients[i].fd, .events = POLLIN };
 		/* the stream may start wanting the screen over a still picture:
 		 * looked at twice a second */
-		if (poll(pfd, n, app.shm->full_width ? FULL_CHECK_MS : -1) < 0) {
+		if (poll(pfd, n, sync_timeout(app.shm->full_width ? FULL_CHECK_MS : -1)) < 0) {
 			if (errno == EINTR)
 				continue;
 			break;
@@ -2539,6 +2768,9 @@ int main(int argc, char **argv)
 		}
 		if (pfd[1].revents)
 			accept_client(listen_fd);
+		if (ctl_idx >= 0 && pfd[ctl_idx].revents)
+			ctl_read();
+		sync_tick();
 		if (pfd[2].revents) {
 			struct signalfd_siginfo si;
 			bool quit = false;
@@ -2557,12 +2789,18 @@ int main(int argc, char **argv)
 				if (p == game) {
 					char *const w[] = { (char *)"wineserver", (char *)"-w", NULL };
 
-					status = WIFEXITED(st) ? WEXITSTATUS(st) : 1;
-					msg("the game has ended (%d), waiting for Wine", status);
+					/* a Windows program's exit code is its own: Tales of
+					 * Monkey Island and Pirates! leave by their menus
+					 * with 1. Only a killed Wine is an error to bare_app. */
+					status = WIFEXITED(st) ? 0 : 1;
+					msg("the game has ended (%s %d), waiting for Wine",
+					    WIFEXITED(st) ? "exit code" : "signal",
+					    WIFEXITED(st) ? WEXITSTATUS(st) : WTERMSIG(st));
 					game = -1;
 					/* its other programs may go on: until wineserver ends */
 					waiter = spawn(w, NULL, NULL);
 				} else if (p == waiter) {
+					ctl_close();
 					unlink(sock_path);
 					return status;
 				}
@@ -2586,6 +2824,7 @@ int main(int argc, char **argv)
 					;
 	}
 	kill_wine();
+	ctl_close();
 	unlink(sock_path);
 	return status;
 }
