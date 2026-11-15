@@ -51,6 +51,7 @@
 #define DEFAULT_US 1000.0f	/* the period until PKT_INFO says it */
 #define SPAN_US 250000u		/* the period is measured anew over that much time */
 #define JITTER_US 500.0f	/* an interval off by more: a pause (the times' delay: ~0.35 ms seen) */
+#define WINDOW_MOST 3.0f	/* an interval adds to the window at most this many of its samples' periods */
 #define RATE_SAME 0.02f		/* a window this close to the period is of its rate */
 #define GAP_MISSING 3		/* samples missing (by number or by time) that are no gap yet */
 #define RATE_SLOWEST 2.02f	/* a measured period is taken within 1/x..x of the info's (2x, rounding) */
@@ -231,18 +232,18 @@ static int cmp_float(const void *a, const void *b)
 }
 
 /* The window's time and samples. The times are the sensor's grid and a
- * delay (the firmware's polling, up to ~0.35 ms): an interval is off by
- * the difference of its two times' delays. Against r, the mean of the
- * middle half of the intervals' periods (not one of two alternating groups,
- * as their median can be), an interval counts if off by JITTER_US at most,
- * or within it with the one before or after (a time found late, the next
- * on time); else it is a pause (a data-ready missed is a period with no
- * sample) or a rate other than the window's majority: out. The jitter adds
- * up to the delay's spread over the window */
+ * delay (the firmware's polling, up to ~0.35 ms): an interval is off its
+ * samples' time by the difference of its two times' delays. Against r, the
+ * mean of the middle half of the intervals' periods (not one of two
+ * alternating groups, as their median can be), an interval counts if off
+ * by JITTER_US at most; else it holds a pause (a data-ready missed is a
+ * period with no sample), a time found later than that (with the interval
+ * after it), or another rate than r's: out. The jitter adds up to the
+ * delay's spread over the window; none counting (the rate changed right
+ * in it): no measure */
 static void window_sums(const struct imu_parser *p, double *el_out, unsigned *cnt_out)
 {
 	float v[SPAN_MAX], r = 0;
-	uint8_t keep[SPAN_MAX];
 	unsigned n = p->span_n, lo = n / 4, hi = n - n / 4, cnt = 0;
 	double el = 0;
 
@@ -252,16 +253,8 @@ static void window_sums(const struct imu_parser *p, double *el_out, unsigned *cn
 	for (unsigned i = lo; i < hi; i++)
 		r += v[i];
 	r /= (float)(hi - lo);
-	for (unsigned i = 0; i < n; i++) {
-		v[i] = p->span_el[i] - p->span_cnt[i] * r;	/* now: how far off */
-		keep[i] = fabsf(v[i]) <= JITTER_US;
-	}
 	for (unsigned i = 0; i < n; i++)
-		if (!keep[i] && ((i > 0 && fabsf(v[i - 1] + v[i]) <= JITTER_US) ||
-				 (i + 1 < n && fabsf(v[i] + v[i + 1]) <= JITTER_US)))
-			keep[i] = 2;	/* (its neighbour, if out, by the same test) */
-	for (unsigned i = 0; i < n; i++)
-		if (keep[i]) {
+		if (fabsf(p->span_el[i] - p->span_cnt[i] * r) <= JITTER_US) {
 			el += p->span_el[i];
 			cnt += p->span_cnt[i];
 		}
@@ -316,15 +309,15 @@ static void take_rate(struct imu_parser *p, float m)
  * timed samples (its time, its n numbers: lost ones too) goes into a window
  * of SPAN_US and SPAN_MIN intervals at least (window_sums()); the windows
  * make the period (add_window()). An interval adds no more to the window's
- * time than its samples that came could take (RATE_SLOWEST times the
- * period in use each): a window with a pause or lost samples in it is as
- * long. A rate off the info's after the
+ * time than WINDOW_MOST periods (the one in use) for each of its samples
+ * that came: a window with a pause or lost samples in it is as long (and
+ * one at half the period in use is not slowed). A rate off the info's after the
  * plug, or changed by more than RATE_SAME without an info, counts within
  * two windows; a smaller change over RATE_WINDOWS.
  */
 static void measure_rate(struct imu_parser *p, float elapsed, unsigned n, unsigned came)
 {
-	float most = came * p->period_us * RATE_SLOWEST;
+	float most = came * p->period_us * WINDOW_MOST;
 
 	if (p->span_n < SPAN_MAX) {
 		p->span_el[p->span_n] = elapsed;
@@ -339,7 +332,8 @@ static void measure_rate(struct imu_parser *p, float elapsed, unsigned n, unsign
 		unsigned cnt;
 
 		window_sums(p, &el, &cnt);
-		take_rate(p, add_window(p, el, cnt));
+		if (cnt)
+			take_rate(p, add_window(p, el, cnt));
 	}
 	p->span_us = 0;
 	p->span_n = 0;

@@ -993,7 +993,8 @@ static void test_motion_matrix(void)
 					ms_feed(&p, &s);
 					CHECK(imu_rate_news(&p, &told) == IMU_RATE_MEASURED && p.period_measured);
 				}
-				/* at the very edge (0.5x, 1/2.015x of the info's), a pause
+				/* at the limit (0.5x and 2x of the info's: 1 % from the
+				 * measure's edge, more than a window's error), a pause
 				 * in the measure's window, wherever it falls in it, in the
 				 * first window too: samples lost (3 + 0.4 period, 3 + 0.6:
 				 * a gap, 1 + 0.3) or time only (0.15, 0.2, 0.45, 0.55
@@ -1001,7 +1002,7 @@ static void test_motion_matrix(void)
 				 * batches later; after 0.3 s in the first window): the
 				 * measure stays taken, the turn as it was */
 				{
-					static const float edge[2] = { 0.5f, 1 / 2.015f };
+					static const float edge[2] = { 0.5f, 2.0f };
 					static const int ev_lost[] = { 3, 3, 1, 0, 0, 0, 0, 0, 0 };
 					static const float ev_pause[] = { 0.4f, 0.6f, 0.3f, 0.15f, 0.2f, 0.45f, 0.55f, 1, 2 };
 
@@ -1030,6 +1031,27 @@ static void test_motion_matrix(void)
 										 (double)ev_pause[vi], ph);
 									mm_check(what, mode, rh, gyro ? -20 : 0, 0, 0.6f);
 								}
+				}
+				/* the rate halves without an info a few samples into the
+				 * first window, or a later one: a window where nothing
+				 * counts against the mean of its middle half makes no
+				 * measure (no 0/0), the next does */
+				for (int at = 5; at <= 13 + 9; at++) {
+					if (at <= 13) {
+						mm_start3(&p, &s, mode, hz, hz, id++, 0.001f);
+						ms_run(&s, at, 0, 0);
+					} else {
+						mm_start(&p, &s, mode, hz, id++);
+						ms_run(&s, at - 9, 0, 0);
+					}
+					s.hz = hz / 2;
+					for (int c = 0; c < 10; c++) {
+						ms_run(&s, ms_n(s.hz, 0.1f, 4), 0, 0);
+						ms_feed(&p, &s);
+						CHECK(isfinite(p.period_us) && isfinite(p.period_refused) &&
+						      !(p.period_refused > 0));
+					}
+					CHECK(p.period_measured && fabsf(p.period_us - 1e6f / s.hz) < 0.002f * 1e6f / s.hz);
 				}
 				/* a little change of the rate without an info (1.5 %:
 				 * within RATE_SAME): the windows take it over 8 of them,
@@ -1449,7 +1471,8 @@ static void test_motion_matrix(void)
 	 * (a period more, no number for it): a window's intervals hold
 	 * no wrap or a few, so only a measure over several windows is right.
 	 * Within 0.3 % from the first measure on (a pause in the first window
-	 * takes its interval's delay out), 0.1 % after the first second, all
+	 * takes its interval's delay out), 0.15 % after the first second (a
+	 * late time takes its two intervals' share of the delay out), all
 	 * along, a second without samples and 900 lost in it in 8 places each
 	 * (in the first window too) */
 	for (int ji = 0; ji < 3; ji++)
@@ -1489,13 +1512,55 @@ static void test_motion_matrix(void)
 					}
 				}
 			}
-			if (!p.period_measured || worst >= 0.003f || worst1 >= 0.001f) {
+			if (!p.period_measured || worst >= 0.003f || worst1 >= 0.0015f) {
 				fprintf(stderr, "matrix jittered times (model %d, place %d): off by %.3f %%, "
 					"%.3f %% after a second\n", ji, pk, (double)worst * 100,
 					(double)worst1 * 100);
 				failures++;
 			}
 		}
+	/* the info changed in one thing only (its name, its id, a channel,
+	 * the magnetometer's or the temperature's bit, a unit, a noise): a new
+	 * stream each (told, measured anew); the same info: none. And a stream
+	 * numbered from 0, as the firmware's: its first frame counts */
+	for (int vi = 0; vi <= 9; vi++) {
+		static const char *const names[2] = { "MATRIX", "MATRIY" };
+		uint8_t f[80];
+		unsigned was;
+
+		mm_start(&p, &s, MM_GA, 1000, id++);
+		was = p.info_seq;
+		ms_flush(&s);
+		ms_put(&s, f, imu_info(f, names[vi == 1], vi == 2 ? 10 : 9,
+				       (uint8_t)(vi == 3 ? 1 : 3 | (vi == 4 ? 4 : 0) | (vi == 5 ? 8 : 0)), 1000000,
+				       vi == 6 ? 0.2f : 0.1f, vi == 7 ? 2.0f / 8192 : 1.0f / 8192,
+				       vi == 8 ? 0.2f : 0.1f, vi == 9 ? 0.003f : 0.002f));
+		ms_run(&s, 8, 0, 0);
+		ms_feed(&p, &s);
+		if (vi == 0)
+			CHECK(p.info_seq == was && p.period_measured);
+		else if (!(p.info_seq == was + 1 && !p.period_measured)) {
+			fprintf(stderr, "info changed in field %d: seq %u -> %u, measured %d\n", vi, was,
+				p.info_seq, p.period_measured);
+			failures++;
+		}
+	}
+	{
+		uint8_t f[80];
+
+		input_set_motion_calibration(NULL);
+		imu_parser_init(&p);
+		snprintf(p.serial, sizeof(p.serial), "MM%u", id++);
+		imu_parser_feed(&p, f, mm_info(f, MM_GA, 1000));
+		s.len = 0;
+		s.pending = 0;
+		s.seq = 0;
+		s.hz = 1000;
+		s.batch = 4;
+		ms_run(&s, 8, 0, 0);
+		ms_feed(&p, &s);
+		CHECK(p.samples == 8);
+	}
 	/* what the driver logs of the rate (imu_rate_news()): refused once;
 	 * a new info does not tell the old refusal; its measure, once; a
 	 * change within 0.5..2x nothing; beyond: refused, back: measured;
