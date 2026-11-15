@@ -17,7 +17,7 @@
 
 struct statusbar {
 	lv_obj_t *title, *devices, *volume, *wifi, *clock;
-	lv_obj_t *battery, *bat_bolt, *bat_pill;
+	lv_obj_t *battery, *bat_bolt, *bat_icon;
 	lv_timer_t *tick;
 	int shown_minute;	/* minutes since the epoch, -1 none */
 	int shown_volume;	/* percent, -1 hidden, -2 nothing yet */
@@ -50,7 +50,7 @@ static void fit_clock(struct statusbar *s)
 		lv_obj_align_to(s->clock, s->right, LV_ALIGN_OUT_LEFT_MID, -gap, 0);
 }
 
-/* The pill (widgets/battery.c); with the level unknown, a bolt on the charger */
+/* The icon (widgets/battery.c); with the level unknown, a bolt on the charger */
 static void battery_create(struct statusbar *s, lv_obj_t *parent)
 {
 	s->battery = lv_obj_create(parent);
@@ -61,8 +61,8 @@ static void battery_create(struct statusbar *s, lv_obj_t *parent)
 	lv_obj_set_style_text_font(s->bat_bolt, UI_FONT_MID, 0);
 	lv_label_set_text(s->bat_bolt, LV_SYMBOL_CHARGE);
 	lv_obj_center(s->bat_bolt);
-	s->bat_pill = battery_pill_create(s->battery);
-	lv_obj_center(s->bat_pill);
+	s->bat_icon = battery_icon_create(s->battery);
+	lv_obj_center(s->bat_icon);
 	lv_obj_set_hidden(s->battery, true);
 }
 
@@ -72,9 +72,9 @@ static void update_battery(struct statusbar *s, const struct gui_ctx *c)
 
 	lv_obj_set_hidden(s->battery, !known && !c->power.online);
 	lv_obj_set_hidden(s->bat_bolt, known);
-	lv_obj_set_hidden(s->bat_pill, !known);
+	lv_obj_set_hidden(s->bat_icon, !known);
 	if (known)
-		battery_pill_set(s->bat_pill, c->power.capacity, c->power.charging);
+		battery_icon_set(s->bat_icon, c->power.capacity, c->power.charging);
 }
 
 static void update_clock(struct statusbar *s)

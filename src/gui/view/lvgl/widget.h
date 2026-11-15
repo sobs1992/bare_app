@@ -33,9 +33,9 @@ extern const struct widget_ops sysmon_widget;
 /* symbol: LV_SYMBOL_* or NULL */
 void statusbar_set_title(lv_obj_t *bar, const char *symbol, const char *title);
 lv_obj_t *statusbar_create(lv_obj_t *parent, const char *symbol, const char *title);
-/* widgets/battery.c: the battery as a pill with the percent inside */
-lv_obj_t *battery_pill_create(lv_obj_t *parent);
-void battery_pill_set(lv_obj_t *pill, int capacity, bool charging);
+/* widgets/battery.c: the battery as a frame with the percent inside */
+lv_obj_t *battery_icon_create(lv_obj_t *parent);
+void battery_icon_set(lv_obj_t *icon, int capacity, bool charging);
 
 /* screens/ */
 extern const struct widget_ops home_screen, settings_screen, input_test_screen, layers_screen,
