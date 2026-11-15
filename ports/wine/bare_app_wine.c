@@ -507,16 +507,38 @@ static int prepare_prefix(void)
 	return 0;
 }
 
-/* NAME is one of the "writable" entries (blank or comma separated, any case) */
-static bool writable(const char *name)
+/* What an entry of the game's directory is in the tree of make_tree() */
+enum tree_kind {
+	TREE_LINK,	/* a link to the game's */
+	TREE_COPY,	/* a "writable" entry: the game's own copy */
+	TREE_DIR,	/* a directory with "writable" entries deeper down: a
+			 * directory of its own, its other entries links */
+};
+
+/*
+ * PATH, relative to the game's directory ("Sbz1/Save"), by the "writable"
+ * entries: blank or comma separated paths, any case, "/" or "\" between
+ * their parts
+ */
+static enum tree_kind tree_kind(const char *path)
 {
-	char buf[sizeof(cfg.writable)], *p, *save = NULL;
+	char buf[sizeof(cfg.writable)], *p, *c, *save = NULL;
+	size_t n = strlen(path);
+	enum tree_kind kind = TREE_LINK;
 
 	snprintf(buf, sizeof(buf), "%s", cfg.writable);
-	for (p = strtok_r(buf, " \t,", &save); p; p = strtok_r(NULL, " \t,", &save))
-		if (!strcasecmp(p, name))
-			return true;
-	return false;
+	for (p = strtok_r(buf, " \t,", &save); p; p = strtok_r(NULL, " \t,", &save)) {
+		for (c = p; *c; c++)
+			if (*c == '\\')
+				*c = '/';
+		while (c > p + 1 && c[-1] == '/')
+			*--c = '\0';
+		if (!strcasecmp(p, path))
+			return TREE_COPY;
+		if (!strncasecmp(p, path, n) && p[n] == '/')
+			kind = TREE_DIR;
+	}
+	return kind;
 }
 
 static int copy_tree(const char *src, const char *dst)
@@ -571,20 +593,66 @@ static int copy_tree(const char *src, const char *dst)
 	return 0;
 }
 
+/* The entries of the game's directory SRC (REL relative to the game's
+ * directory, "" for itself) in DST, see make_tree() */
+static int fill_tree(const char *src, const char *dst, const char *rel)
+{
+	char s2[PATH_MAX], d2[PATH_MAX], r2[PATH_MAX];
+	struct dirent *e;
+	struct stat st;
+	DIR *d;
+
+	if (!(d = opendir(src))) {
+		msg("%s: %s", src, strerror(errno));
+		return -1;
+	}
+	while ((e = readdir(d))) {
+		if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+			continue;
+		snprintf(s2, sizeof(s2), "%s/%s", src, e->d_name);
+		snprintf(d2, sizeof(d2), "%s/%s", dst, e->d_name);
+		snprintf(r2, sizeof(r2), "%s%s%s", rel, *rel ? "/" : "", e->d_name);
+		switch (tree_kind(r2)) {
+		case TREE_COPY:
+			if (lstat(d2, &st) == 0 && !S_ISLNK(st.st_mode))
+				break;	/* the game's own copy */
+			unlink(d2);
+			msg("copying %s to %s", s2, d2);
+			if (copy_tree(s2, d2) < 0)
+				msg("%s: %s", d2, strerror(errno));
+			break;
+		case TREE_DIR:
+			if (lstat(d2, &st) == 0 && S_ISLNK(st.st_mode))
+				unlink(d2);	/* a link until "writable" named a part */
+			if (mkdir(d2, 0755) < 0 && errno != EEXIST)
+				msg("%s: %s", d2, strerror(errno));
+			else
+				fill_tree(s2, d2, r2);
+			break;
+		case TREE_LINK:
+			unlink(d2);	/* follows the game's directory as it is now */
+			if (symlink(s2, d2) < 0)
+				msg("%s: %s", d2, strerror(errno));
+			break;
+		}
+	}
+	closedir(d);
+	return 0;
+}
+
 /*
  * Games that write into their own directory ("writable = Data" in wine.ini:
  * saved games, settings, logs) are started from a tree next to the prefix,
  * <prefix>/../games/<directory>: the writable entries are copies made on the
  * first start (kept from then on), everything else links to the game's
- * directory, which stays read-only on /games.
+ * directory, which stays read-only on /games. An entry deeper down
+ * ("Sbz1/Save") makes the directories above it directories of the tree,
+ * with links to the rest of their entries.
  */
 static int make_tree(void)
 {
 	const char *prefix = getenv("WINEPREFIX"), *name = strrchr(cfg.dir, '/');
-	char tree[PATH_MAX], src[PATH_MAX], dst[PATH_MAX], *slash;
-	struct dirent *e;
-	struct stat st;
-	DIR *d;
+	char tree[PATH_MAX], *slash;
 
 	if (!cfg.writable[0])
 		return 0;
@@ -592,29 +660,12 @@ static int make_tree(void)
 	if ((slash = strrchr(tree, '/')))
 		*slash = '\0';
 	snprintf(tree + strlen(tree), sizeof(tree) - strlen(tree), "/games/%s", name ? name + 1 : cfg.dir);
-	if (mkdirs(tree) < 0 || !(d = opendir(cfg.dir))) {
+	if (mkdirs(tree) < 0) {
 		msg("%s: %s", tree, strerror(errno));
 		return -1;
 	}
-	while ((e = readdir(d))) {
-		if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
-			continue;
-		snprintf(src, sizeof(src), "%s/%s", cfg.dir, e->d_name);
-		snprintf(dst, sizeof(dst), "%s/%s", tree, e->d_name);
-		if (writable(e->d_name)) {
-			if (lstat(dst, &st) == 0 && !S_ISLNK(st.st_mode))
-				continue;	/* the game's own copy */
-			unlink(dst);
-			msg("copying %s to %s", src, dst);
-			if (copy_tree(src, dst) < 0)
-				msg("%s: %s", dst, strerror(errno));
-		} else {
-			unlink(dst);	/* follows the game's directory as it is now */
-			if (symlink(src, dst) < 0)
-				msg("%s: %s", dst, strerror(errno));
-		}
-	}
-	closedir(d);
+	if (fill_tree(cfg.dir, tree, "") < 0)
+		return -1;
 	snprintf(cfg.dir, sizeof(cfg.dir), "%s", tree);
 	return 0;
 }
