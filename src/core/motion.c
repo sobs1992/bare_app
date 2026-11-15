@@ -330,12 +330,6 @@ void motion_take(struct motion *m, float *x, float *y)
 	m->x = m->y = 0;
 }
 
-void motion_drop(struct motion *m)
-{
-	m->x = m->y = 0;
-	m->sm_count = 0;
-}
-
 void motion_gap(struct motion *m)
 {
 	/* gravity: from the next sample on (0.3..3 g: until then no turn).

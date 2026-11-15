@@ -570,6 +570,7 @@ struct mstream {
 	float hz, tilt;		/* the device's rate (may differ from the info's), tilt about x */
 	int batch;		/* samples a frame, as the firmware: as many as come in 4 ms, 1..4 */
 	int pending;		/* samples in the frame being made */
+	int last_n;		/* ...in the last frame that went out */
 	uint8_t frame[8 + 12 * 4];
 };
 
@@ -593,6 +594,7 @@ static void ms_flush(struct mstream *s)
 	s->frame[6] = (uint8_t)s->pending;
 	s->frame[7] = 0;
 	ms_put(s, f, imu_frame(f, 0x04, s->frame, (uint8_t)(8 + 12 * s->pending)));
+	s->last_n = s->pending;
 	s->pending = 0;
 }
 
@@ -680,6 +682,7 @@ static size_t mm_info(uint8_t *f, int mode, float hz)
  * long enough for its zero (and its rate measured); its stream in s */
 static void mm_start3(struct imu_parser *p, struct mstream *s, int mode, float hz, float real_hz,
 		      unsigned id, float still);
+static bool mm_no_bias;	/* the next start's calibration has no gyro zero */
 
 static void mm_start2(struct imu_parser *p, struct mstream *s, int mode, float hz, float real_hz,
 		      unsigned id)
@@ -705,7 +708,7 @@ static void mm_start3(struct imu_parser *p, struct mstream *s, int mode, float h
 	imu_parser_feed(p, f, n);
 	input_set_motion_calibration(&(struct motion_cal){ .axes_set = true, .right = { 1, 0, 0 },
 							   .up_set = !(mm_channels[mode] & 2),
-							   .up = { 0, 0, 1 }, .bias_set = true });
+							   .up = { 0, 0, 1 }, .bias_set = !mm_no_bias });
 	s->len = 0;
 	s->pending = 0;
 	s->hz = real_hz;
@@ -797,6 +800,22 @@ static void test_motion_matrix(void)
 						mm_check("real rate off, then lost and paused", mode, rh, 0,
 							 ci == 0 && !gyro ? 20 : 0, 2);
 					}
+					/* ...and a gap (50 lost) keeps the measure: a turn
+					 * right after it as it was (about the world's
+					 * vertical, tilted by 60 by now: a gyro alone cos 60
+					 * of it). Not at a slow sensor's 0.5x: its 8 intervals
+					 * hold the pauses above, its measure is 2.025x then
+					 * (refused: README) */
+					if (hz < 104 && off[oi] <= 0.5f)
+						continue;
+					imu_turned = imu_my = 0;
+					ms_gap(&s, 50, 0, 0);
+					ms_run_vert(&s, ms_n(rh, 0.2f, 4), 20 * rh / ms_n(rh, 0.2f, 4));
+					ms_run(&s, ms_n(rh, 2, 4), 0, 0);
+					ms_feed(&p, &s);
+					mm_check("real rate off, a gap, a turn at once", mode, rh,
+						 mode == MM_GA ? -20 : mode == MM_G ? -10 : 0, 0,
+						 hz >= 104 ? 0.6f : 2.5f);
 				}
 			}
 
@@ -902,12 +921,12 @@ static void test_motion_matrix(void)
 						 mode == MM_GA ? -45 : mode == MM_G ? -22.5f : 0, 0, 0.6f);
 				}
 				/* the real rate changes a little without a new info
-				 * (1.18x): the next measures take it, a turn 2.5 s later */
+				 * (1.18x): taken within 0.5 s too, a turn 0.6 s later */
 				{
 					mm_start(&p, &s, mode, hz, id++);
 					s.hz = hz * 1.18f;
 					nt = ms_n(s.hz, 1, 4);
-					ms_run(&s, ms_n(s.hz, 2.5f, 4), 0, 0);
+					ms_run(&s, ms_n(s.hz, 0.6f, 8), 0, 0);
 					imu_turned = imu_my = 0;
 					ms_run(&s, nt, 0, 45 * s.hz / nt);
 					ms_run(&s, ms_n(s.hz, 2, 4), 0, 0);
@@ -925,7 +944,7 @@ static void test_motion_matrix(void)
 				int last;
 
 				mm_start3(&p, &s, mode, hz, hz, id++, 0.02f);
-				last = s.pending ? s.pending : s.batch;	/* the interval's samples */
+				last = s.last_n;	/* the interval's samples: the last frame's */
 				ms_gap(&s, 0, (2.02f * many + 1.02f * last) / hz, 20);
 				ms_run(&s, ms_n(hz, 3, 4), 0, 0);
 				ms_feed(&p, &s);
@@ -946,22 +965,46 @@ static void test_motion_matrix(void)
 				mm_check("half the rate, a tilt before the measure", mode, hz / 2, 0, 20, 2);
 			}
 			/* turned 45 and tilted 20, a gap right after, all in one read:
-			 * what the samples showed is the view's whole (without a gyro
-			 * the tilt settled first: the made-up gyro's last ~0.1 s is
-			 * lost in a gap, a tilt not settled is not told from a jolt) */
-			{
+			 * what the samples showed is the view's whole. Without a gyro
+			 * the part of the tilt the made-up gyro has not given yet is
+			 * lost in a gap (not told from a jolt): 0.3 s after the tilt
+			 * 15 % at most, 0.5 s after 3 % */
+			for (int si = 0; si < (gyro ? 1 : 2); si++) {
 				int nt = ms_n(hz, 1, 4);
 
 				mm_start(&p, &s, mode, hz, id++);
 				ms_run(&s, nt, 0, 45 * hz / nt);
 				ms_run(&s, nt, 20 * hz / nt, 0);
 				if (!gyro)
-					ms_run(&s, ms_n(hz, 0.5f, 2), 0, 0);
+					ms_run(&s, ms_n(hz, si ? 0.3f : 0.5f, 2), 0, 0);
 				ms_gap(&s, 50, 0, 0);
 				ms_run(&s, ms_n(hz, 2, 4), 0, 0);
 				ms_feed(&p, &s);
-				mm_check("turned, then a gap at once", mode, hz, gyro ? -45 : 0, 20,
-					 hz >= 104 ? 0.6f : 2.5f);
+				if (si)
+					mm_check2("tilted, 0.3 s, then a gap", mode, hz, 0, 18.8f, 0.6f, 1.8f);
+				else
+					mm_check("turned, then a gap at once", mode, hz, gyro ? -45 : 0, 20,
+						 hz >= 104 ? 0.6f : 2.5f);
+			}
+			/* the gyro's zero measured across a gap: 0.6 s still, 50 lost,
+			 * 0.6 s still is a still second (the window keeps its samples) */
+			if (gyro && hz >= 104) {
+				struct input_motion_info mi;
+
+				mm_no_bias = true;
+				mm_start3(&p, &s, mode, hz, hz, id++, 0.6f);
+				mm_no_bias = false;
+				input_motion_info(&mi);
+				CHECK(!mi.bias_known);
+				ms_gap(&s, 50, 0, 0);
+				ms_run(&s, ms_n(hz, 0.6f, 4), 0, 0);
+				ms_feed(&p, &s);
+				input_motion_info(&mi);
+				if (!mi.bias_known) {
+					fprintf(stderr, "matrix zero across a gap, %s, %g Hz: not known\n",
+						mode == MM_GA ? "gyro+accel" : "gyro", (double)hz);
+					failures++;
+				}
 			}
 			/* a slow turn (smoothed: slower than the smoothing's 2.5 deg/s),
 			 * then a gap: the smoothing's tail still comes after it (about
@@ -1044,7 +1087,7 @@ static void test_motion_matrix(void)
 			 * at least 5 deg/s: a slower steady turn of a seconds-slow
 			 * sensor is its gyro's zero as far as anyone can tell */
 			{
-				float r = fmaxf(20 * hz / 12, 5);
+				float r = fminf(fmaxf(20 * hz / 12, 5), 3000);	/* (int16 at 0.1 deg/s) */
 
 				mm_start(&p, &s, mode, hz, id++);
 				ms_run(&s, 8, 0, r);
@@ -1129,11 +1172,16 @@ static void test_motion_matrix(void)
 			ms_run(&s, ms_n(hz, 3, 4), 0, 0);
 			ms_feed(&p, &s);
 			mm_check("two gaps close together", mode, hz, 0, 0, 1);
-			/* plugged out and in, tilted by 60 meanwhile: a new parser, its
-			 * numbers from anew; present only after the first read, as the
-			 * driver says it */
+			/* a slow turn (smoothed), plugged out and in, tilted by 60
+			 * meanwhile: a new parser, its numbers from anew; present only
+			 * after the first read (a batch), as the driver says it. Its
+			 * first sample is a gap, and no more: the tilt is not the
+			 * view's, the smoothing's tail of the turn before still is */
 			mm_start(&p, &s, mode, hz, id++);
 			input_motion_present(true, hz);
+			ms_run(&s, ms_n(hz, 0.4f, 4), 0, 1.2f);
+			ms_feed(&p, &s);
+			imu_turned = imu_my = 0;
 			input_motion_present(false, 0);
 			imu_parser_init(&p);
 			snprintf(p.serial, sizeof(p.serial), "MM%u", id - 1);
@@ -1145,11 +1193,18 @@ static void test_motion_matrix(void)
 
 				ms_put(&s, f, mm_info(f, mode, hz));
 			}
-			ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+			ms_run(&s, s.batch, 0, 0);
 			ms_feed(&p, &s);
 			input_motion_present(true, hz);
+			ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+			ms_feed(&p, &s);
 			input_motion_present(false, 0);
 			mm_check("plugged in again", mode, hz, 0, 0, 1);
+			if (gyro && hz >= 104 && !(imu_turned < -0.012f && imu_turned > -0.035f)) {
+				fprintf(stderr, "matrix plugged in again, %s, %g Hz: tail %.4f\n",
+					mode == MM_GA ? "gyro+accel" : "gyro", (double)hz, (double)imu_turned);
+				failures++;
+			}
 		}
 	}
 	/* the samples' times as a real one's: found late by a delay that creeps

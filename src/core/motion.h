@@ -146,8 +146,6 @@ void motion_synth_reset(struct motion_synth *s);
 void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, float gyro[3]);
 /* Degrees turned since the last call: x to the right, y down (as a mouse) */
 void motion_take(struct motion *m, float *x, float *y);
-/* Forget what was turned and not taken (the game was not in front) */
-void motion_drop(struct motion *m);
 /* A gap in the samples (the stream's reader says so): gravity's "up" of
  * before it is stale; what was turned (not taken yet, or in the smoothing's
  * tail) stays */
