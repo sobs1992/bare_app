@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define WINEBARE_SOCKET_ENV "WINEBARE_SOCKET"
-#define WB_PROTO_VERSION 3	/* 2: key flags, 3: cursor pictures */
+#define WB_PROTO_VERSION 4	/* 2: key flags, 3: cursor pictures, 4: gamma ramps */
 
 #define WB_MAX_MODES 16
 
@@ -38,6 +38,8 @@ enum wb_msg_type {
 	WB_MODE_SET,		/* width, height: ChangeDisplaySettings */
 	WB_CURSOR,		/* visible, picture: memfd attached when width > 0 */
 	WB_CURSOR_POS,		/* x, y: SetCursorPos */
+	WB_GAMMA,		/* channel, its ramp: SetDeviceGammaRamp, a message a
+				 * channel (red, green, blue), 8 bits a value */
 
 	/* host -> driver */
 	WB_CONFIG = 64,		/* modes, current mode */
@@ -110,6 +112,10 @@ struct wb_msg {
 		struct {
 			int32_t x, y;
 		} cursor_pos;
+		struct {
+			uint32_t channel;	/* 0 red, 1 green, 2 blue */
+			uint8_t ramp[256];	/* what each value of it is shown as */
+		} gamma;
 		struct {
 			uint32_t mode_count;
 			struct wb_mode modes[WB_MAX_MODES];

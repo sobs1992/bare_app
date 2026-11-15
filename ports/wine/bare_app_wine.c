@@ -103,6 +103,7 @@ static struct {
 	int edge_zone;			/* edge_zone: pixels of the screen's edge the pointer keeps
 					 * out of unless the stick pushes it there */
 	bool fill;			/* scale = fill: the whole frame, the aspect not kept */
+	float gamma;			/* gamma = G: the screen's values to the power 1/G */
 	int rows;			/* rows = N [TOP [WxH]]: only N of the display mode's rows */
 	int rows_top;			/* shown, from row TOP (0: the top ones), */
 	uint32_t rows_w, rows_h;	/* in display mode WxH only (0: in any) */
@@ -261,6 +262,7 @@ static void set_defaults(void)
 	int b;
 
 	cfg.mode = (struct wb_mode){ 800, 600 };
+	cfg.gamma = 1.0f;
 	cfg.lstick = STICK_MOUSE;
 	cfg.rstick = STICK_WHEEL;
 	cfg.dpad = STICK_ARROWS;
@@ -339,6 +341,8 @@ static int read_ini(const char *path)
 				if (!a || parse_action(value, a) < 0)
 					msg("%s:%d: %s = %s?", path, lineno, key, value);
 			}
+		} else if (!strcmp(key, "gamma")) {
+			cfg.gamma = strtof(value, NULL);
 		} else if (!strcmp(key, "exe")) {
 			snprintf(cfg.exe, sizeof(cfg.exe), "%s", value);
 		} else if (!strcmp(key, "args")) {
@@ -951,6 +955,67 @@ static int z_index(uint64_t hwnd)
 	return -1;
 }
 
+/*
+ * What each value of the screen's red, green and blue is shown as: the
+ * gamma ramp the game set (SetDeviceGammaRamp, the brightness of old
+ * games), then wine.ini's gamma; none (gamma_on false) while that is the
+ * identity
+ */
+static uint8_t game_ramp[3][256];	/* red, green, blue */
+static uint8_t gamma_lut[3][256];
+static bool gamma_on;
+
+static void update_gamma(void)
+{
+	uint8_t curve[256];
+	int c, i;
+
+	for (i = 0; i < 256; i++)
+		curve[i] = (uint8_t)lroundf(255.0f * powf(i / 255.0f, 1.0f / cfg.gamma));
+	gamma_on = false;
+	for (c = 0; c < 3; c++)
+		for (i = 0; i < 256; i++) {
+			gamma_lut[c][i] = curve[game_ramp[c][i]];
+			if (gamma_lut[c][i] != i)
+				gamma_on = true;
+		}
+	dirty = true;
+}
+
+static void init_gamma(void)
+{
+	int c, i;
+
+	if (!(cfg.gamma > 0.1f && cfg.gamma < 10.0f))
+		cfg.gamma = 1.0f;
+	for (c = 0; c < 3; c++)
+		for (i = 0; i < 256; i++)
+			game_ramp[c][i] = (uint8_t)i;
+	update_gamma();
+}
+
+static void set_gamma(uint32_t channel, const uint8_t *ramp)
+{
+	if (channel > 2)
+		return;
+	memcpy(game_ramp[channel], ramp, 256);
+	update_gamma();
+}
+
+/* The screen through gamma_lut (BGRX pixels) */
+static void apply_gamma(void)
+{
+	const uint8_t *r = gamma_lut[0], *g = gamma_lut[1], *b = gamma_lut[2];
+	size_t i, n = (size_t)mode.width * mode.height;
+
+	for (i = 0; i < n; i++) {
+		uint32_t p = screen[i];
+
+		screen[i] = (uint32_t)r[(p >> 16) & 0xff] << 16 | (uint32_t)g[(p >> 8) & 0xff] << 8 |
+			    b[p & 0xff];
+	}
+}
+
 static void compose(void)
 {
 	struct surface *s;
@@ -967,6 +1032,8 @@ static void compose(void)
 			for (s = surfaces; s; s = s->next)
 				if (s->hwnd == zorder[i] && s->layer == layer && drawable(s))
 					blit(s);
+	if (gamma_on)
+		apply_gamma();
 }
 
 /* Frame row y of the screen into scaled */
@@ -1516,6 +1583,12 @@ static void on_client_msg(struct client *c, const struct wb_msg *m, int fd)
 			cur_y = y < 0 ? 0 : y >= (int32_t)shown_rows(&mode) ? (int32_t)shown_rows(&mode) - 1 : y;
 		}
 		dirty = cursor_shown;
+		break;
+	case WB_GAMMA:
+		if (trace)
+			msg("pid %d: gamma ramp %u, 64 -> %u, 128 -> %u, 192 -> %u", (int)c->pid,
+			    m->gamma.channel, m->gamma.ramp[64], m->gamma.ramp[128], m->gamma.ramp[192]);
+		set_gamma(m->gamma.channel, m->gamma.ramp);
 		break;
 	default:
 		msg("pid %d: message %u?", (int)c->pid, m->type);
@@ -2272,6 +2345,7 @@ int main(int argc, char **argv)
 		return 1;
 	set_env();
 	make_tables();
+	init_gamma();
 	set_mode(cfg.mode);
 	cur_x = mode.width / 2;
 	cur_y = shown_rows(&mode) / 2;
