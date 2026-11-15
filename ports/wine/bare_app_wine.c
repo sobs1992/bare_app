@@ -53,6 +53,7 @@ extern char **environ;
 
 #define MAX_CLIENTS 32
 #define MAX_ENV 32
+#define MAX_REG 16			/* "reg" lines of wine.ini */
 #define TICK_NS (1000000000L / 60)	/* frames and cursor moves at most 60 a second */
 #define STICK_DEAD 0.15f		/* stick deflection taken as rest */
 #define FULL_CHECK_MS 500		/* whether the stream wants the screen, when idle */
@@ -96,6 +97,8 @@ static struct {
 	char locale[32];
 	char env[1024];			/* NAME=value, space separated */
 	char writable[512];		/* entries the game writes to, see make_tree() */
+	char reg[MAX_REG][512];		/* KEY\NAME=DATA, see set_registry() */
+	unsigned reg_count;
 	enum stick_use lstick, rstick, dpad;
 	bool cursor_keys;		/* arrows = cursor: the arrow keys are the cursor block's */
 	float cursor_speed;		/* screen widths a second at full deflection */
@@ -369,6 +372,15 @@ static int read_ini(const char *path)
 			snprintf(cfg.writable, sizeof(cfg.writable), "%s", value);
 		} else if (!strcmp(key, "locale")) {
 			snprintf(cfg.locale, sizeof(cfg.locale), "%s", value);
+		} else if (!strcmp(key, "reg")) {
+			char *v = strchr(value, '='), *n = v ? memrchr(value, '\\', (size_t)(v - value)) : NULL;
+
+			/* KEY\NAME=DATA: a key, a name and the "=" after it, whole */
+			if (!n || n == value || n + 1 == v || cfg.reg_count == MAX_REG ||
+			    strlen(value) >= sizeof(cfg.reg[0]))
+				msg("%s:%d: reg = %s?", path, lineno, value);
+			else
+				snprintf(cfg.reg[cfg.reg_count++], sizeof(cfg.reg[0]), "%s", value);
 		} else if (!strcmp(key, "rows")) {
 			int n = sscanf(value, "%d %d %ux%u", &cfg.rows, &cfg.rows_top, &cfg.rows_w, &cfg.rows_h);
 
@@ -526,6 +538,37 @@ static int prepare_prefix(void)
 	if (symlink(games, path) < 0)
 		msg("%s: %s", path, strerror(errno));
 	return 0;
+}
+
+/*
+ * The "reg" values of wine.ini (KEY\NAME=DATA, strings), set on each start
+ * by Wine's reg in the view of a 32-bit program (HKLM\Software\X is then
+ * HKLM\Software\Wow6432Node\X): what an installer would have written and
+ * the game reads, Tales of Monkey Island its language. A value it cannot
+ * set is only told: the game may still start.
+ */
+static void set_registry(void)
+{
+	unsigned i;
+
+	for (i = 0; i < cfg.reg_count; i++) {
+		char buf[sizeof(cfg.reg[0])], *eq, *bs;
+
+		snprintf(buf, sizeof(buf), "%s", cfg.reg[i]);
+		eq = strchr(buf, '=');
+		*eq = '\0';
+		bs = strrchr(buf, '\\');
+		*bs = '\0';
+		{
+			char *const argv[] = {
+				(char *)"wine", (char *)"reg", (char *)"add", buf, (char *)"/v", bs + 1,
+				(char *)"/d", eq + 1, (char *)"/f", (char *)"/reg:32", NULL,
+			};
+
+			if (run(argv, NULL) != 0)
+				msg("reg %s: not set", cfg.reg[i]);
+		}
+	}
 }
 
 /* What an entry of the game's directory is in the tree of make_tree() */
@@ -2429,6 +2472,7 @@ int main(int argc, char **argv)
 		unlink(sock_path);
 		return 1;
 	}
+	set_registry();
 	sigprocmask(SIG_BLOCK, &mask, NULL);
 
 	/* a Unix or Windows path of its own (C:\windows\notepad.exe) as it is */
