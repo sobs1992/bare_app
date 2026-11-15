@@ -673,8 +673,9 @@ static size_t mm_info(uint8_t *f, int mode, float hz)
 {
 	uint8_t ch = mm_channels[mode];
 
-	return imu_info(f, "MATRIX", 9, ch, (uint32_t)lrintf(hz * 1000), ch & 1 ? 0.1f : 0,
-			ch & 2 ? 1.0f / 8192 : 0, ch & 1 ? 0.1f : 0, ch & 2 ? 0.002f : 0);
+	/* (both scales, as the firmware sends them: the channels say which count) */
+	return imu_info(f, "MATRIX", 9, ch, (uint32_t)lrintf(hz * 1000), 0.1f, 1.0f / 8192,
+			ch & 1 ? 0.1f : 0, ch & 2 ? 0.002f : 0);
 }
 
 /* A fresh sensor of the mode, hz in its info, real_hz its real rate,
@@ -993,36 +994,70 @@ static void test_motion_matrix(void)
 					CHECK(imu_rate_news(&p, &told) == IMU_RATE_MEASURED && p.period_measured);
 				}
 				/* at the very edge (0.5x, 1/2.015x of the info's), a pause
-				 * in the measure's window, wherever it falls in it: samples
-				 * lost (3 + 0.4 period, 3 + 0.6: a gap, 1 + 0.3) or time
-				 * only (0.15, 0.2 and 1 period: a data-ready missed), then a
-				 * turn two batches later: the measure stays taken, the
-				 * turn as it was */
+				 * in the measure's window, wherever it falls in it, in the
+				 * first window too: samples lost (3 + 0.4 period, 3 + 0.6:
+				 * a gap, 1 + 0.3) or time only (0.15, 0.2, 0.45, 0.55
+				 * period; 1 and 2: data-ready missed), then a turn (two
+				 * batches later; after 0.3 s in the first window): the
+				 * measure stays taken, the turn as it was */
 				{
 					static const float edge[2] = { 0.5f, 1 / 2.015f };
-					static const int ev_lost[] = { 3, 3, 1, 0, 0, 0 };
-					static const float ev_pause[] = { 0.4f, 0.6f, 0.3f, 0.15f, 0.2f, 1 };
+					static const int ev_lost[] = { 3, 3, 1, 0, 0, 0, 0, 0, 0 };
+					static const float ev_pause[] = { 0.4f, 0.6f, 0.3f, 0.15f, 0.2f, 0.45f, 0.55f, 1, 2 };
 
-					for (int ei = 0; ei < 2; ei++)
-						for (int vi = 0; vi < 6; vi++)
-							for (int ph = 0; ph < 8; ph++) {
-								float rh = hz * edge[ei];
-								int n2 = ms_n(rh, 0.2f, 4);
-								char what[80];
+					for (int fw = 0; fw < 2; fw++)
+						for (int ei = 0; ei < 2; ei++)
+							for (int vi = 0; vi < 9; vi++)
+								for (int ph = 0; ph < 8; ph++) {
+									float rh = hz * edge[ei];
+									int n2 = ms_n(rh, 0.2f, 4);
+									char what[80];
 
-								mm_start2(&p, &s, mode, hz, rh, id++);
-								ms_run(&s, ph * ms_n(rh, 0.25f / 8, 1), 0, 0);
-								ms_gap(&s, ev_lost[vi], ev_pause[vi] / rh, 0);
-								ms_run(&s, 2 * s.batch, 0, 0);
-								ms_feed(&p, &s);
-								imu_turned = imu_my = 0;
-								ms_run(&s, n2, 0, 20 * rh / n2);
-								ms_run(&s, ms_n(rh, 1, 4), 0, 0);
-								ms_feed(&p, &s);
-								snprintf(what, sizeof(what), "at the edge, %d lost + %.2g, phase %d",
-									 ev_lost[vi], (double)ev_pause[vi], ph);
-								mm_check(what, mode, rh, gyro ? -20 : 0, 0, 0.6f);
-							}
+									if (fw)
+										mm_start3(&p, &s, mode, hz, rh, id++, 0.01f);
+									else
+										mm_start2(&p, &s, mode, hz, rh, id++);
+									ms_run(&s, ph * ms_n(rh, 0.25f / 8, 1), 0, 0);
+									ms_gap(&s, ev_lost[vi], ev_pause[vi] / rh, 0);
+									ms_run(&s, fw ? ms_n(rh, 0.3f, 8) : 2 * s.batch, 0, 0);
+									ms_feed(&p, &s);
+									imu_turned = imu_my = 0;
+									ms_run(&s, n2, 0, 20 * rh / n2);
+									ms_run(&s, ms_n(rh, 1, 4), 0, 0);
+									ms_feed(&p, &s);
+									snprintf(what, sizeof(what), "at the edge%s, %d lost + %.2g, phase %d",
+										 fw ? " (first window)" : "", ev_lost[vi],
+										 (double)ev_pause[vi], ph);
+									mm_check(what, mode, rh, gyro ? -20 : 0, 0, 0.6f);
+								}
+				}
+				/* a little change of the rate without an info (1.5 %:
+				 * within RATE_SAME): the windows take it over 8 of them,
+				 * all of it after 2.3 s */
+				mm_start(&p, &s, mode, hz, id++);
+				s.hz = hz * 1.015f;
+				ms_run(&s, ms_n(s.hz, 2.3f, 8), 0, 0);
+				ms_feed(&p, &s);
+				CHECK(fabsf(p.period_us - 1e6f / s.hz) < 0.001f * 1e6f / s.hz);
+				/* the same info again (asked for again, a scale for the
+				 * channel it lacks in it, as the firmware sends it): no new
+				 * stream, no gap (an accelerometer alone sees the tilt
+				 * across it), the measure kept */
+				{
+					uint8_t f[80];
+					unsigned seq_was;
+					int nt2 = ms_n(hz, 0.1f, 4);
+
+					mm_start(&p, &s, mode, hz, id++);
+					seq_was = p.info_seq;
+					ms_run(&s, nt2 / 2, 20 * hz / nt2, 0);
+					ms_flush(&s);
+					ms_put(&s, f, mm_info(f, mode, hz));
+					ms_run(&s, nt2 - nt2 / 2, 20 * hz / nt2, 0);
+					ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+					ms_feed(&p, &s);
+					CHECK(p.info_seq == seq_was && p.period_measured);
+					mm_check("the same info again", mode, hz, 0, 20, 0.6f);
 				}
 			}
 
@@ -1279,14 +1314,16 @@ static void test_motion_matrix(void)
 					mm_check("lost and paused", mode, hz, 0, counted ? 20 : 0, 2);
 				}
 			}
-			/* pauses short of a gap now and then (1.5 periods after every
-			 * 20th sample: one interval in 5 even with batches of 4), 24 s:
-			 * not a slower rate, a turn while they go on as it was (each
-			 * sample its own period: the pauses' time is no turn) */
+			/* a data-ready missed now and then (a period with no sample
+			 * after every 20th: one interval in 5 even with batches of 4;
+			 * on the sensor's grid, as all its pauses short of a gap), 24
+			 * s: not a slower rate, a turn while they go on as it was
+			 * (each sample its own period: the missed one's time is no
+			 * turn) */
 			mm_start(&p, &s, mode, hz, id++);
 			for (int r = 0; r < ms_n(hz, 24, 40) / 20; r++) {
 				ms_run(&s, 20, 0, 0);
-				ms_gap(&s, 0, 1.5f / hz, 0);
+				ms_gap(&s, 0, 1 / hz, 0);
 			}
 			{
 				int nt = ms_n(hz, 1, 4);
@@ -1294,7 +1331,7 @@ static void test_motion_matrix(void)
 				imu_turned = imu_my = 0;
 				for (int done = 0; done < nt; done += 20) {
 					ms_run(&s, nt - done < 20 ? nt - done : 20, 0, 45 * hz / nt);
-					ms_gap(&s, 0, 1.5f / hz, 0);
+					ms_gap(&s, 0, 1 / hz, 0);
 				}
 				ms_run(&s, ms_n(hz, 2, 3), 0, 0);
 				ms_feed(&p, &s);
@@ -1408,7 +1445,8 @@ static void test_motion_matrix(void)
 	 * ms) or fast (70 us, wraps at 350 us: every 5 batches, as wide as on
 	 * the real sensor), or every other batch is found 270 us late (two
 	 * intervals' times apart by twice the delay's spread); and now and
-	 * then a frame's time is found 0.9 ms late: a window's intervals hold
+	 * then a frame's time is found 0.9 ms late, and a data-ready is missed
+	 * (a period more, no number for it): a window's intervals hold
 	 * no wrap or a few, so only a measure over several windows is right.
 	 * Within 0.3 % from the first measure on (a pause in the first window
 	 * takes its interval's delay out), 0.1 % after the first second, all
@@ -1434,6 +1472,8 @@ static void test_motion_matrix(void)
 					base += (uint32_t)lrintf(900 * real_us);
 					s.seq = (uint16_t)(s.seq + 900);
 				}
+				if (b % 97 == 13)
+					base += (uint32_t)lrintf(real_us);	/* a data-ready missed */
 				at = base + (uint32_t)lrintf(4 * b * real_us);
 				delay = ji == 2 ? (uint32_t)(b % 2) * 270u : (delay + creep) % wrap;
 				s.t = at + delay + (b % 50 == 25 ? 900 : 0);

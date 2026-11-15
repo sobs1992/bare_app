@@ -35,7 +35,8 @@ extern const struct hal_input_ops input_imu;
  * sample period is measured by the sensor's own clock, from samples that
  * carry their own time. A window of SPAN_US (a quarter second; a pause
  * does not shorten it) takes all the time over all the samples of its
- * intervals within twice the times' jitter of their median; the period is
+ * intervals within the times' jitter of the mean of their middle half (a
+ * time found late with the next interval), a pause left out; the period is
  * that of the last RATE_WINDOWS windows of
  * the same rate (2 s; a window RATE_SAME off them starts anew: the rate
  * changed), taken within 0.5..2x of the info's rate (beyond it the info's
