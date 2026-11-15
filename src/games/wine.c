@@ -162,6 +162,7 @@ static void wine_info(int i, struct game_info *gi)
 		gi->hint = !strncmp(i18n_lang(), "ru", 2) && g->hint_ru[0] ? g->hint_ru
 			   : g->hint[0] ? g->hint : NULL;
 		gi->cover = g->cover;
+		gi->dir = g->dir;
 		gi->minimize = g->minimize;
 		gi->trigger_volume = g->trigger_volume;
 	}

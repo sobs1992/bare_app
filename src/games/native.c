@@ -217,6 +217,7 @@ static void native_info(int i, struct game_info *gi)
 		return;
 	g = &found[i];
 	gi->name = g->name;
+	gi->dir = g->dir;
 	gi->hint = !strncmp(i18n_lang(), "ru", 2) && g->hint_ru[0] ? g->hint_ru : g->hint[0] ? g->hint : NULL;
 	gi->trigger_volume = g->trigger_volume;
 	gi->gyro_on = g->gyro_on;

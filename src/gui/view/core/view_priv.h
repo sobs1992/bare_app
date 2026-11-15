@@ -88,6 +88,11 @@ void view_notify_backend(enum notify_kind kind, int value);
 void view_on_gamepad(const struct gp_event *ev, void *ud);
 void view_screen_on(void);
 
+/* view_ctl.c: commands for tests and tools in a FIFO */
+struct mainloop;
+void view_ctl_open(struct mainloop *ml);
+void view_ctl_close(void);
+
 /* view_video.c */
 bool view_game_in_front(void);
 bool view_hid_game_in_front(bool mouse);

@@ -241,11 +241,13 @@ static void *view_thread(void *arg)
 		mainloop_add_fd(vcore.ml, ctx_fd(), POLLIN, on_ctx, NULL);
 		mainloop_add_fd(vcore.ml, notify_fd(), POLLIN, on_notify, NULL);
 		mainloop_set_prepare(vcore.ml, prepare, NULL);
+		view_ctl_open(vcore.ml);
 	}
 	sem_post(&vcore.ready);
 	if (!vcore.status) {
 		LOGI(TAG, "running, backend \"%s\"", vcore.be->name);
 		mainloop_run(vcore.ml);
+		view_ctl_close();
 		snapshot(false);
 		vcore.be->deinit();
 		view_video_set(VIDEO_NONE);

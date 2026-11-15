@@ -35,6 +35,7 @@ struct game_info {
 	const char *name;	/* NULL: the game's title */
 	const char *hint;	/* NULL: the game's hint */
 	const char *cover;	/* picture of it for the home screen (PNG), NULL none */
+	const char *dir;	/* its directory (games found at run time), NULL none */
 	bool trigger_volume;	/* as game_def.trigger_volume */
 	int minimize;		/* its own minimise button (enum gp_button), -1: the game's */
 	bool gyro_on;		/* as game_def.gyro_on, gyro_counts */
@@ -126,5 +127,8 @@ enum gp_button game_minimize_button(struct game_ref g, const struct platform *pf
 /* The motion sensor's default for it (on or off) and its counts per degree */
 #define GAME_GYRO_COUNTS 10.0f
 bool game_gyro(struct game_ref g, float *counts);
+/* The entry WHAT names: its directory's name (monkey1), its title, its
+ * game_key() or, for a game of its own, its id (heroes3); false if none */
+bool game_find(const char *what, struct game_ref *out);
 /* Why it cannot start into buf; false if nothing is missing */
 bool game_missing_text(struct game_ref g, char *buf, size_t size);

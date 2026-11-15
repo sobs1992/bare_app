@@ -2,6 +2,7 @@
 #include "game.h"
 
 #include <stdint.h>
+#include <string.h>
 #include <strings.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -50,6 +51,28 @@ const char *game_title(struct game_ref g)
 		return "";
 	name = info(g).name;
 	return name ? name : tr(g.def->title);
+}
+
+bool game_find(const char *what, struct game_ref *out)
+{
+	for (const struct game_def *const *g = games; *g; g++) {
+		int n = game_entries(*g, false);
+
+		for (int e = 0; e < n; e++) {
+			struct game_ref r = { *g, e };
+			struct game_info gi = info(r);
+			const char *base = gi.dir ? strrchr(gi.dir, '/') : NULL;
+			char key[GAME_KEY_SIZE];
+
+			base = base ? base + 1 : gi.dir;
+			if ((base && !strcmp(base, what)) || !strcasecmp(game_title(r), what) ||
+			    !strcmp(game_key(r, key), what) || (!(*g)->entries && !strcmp((*g)->id, what))) {
+				*out = r;
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 const char *game_key(struct game_ref g, char buf[GAME_KEY_SIZE])

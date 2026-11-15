@@ -72,6 +72,7 @@ set(CORE_SOURCES
 	src/gui/view/core/view.c
 	src/gui/view/core/view_input.c
 	src/gui/view/core/view_video.c
+	src/gui/view/core/view_ctl.c
 )
 macro(add_if cond)
 	if(${cond})
