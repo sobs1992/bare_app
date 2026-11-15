@@ -893,14 +893,15 @@ static void test_motion_matrix(void)
 				ms_feed(&p, &s);
 				mm_check("measured, then beyond 2x: the info's", mode, s.hz, gyro ? -45 * 4 : 0, 0,
 					 2.4f);
-				/* the rate halves or doubles (or changes a little: 1.18x)
-				 * without a new info (the firmware never does it): taken
+				/* the rate halves or doubles (or changes a little: 1.18x,
+				 * 1.03x and 0.97x, beyond RATE_SAME's 2 %) without a new
+				 * info (the firmware never does it): taken
 				 * within two windows of the measure (0.25 s each: the one
 				 * it falls in counts its majority), a turn 0.55 s later as
 				 * it was, wherever in a window it falls (4 places) */
-				for (int ki = 0; ki < 3; ki++)
+				for (int ki = 0; ki < 5; ki++)
 					for (int ph = 0; ph < 4; ph++) {
-						static const float k[3] = { 0.5f, 2.0f, 1.18f };
+						static const float k[5] = { 0.5f, 2.0f, 1.18f, 1.03f, 0.97f };
 						char what[64];
 
 						mm_start(&p, &s, mode, hz, id++);
@@ -1519,6 +1520,54 @@ static void test_motion_matrix(void)
 				failures++;
 			}
 		}
+	/* the jittered stream with nothing in it: the first window within
+	 * 0.15 % (the delay's spread over a quarter second), 0.05 % after a
+	 * second; and a data-ready missed right where the creeping delay wraps
+	 * (the interval 879 - 280 us beyond its numbers: the closest a missed
+	 * period comes to the jitter) in the first window: out, within 0.3 %.
+	 * A window with 900 lost or a second without samples in it is as long:
+	 * its first measure after 0.22 s of samples at least */
+	for (int ci = 0; ci < 6; ci++) {
+		const float real_us = 1e6f / 1137.0f;
+		const int model = ci < 3 ? ci : 1;
+		uint32_t delay = 0, base, had = 0;
+		float worst = 0, worst1 = 0;
+
+		mm_start3(&p, &s, MM_GA, 1125, 1137, id++, 0.001f);
+		base = s.t;
+		for (int b = 0; b < 1500; b++) {
+			uint32_t at;
+
+			if (ci == 3 && b == 19)
+				base += (uint32_t)lrintf(real_us);	/* missed, as the delay wraps */
+			if (ci == 4 && b == 5) {
+				base += (uint32_t)lrintf(900 * real_us);
+				s.seq = (uint16_t)(s.seq + 900);
+			}
+			if (ci == 5 && b == 5)
+				base += 1000000;
+			at = base + (uint32_t)lrintf(4 * b * real_us);
+			delay = model == 2 ? (uint32_t)(b % 2) * 270u : (delay + (model ? 70 : 7)) % (model ? 350 : 200);
+			s.t = at + delay;
+			ms_run(&s, 4, 0, 0);
+			ms_feed(&p, &s);
+			if (p.period_measured) {
+				float off = fabsf(p.period_us - real_us) / real_us;
+
+				if (!had)
+					had = p.samples;
+				worst = fmaxf(worst, off);
+				if (b >= 285)
+					worst1 = fmaxf(worst1, off);
+			}
+		}
+		if (worst >= (ci < 3 ? 0.0015f : 0.003f) || worst1 >= (ci < 3 ? 0.0005f : 0.0015f) ||
+		    (ci >= 4 && had < 0.22f * 1137)) {
+			fprintf(stderr, "jitter edge case %d: off by %.3f %%, %.3f %% after a second, "
+				"measured after %u samples\n", ci, (double)worst * 100, (double)worst1 * 100, had);
+			failures++;
+		}
+	}
 	/* the info changed in one thing only (its name, its id, a channel,
 	 * the magnetometer's or the temperature's bit, a unit, a noise): a new
 	 * stream each (told, measured anew); the same info: none. And a stream

@@ -54,7 +54,8 @@
 #define WINDOW_MOST 3.0f	/* an interval adds to the window at most this many of its samples' periods */
 #define RATE_SAME 0.02f		/* a window this close to the period is of its rate */
 #define GAP_MISSING 3		/* samples missing (by number or by time) that are no gap yet */
-#define RATE_SLOWEST 2.02f	/* a measured period is taken within 1/x..x of the info's (2x, rounding) */
+#define RATE_SLOWEST 2.02f	/* a period measured is taken within 1/x..x of the info's (2x and 1 % for
+				 * the measure's error); with none, the info's may be that far off */
 #define RETRY_MS 100
 #define RETRIES 20
 #define SILENT_MS 2000		/* the first check of the stream */
