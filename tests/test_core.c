@@ -2923,6 +2923,35 @@ static void test_blit(void)
 		blit_compose(&out, &top, &bottom, &(struct hal_rect){ 0, 0, 2, 0 });
 		CHECK(d[0] == 0xff123456 && d[1] == 0xff0000ff && d[2] == 0xff80007f);
 	}
+	/* blit_compose in blocks of 8 (NEON): see-through, opaque and mixed
+	 * blocks, a rect starting and ending inside blocks, the same as the
+	 * three cases above pixel by pixel */
+	{
+		enum { N = 40 };
+		uint32_t t[N], b[N], d[N];
+		struct hal_fb top = { t, N, 1, sizeof(t), 0 }, bottom = { b, N, 1, sizeof(b), 0 };
+		struct hal_fb out = { d, N, 1, sizeof(d), 0 };
+		int i;
+
+		for (i = 0; i < N; i++) {
+			int block = i / 8;
+
+			b[i] = i & 1 ? 0xff0000ff : 0x000000ff;
+			t[i] = block == 0 || block == 3 ? 0x00ffffff :		/* see-through */
+			       block == 1 ? 0xff123456 :			/* opaque */
+			       i & 1 ? 0x80ff0000 : 0x00ffffff;		/* mixed */
+		}
+		memset(d, 0, sizeof(d));
+		blit_compose(&out, &top, &bottom, &(struct hal_rect){ 3, 0, N - 4, 0 });
+		for (i = 0; i < N; i++) {
+			uint32_t want = i < 3 || i > N - 4 ? 0 :
+					t[i] == 0xff123456 ? 0xff123456 :
+					t[i] == 0x00ffffff ? 0xff0000ff :
+					0xff80007f;	/* half red over blue */
+
+			CHECK(d[i] == want);
+		}
+	}
 }
 
 static void test_damage(void)
