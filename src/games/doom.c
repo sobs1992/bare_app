@@ -83,6 +83,24 @@ static void doom_info(int entry, struct game_info *gi)
 	gi->cover = game_cover_in(cover, sizeof(cover), CONFIG_GAME_DOOM_GAME);
 }
 
+/* What its buttons do: ports/doom/doom_main.c key_for(); the left stick
+ * comes as the D-pad */
+static const char *doom_label(int entry, int c)
+{
+	static const enum str_id what[GAME_CONTROLS] = {
+		[GP_UP] = S_DOOM_FORWARD, [GP_DOWN] = S_DOOM_BACK,
+		[GP_LEFT] = S_DOOM_TURN_L, [GP_RIGHT] = S_DOOM_TURN_R,
+		[GP_A] = S_DOOM_FIRE, [GP_B] = S_DOOM_USE, [GP_X] = S_DOOM_RUN, [GP_Y] = S_DOOM_WEAPON,
+		[GP_L1] = S_DOOM_STRAFE_L, [GP_R1] = S_DOOM_STRAFE_R, [GP_SELECT] = S_DOOM_MAP,
+		[GP_START] = S_DOOM_MENU, [GP_F1] = S_DOOM_MENU, [GP_F2] = S_DOOM_SAVE,
+		[GP_F3] = S_DOOM_LOAD, [GP_F4] = S_DOOM_PAUSE, [GAME_STICK_LEFT] = S_DOOM_MOVE,
+	};
+
+	(void)entry;
+	/* 0 is a string too: only the ones set above */
+	return c >= 0 && c < GAME_CONTROLS && what[c] ? tr(what[c]) : NULL;
+}
+
 const struct game_def game_doom = {
 	.id = "doom",
 	.title = S_DOOM,
@@ -95,4 +113,5 @@ const struct game_def game_doom = {
 	.info = doom_info,
 	.missing = doom_missing,
 	.start = doom_start,
+	.label = doom_label,
 };

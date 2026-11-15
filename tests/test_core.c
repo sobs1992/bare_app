@@ -19,6 +19,7 @@
 #include "core/volume.h"
 #include "drivers/blit.h"
 #include "media/mailbox.h"
+#include "games/game.h"
 #include "gui/action.h"
 #include "gui/control/control.h"
 #include "gui/ctx.h"
@@ -3117,6 +3118,72 @@ static void test_sysmon(void)
 }
 #endif
 
+#ifdef CONFIG_GAME_WINE
+/*
+ * What a Windows game's controls do (game_control_label()): wine.ini's
+ * [labels] and [labels.ru], else what [keys] sends, bare_app_wine's
+ * defaults for what it leaves out
+ */
+static void test_game_labels(void)
+{
+	extern const struct game_def game_wine;
+	char root[] = "/tmp/bare_app_test_wineXXXXXX", path[256];
+	struct game_ref g = { &game_wine, 0 };
+	FILE *f;
+
+	CHECK(mkdtemp(root) != NULL);
+	snprintf(path, sizeof(path), "%s/knights", root);
+	CHECK(mkdir(path, 0755) == 0);
+	snprintf(path, sizeof(path), "%s/knights/wine.ini", root);
+	f = fopen(path, "w");
+	CHECK(f != NULL);
+	if (!f)
+		return;
+	fputs("name = Knights\nexe = game.exe\n"
+	      "[keys]\nstick = arrows\ndpad = mouse\nrstick = arrows\n"
+	      "rstick_up = home\nrstick_down = end\nrstick_left = delete\nrstick_right = pgdn\n"
+	      "a = enter+q\nb = none\nl1 = kp5 ; a comment\nl2 = shift+p\nr2 = lbutton\n"
+	      "[labels]\na = attack\nstick = walk\n"
+	      "[labels.ru]\na = удар\n", f);
+	fclose(f);
+	setenv("BARE_APP_WINE_GAMES", root, 1);
+	CHECK(game_entries(&game_wine, true) == 1);
+
+	i18n_set("en");
+	CHECK(!strcmp(game_control_label(g, GP_A), "attack"));		/* [labels] */
+	CHECK(!strcmp(game_control_label(g, GAME_STICK_LEFT), "walk"));
+	CHECK(!strcmp(game_control_label(g, GP_L1), "Num 5"));		/* [keys] */
+	CHECK(!strcmp(game_control_label(g, GP_R2), "left click"));
+	CHECK(!strcmp(game_control_label(g, GP_X), "Enter"));		/* default */
+	CHECK(!strcmp(game_control_label(g, GP_Y), "Space"));
+	CHECK(!strcmp(game_control_label(g, GP_UP), "cursor"));		/* dpad = mouse */
+	CHECK(!strcmp(game_control_label(g, GAME_STICK_RIGHT), "Home/End/Del/PgDn"));
+	CHECK(game_control_label(g, GP_B) == NULL);			/* none */
+	CHECK(game_control_label(g, GP_NONE) == NULL);
+	CHECK(game_control_label(g, GP_F5) == NULL);			/* nothing given */
+#ifdef CONFIG_LANG_RU
+	i18n_set("ru");
+	CHECK(!strcmp(game_control_label(g, GP_A), "удар"));		/* [labels.ru] */
+	CHECK(!strcmp(game_control_label(g, GP_X), "Enter"));
+	CHECK(!strcmp(game_control_label(g, GP_Y), "Пробел"));
+	CHECK(!strcmp(game_control_label(g, GAME_STICK_LEFT), "стрелки"));	/* not [labels] */
+	i18n_set("en");
+#endif
+	CHECK(!strcmp(game_control_label(g, GP_A), "attack"));
+	/* a combination: each key as shown */
+	CHECK(!strcmp(game_control_label(g, GP_L2), "Shift+P"));
+	CHECK(game_control_by_name("rstick") == GAME_STICK_RIGHT && game_control_by_name("L1") == GP_L1 &&
+	      game_control_by_name("vol+") < 0);
+
+	unlink(path);
+	snprintf(path, sizeof(path), "%s/knights", root);
+	rmdir(path);
+	rmdir(root);
+	unsetenv("BARE_APP_WINE_GAMES");
+	game_entries(&game_wine, true);
+}
+#endif
+
 int main(void)
 {
 	test_joystick();
@@ -3141,6 +3208,9 @@ int main(void)
 	test_rtcp_in();
 	test_ts();
 	test_hid();
+#ifdef CONFIG_GAME_WINE
+	test_game_labels();
+#endif
 #ifdef CONFIG_SYSMON
 	test_sysmon();
 #endif

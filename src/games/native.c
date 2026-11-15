@@ -44,6 +44,7 @@ struct native_game {
 	char keys[STR], gamepad[STR], scale[16], filter[16], fps[8];
 	char env[MAX_ENV][STR];		/* "NAME=value" of [env] */
 	int n_env;
+	char labels[2][GAME_CONTROLS][64];	/* [labels], [labels.ru]: what the controls do */
 };
 
 static struct native_game *found;
@@ -63,6 +64,13 @@ static bool ini_value(const char *section, const char *key, const char *value, v
 	if (!strcasecmp(section, "env")) {
 		if (g->n_env < MAX_ENV)
 			snprintf(g->env[g->n_env++], STR, "%s=%s", key, value);
+		return true;
+	}
+	if (!strcasecmp(section, "labels") || !strcasecmp(section, "labels.ru")) {
+		int c = game_control_by_name(key), ru = !strcasecmp(section, "labels.ru");
+
+		if (c >= 0)
+			COPY(g->labels[ru][c], value);
 		return true;
 	}
 	if (*section)
@@ -214,6 +222,14 @@ static void native_info(int i, struct game_info *gi)
 	gi->gyro_on = g->gyro_on;
 	gi->gyro_counts = g->gyro_counts;
 	gi->cover = g->cover[0] ? g->cover : NULL;
+}
+
+/* [labels] of game.ini, [labels.ru] in Russian */
+static const char *native_label(int i, int c)
+{
+	if (i < 0 || i >= count || c < 0 || c >= GAME_CONTROLS)
+		return NULL;
+	return found[i].labels[!strncmp(i18n_lang(), "ru", 2)][c];
 }
 
 /* path of the game: as it is if absolute, else in the ini's directory */
@@ -385,4 +401,5 @@ const struct game_def game_native = {
 	.info = native_info,
 	.missing = native_missing,
 	.start = native_start,
+	.label = native_label,
 };

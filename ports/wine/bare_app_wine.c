@@ -281,7 +281,7 @@ static void set_defaults(void)
 static int read_ini(const char *path)
 {
 	char line[1024], *key, *value, *eq, *c;
-	bool in_keys = false;
+	bool in_keys = false, in_other = false;
 	int lineno = 0, b;
 	FILE *f = fopen(path, "r");
 
@@ -302,8 +302,12 @@ static int read_ini(const char *path)
 			continue;
 		if (*key == '[') {
 			in_keys = !strcasecmp(key, "[keys]");
+			/* [labels], [labels.ru]: bare_app's (what the controls do) */
+			in_other = !in_keys;
 			continue;
 		}
+		if (in_other)
+			continue;
 		if (!(eq = strchr(key, '='))) {
 			msg("%s:%d: no \"=\"", path, lineno);
 			continue;

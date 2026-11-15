@@ -75,7 +75,19 @@ struct game_def {
 	/* Optional, by platform: another hint, another minimise button (F5) */
 	enum str_id (*hint_for)(const struct platform *pf);
 	enum gp_button (*minimize_for)(const struct platform *pf);
+	/*
+	 * Optional: what control c (enum gp_button, GAME_STICK_LEFT or
+	 * GAME_STICK_RIGHT) does in the entry's game, in the current
+	 * language, for its controls screen; NULL or "" if nothing is known.
+	 * The text may change with the next call.
+	 */
+	const char *(*label)(int entry, int c);
 };
+
+/* game_def.label(): the sticks after the buttons */
+#define GAME_STICK_LEFT GP_COUNT
+#define GAME_STICK_RIGHT (GP_COUNT + 1)
+#define GAME_CONTROLS (GP_COUNT + 2)
 
 /* The games of this build in menu order, NULL-terminated */
 extern const struct game_def *const games[];
@@ -97,6 +109,11 @@ int game_entries(const struct game_def *g, bool rescan);
 const char *game_title(struct game_ref g);
 const char *game_hint(struct game_ref g, const struct platform *pf);
 bool game_trigger_volume(struct game_ref g);
+/* What control c (game_def.label()) does in the game; NULL if not known */
+const char *game_control_label(struct game_ref g, int c);
+/* A control by its name in the games' ini files ("a", "l1", "up", "stick",
+ * "rstick": bare_app_wine's [keys]), -1 if none */
+int game_control_by_name(const char *name);
 /* A name of the entry that stays the same between runs and builds: 8 hex
  * digits of its id and, for a game found at run time, its name */
 #define GAME_KEY_SIZE 9

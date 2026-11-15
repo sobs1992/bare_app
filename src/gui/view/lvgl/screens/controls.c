@@ -8,7 +8,9 @@
  * counts from the next press, also in a minimised game. Under the buttons
  * a row per axis of each stick the device has: the game gets it inverted
  * or not (A, Left or Right turn it over, X back to not; ACT_SET_INVERT).
- * The game's own hint at the top says what its buttons do.
+ * The game's own hint at the top says what its buttons do, and each row
+ * what its button is for in the game (game_control_label() of the button
+ * it gives the game), each stick's rows what the stick is for.
  *
  * With the motion sensor in the build two rows more: gyro aiming on or off
  * for the game (A, Left or Right; X back to the game's default) and its
@@ -32,7 +34,7 @@ struct controls {
 	struct game_ref game;
 	char key[GAME_KEY_SIZE];
 	lv_obj_t *list, *footer, *reset;
-	lv_obj_t *rows[GP_COUNT], *values[GP_COUNT];
+	lv_obj_t *rows[GP_COUNT], *values[GP_COUNT], *labels[GP_COUNT];
 	int8_t shown[GP_COUNT];		/* the button shown in each row, -2 nothing yet */
 	lv_obj_t *axis_rows[GP_AXIS_COUNT], *axis_values[GP_AXIS_COUNT];
 	int8_t axis_shown[GP_AXIS_COUNT];	/* inverted shown: 1, 0, -1 nothing yet */
@@ -211,6 +213,29 @@ static uint32_t axes_listed(void)
 	return present ? present : GP_BIT(GP_AXIS_COUNT) - 1;
 }
 
+/* What control ctl (a button the game gets, a stick) does in the game, "" unknown */
+static const char *what(const struct controls *c, int ctl)
+{
+	const char *l = game_control_label(c->game, ctl);
+
+	return l ? l : "";
+}
+
+/* What a row's control does in the game: dim, the rest of the row, cut */
+static lv_obj_t *what_label(lv_obj_t *row)
+{
+	lv_obj_t *l = lv_label_create(row);
+
+	lv_obj_set_flex_grow(l, 1);
+	lv_obj_set_style_pad_left(l, ui_cell(), 0);
+	lv_obj_set_style_text_color(l, UI_COLOR_DIM, 0);
+	lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
+	/* one line: cut, not wrapped */
+	lv_obj_set_height(l, lv_font_get_line_height(lv_obj_get_style_text_font(l, 0)));
+	lv_label_set_text(l, "");
+	return l;
+}
+
 static lv_obj_t *row_new(struct controls *c, lv_group_t *group)
 {
 	lv_obj_t *r = console_row(c->list);
@@ -276,7 +301,9 @@ static void *controls_init(lv_obj_t *parent, lv_obj_t **root)
 		lv_label_set_text(label, "\xc2\xbb");	/* » */
 		c->values[b] = lv_label_create(r);
 		lv_obj_set_style_pad_left(c->values[b], ui_cell(), 0);
+		lv_obj_set_width(c->values[b], (NAME_CELLS + 1) * ui_cell());
 		lv_obj_set_style_text_font(c->values[b], UI_FONT_MID, 0);
+		c->labels[b] = what_label(r);
 	}
 	listed = axes_listed();
 	for (b = 0; b < GP_AXIS_COUNT; b++) {
@@ -287,10 +314,11 @@ static void *controls_init(lv_obj_t *parent, lv_obj_t **root)
 		r = c->axis_rows[b] = row_new(c, group);
 		lv_obj_add_event_cb(r, on_key, LV_EVENT_KEY, c);
 		label = lv_label_create(r);
-		lv_obj_set_flex_grow(label, 1);
 		lv_obj_set_style_text_font(label, UI_FONT_MID, 0);
 		lv_label_set_text_fmt(label, "%s: %s", tr(b < GP_AXIS_RX ? S_LEFT_STICK : S_RIGHT_STICK),
 				      tr(b == GP_AXIS_LX || b == GP_AXIS_RX ? S_INVERT_X : S_INVERT_Y));
+		label = what_label(r);
+		lv_label_set_text(label, what(c, b < GP_AXIS_RX ? GAME_STICK_LEFT : GAME_STICK_RIGHT));
 		c->axis_values[b] = lv_label_create(r);
 		lv_obj_set_style_text_font(c->axis_values[b], UI_FONT_MID, 0);
 	}
@@ -343,6 +371,7 @@ static void controls_update(void *self, const struct gui_ctx *ctx, uint32_t chan
 			continue;
 		c->shown[b] = (int8_t)to;
 		lv_label_set_text(c->values[b], ui_button_name(to));
+		lv_label_set_text(c->labels[b], what(c, to));
 		/* changed: in the accent colour */
 		lv_obj_set_style_text_color(c->values[b], to == b ? lv_color_white() : UI_COLOR_ACCENT, 0);
 	}

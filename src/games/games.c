@@ -2,6 +2,7 @@
 #include "game.h"
 
 #include <stdint.h>
+#include <strings.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -89,6 +90,37 @@ const char *game_cover_in(char *buf, size_t size, const char *dir)
 	if (!dir || !*dir || snprintf(buf, size, "%s/cover.png", dir) >= (int)size)
 		return NULL;
 	return buf;
+}
+
+/* The names of the controls in the games' ini files (wine.ini [keys]
+ * and [labels], game.ini [labels]): bare_app_wine's */
+static const char *const control_names[GAME_CONTROLS] = {
+	[GP_UP] = "up", [GP_DOWN] = "down", [GP_LEFT] = "left", [GP_RIGHT] = "right",
+	[GP_A] = "a", [GP_B] = "b", [GP_X] = "x", [GP_Y] = "y",
+	[GP_L1] = "l1", [GP_R1] = "r1", [GP_L2] = "l2", [GP_R2] = "r2",
+	[GP_SELECT] = "select", [GP_START] = "start", [GP_MENU] = "menu",
+	[GP_F1] = "f1", [GP_F2] = "f2", [GP_F3] = "f3", [GP_F4] = "f4", [GP_F5] = "f5", [GP_F6] = "f6",
+	[GAME_STICK_LEFT] = "stick", [GAME_STICK_RIGHT] = "rstick",
+};
+
+int game_control_by_name(const char *name)
+{
+	int c;
+
+	for (c = 0; c < GAME_CONTROLS; c++)
+		if (control_names[c] && !strcasecmp(control_names[c], name))
+			return c;
+	return -1;
+}
+
+const char *game_control_label(struct game_ref g, int c)
+{
+	const char *l;
+
+	if (!g.def || !g.def->label || c < 0 || c >= GAME_CONTROLS)
+		return NULL;
+	l = g.def->label(g.entry, c);
+	return l && *l ? l : NULL;
 }
 
 bool game_trigger_volume(struct game_ref g)
