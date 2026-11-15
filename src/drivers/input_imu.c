@@ -312,7 +312,7 @@ static void take_rate(struct imu_parser *p, float m)
  * make the period (add_window()). An interval adds no more to the window's
  * time than WINDOW_MOST periods (the one in use) for each of its samples
  * that came: a window with a pause or lost samples in it is as long (and
- * one at half the period in use is not slowed). A rate off the info's after the
+ * one at half the rate in use, twice its period, is not slowed). A rate off the info's after the
  * plug, or changed by more than RATE_SAME without an info, counts within
  * two windows; a smaller change over RATE_WINDOWS.
  */

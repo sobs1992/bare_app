@@ -1056,12 +1056,25 @@ static void test_motion_matrix(void)
 				}
 				/* a little change of the rate without an info (1.5 %:
 				 * within RATE_SAME): the windows take it over 8 of them,
-				 * all of it after 2.3 s */
-				mm_start(&p, &s, mode, hz, id++);
-				s.hz = hz * 1.015f;
-				ms_run(&s, ms_n(s.hz, 2.3f, 8), 0, 0);
-				ms_feed(&p, &s);
-				CHECK(fabsf(p.period_us - 1e6f / s.hz) < 0.001f * 1e6f / s.hz);
+				 * all of it (within 0.1 %) after 1.9..2.3 s, not before */
+				{
+					float t = 0, all = 0;
+
+					mm_start(&p, &s, mode, hz, id++);
+					s.hz = hz * 1.015f;
+					while (t < 3) {
+						ms_run(&s, ms_n(s.hz, 0.02f, 1), 0, 0);
+						ms_feed(&p, &s);
+						t += ms_n(s.hz, 0.02f, 1) / s.hz;
+						if (!all && fabsf(p.period_us - 1e6f / s.hz) < 0.001f * 1e6f / s.hz)
+							all = t;
+					}
+					if (!(all > 1.9f && all <= 2.3f)) {
+						fprintf(stderr, "matrix 1.5 %% without an info, %g Hz: all of it after %.2f s\n",
+							(double)hz, (double)all);
+						failures++;
+					}
+				}
 				/* the same info again (asked for again, a scale for the
 				 * channel it lacks in it, as the firmware sends it): no new
 				 * stream, no gap (an accelerometer alone sees the tilt
@@ -1524,7 +1537,8 @@ static void test_motion_matrix(void)
 	 * 0.15 % (the delay's spread over a quarter second), 0.05 % after a
 	 * second; and a data-ready missed right where the creeping delay wraps
 	 * (the interval 879 - 280 us beyond its numbers: the closest a missed
-	 * period comes to the jitter) in the first window: out, within 0.3 %.
+	 * period comes to the jitter) in the first window: out, within 0.3 %
+	 * (0.1 % after a second).
 	 * A window with 900 lost or a second without samples in it is as long:
 	 * its first measure after 0.22 s of samples at least */
 	for (int ci = 0; ci < 6; ci++) {
@@ -1561,7 +1575,7 @@ static void test_motion_matrix(void)
 					worst1 = fmaxf(worst1, off);
 			}
 		}
-		if (worst >= (ci < 3 ? 0.0015f : 0.003f) || worst1 >= (ci < 3 ? 0.0005f : 0.0015f) ||
+		if (worst >= (ci < 3 ? 0.0015f : 0.003f) || worst1 >= (ci < 3 ? 0.0005f : 0.001f) ||
 		    (ci >= 4 && had < 0.22f * 1137)) {
 			fprintf(stderr, "jitter edge case %d: off by %.3f %%, %.3f %% after a second, "
 				"measured after %u samples\n", ci, (double)worst * 100, (double)worst1 * 100, had);
