@@ -33,14 +33,14 @@ extern const struct hal_input_ops input_imu;
  * that changes the sensor tells core/input at once, before its samples
  * (input_motion_sensor(): id "<name>-<serial>", channels, noise). The
  * sample period is measured by the sensor's own clock, from samples that
- * carry their own time: anew over each SPAN_US (a quarter second), the mean
- * of the intervals within 25 % of their median, taken within 0.5..2x of the
- * info's rate (beyond it the info's again). Missing samples by time count
- * beyond the period measured, or beyond twice the info's while there is
- * none.
+ * carry their own time: anew over each SPAN_US (a quarter second), all the
+ * time over all the samples of the intervals within the times' jitter of
+ * their median, taken within 0.5..2x of the info's rate
+ * (beyond it the info's again). Missing samples by time count beyond the
+ * period measured, or beyond twice the info's while there is none.
  */
-#define SPAN_MAX 1024		/* intervals kept over SPAN_US (their median, then the mean near it) */
-#define SPAN_MIN 8		/* ...at least this many (a slow sensor's: one pause is little) */
+#define SPAN_MAX 1024		/* intervals kept over SPAN_US */
+#define SPAN_MIN 8		/* ...at least this many (a slow sensor's) */
 
 struct imu_parser {
 	uint8_t buf[512];
@@ -67,8 +67,10 @@ struct imu_parser {
 	uint32_t real_t;
 	uint16_t real_seq;
 	uint64_t span_us;		/* measuring the period: time so far, */
-	uint32_t span_n;		/* ...and each interval's period (the mean near their median counts) */
-	float span_vals[SPAN_MAX];
+	uint32_t span_n;		/* ...the intervals: their time, their samples */
+	float span_el[SPAN_MAX];
+	uint16_t span_cnt[SPAN_MAX];
+	uint8_t frame_n;		/* samples in the last PKT_SAMPLES */
 	uint32_t samples, bad_crc;
 	uint8_t bad_info;		/* length of an info not understood (logged once) */
 	bool streaming, imu_ok, fake;

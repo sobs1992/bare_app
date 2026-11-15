@@ -50,7 +50,7 @@
 #define STATUS_FAKE 16u
 #define DEFAULT_US 1000.0f	/* the period until PKT_INFO says it */
 #define SPAN_US 250000u		/* the period is measured anew over that much time */
-#define BAND 0.25f		/* the intervals within that of their median count */
+#define JITTER_US 500.0f	/* the samples' times are off by less (the firmware's polling) */
 #define GAP_MISSING 3		/* samples missing (by number or by time) that are no gap yet */
 #define RATE_SLOWEST 2.02f	/* a measured period is taken within 1/x..x of the info's (2x, rounding) */
 #define RETRY_MS 100
@@ -227,23 +227,27 @@ static int cmp_float(const void *a, const void *b)
 	return x < y ? -1 : x > y;
 }
 
-/* The mean of v[0..n) within BAND of their median (v sorted meanwhile): a
- * pause is far off, the times' jitter (skewed: found late by a creeping
- * delay) averages out */
-static float near_median(float *v, unsigned n)
+/* The window's period: the median of its intervals' periods, then all the
+ * time over all the samples of those within JITTER_US of it (n samples at
+ * the median). A pause (time beyond the numbers) is beyond the jitter, a
+ * rate other than the window's majority too; the times' jitter (skewed:
+ * found late by a creeping delay) adds up to nothing over many intervals */
+static float window_period(const struct imu_parser *p)
 {
-	double sum = 0;
-	unsigned used = 0;
-	float m;
+	float v[SPAN_MAX], m;
+	double el = 0;
+	unsigned cnt = 0;
 
-	qsort(v, n, sizeof(v[0]), cmp_float);
-	m = v[n / 2];
-	for (unsigned i = 0; i < n; i++)
-		if (fabsf(v[i] - m) <= BAND * m) {
-			sum += v[i];
-			used++;
+	for (unsigned i = 0; i < p->span_n; i++)
+		v[i] = p->span_el[i] / p->span_cnt[i];
+	qsort(v, p->span_n, sizeof(v[0]), cmp_float);
+	m = v[p->span_n / 2];
+	for (unsigned i = 0; i < p->span_n; i++)
+		if (fabsf(p->span_el[i] - p->span_cnt[i] * m) <= JITTER_US) {
+			el += p->span_el[i];
+			cnt += p->span_cnt[i];
 		}
-	return (float)(sum / used);	/* the median itself is among them */
+	return cnt ? (float)(el / cnt) : m;	/* (the median's own is among them) */
 }
 
 /* A measure: taken within 0.5..2x of the info's rate, else the info's again
@@ -263,22 +267,23 @@ static void take_rate(struct imu_parser *p, float m)
 
 /*
  * The real period, from the samples' own times: each interval between two
- * timed samples gives one (elapsed / samples); over each SPAN_US and SPAN_MIN
- * intervals at least, the mean of those within BAND of their median is
- * taken: a pause (rare, far off; a short one near is one of many) does not
- * count, a rate off the info's (every interval) does, and the timing's
- * skewed jitter averages out (within 0.05 % on a real sensor's times). Measured
- * anew all along: a rate off the info's after the plug, or changed without
- * an info, counts within half a second.
+ * timed samples (its time, its n numbers: lost ones too) goes into a window
+ * of SPAN_US and SPAN_MIN intervals at least, its period window_period()
+ * (within 0.05 % on a real sensor's times, 0.1 % in a window after a pause).
+ * Measured anew all along: a rate off the info's after the plug, or changed
+ * without an info, counts within two windows.
  */
 static void measure_rate(struct imu_parser *p, float elapsed, unsigned n)
 {
-	if (p->span_n < SPAN_MAX)
-		p->span_vals[p->span_n++] = elapsed / n;
+	if (p->span_n < SPAN_MAX) {
+		p->span_el[p->span_n] = elapsed;
+		p->span_cnt[p->span_n] = (uint16_t)n;
+		p->span_n++;
+	}
 	p->span_us += (uint64_t)elapsed;
 	if (p->span_us < SPAN_US || p->span_n < SPAN_MIN)
 		return;
-	take_rate(p, near_median(p->span_vals, p->span_n));
+	take_rate(p, window_period(p));
 	p->span_us = 0;
 	p->span_n = 0;
 }
@@ -309,8 +314,6 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 	}
 	if (p->have_prev) {
 		steps = (uint16_t)(seq - p->prev_seq);
-		if (steps == 0)
-			return;		/* the same sample again */
 		missing = steps - 1;
 	}
 	if (timed && p->have_real) {
@@ -360,7 +363,11 @@ static void on_frame(struct imu_parser *p, uint8_t type, const uint8_t *f, uint8
 	} else if (type == PKT_SAMPLES && len >= SAMPLES_HDR && p->have_info && p->imu_id &&
 		   p->proto == PROTO &&
 		   len == SAMPLES_HDR + SAMPLE_LEN * f[6]) {
+		/* the last frame again (its first number among the last frame's) */
+		if (p->have_prev && (uint16_t)(p->prev_seq - u16(f + 4)) < p->frame_n)
+			return;
 		p->batch_bytes = (size_t)len + FRAME_OVERHEAD;
+		p->frame_n = f[6];
 		for (int i = 0; i < f[6]; i++) {
 			const uint8_t *s = f + SAMPLES_HDR + SAMPLE_LEN * i;
 

@@ -881,23 +881,30 @@ static void test_motion_matrix(void)
 				ms_feed(&p, &s);
 				mm_check("measured, then beyond 2x: the info's", mode, s.hz, gyro ? -45 * 4 : 0, 0,
 					 2.4f);
-				/* the rate halves or doubles without a new info (the
-				 * firmware never does it): taken within 0.5 s (measured
-				 * each 0.25 s), a turn 0.6 s later as it was */
-				for (int ki = 0; ki < 2; ki++) {
-					mm_start(&p, &s, mode, hz, id++);
-					s.hz = hz * (ki ? 2.0f : 0.5f);
-					ms_run(&s, ms_n(s.hz, 0.6f, 8), 0, 0);
-					ms_feed(&p, &s);
-					imu_turned = imu_my = 0;
-					nt = ms_n(s.hz, 1, 4);
-					ms_run(&s, nt, 0, 45 * s.hz / nt);
-					ms_run(&s, nt, 20 * s.hz / nt, 0);
-					ms_run(&s, ms_n(s.hz, 2, 4), 0, 0);
-					ms_feed(&p, &s);
-					mm_check(ki ? "rate doubles, no info" : "rate halves, no info", mode, s.hz,
-						 gyro ? -45 : 0, 20, 0.6f);
-				}
+				/* the rate halves or doubles (or changes a little: 1.18x)
+				 * without a new info (the firmware never does it): taken
+				 * within two windows of the measure (0.25 s each: the one
+				 * it falls in counts its majority), a turn 0.55 s later as
+				 * it was, wherever in a window it falls (4 places) */
+				for (int ki = 0; ki < 3; ki++)
+					for (int ph = 0; ph < 4; ph++) {
+						static const float k[3] = { 0.5f, 2.0f, 1.18f };
+						char what[64];
+
+						mm_start(&p, &s, mode, hz, id++);
+						ms_run(&s, ph * ms_n(hz, 0.25f / 4, 1), 0, 0);
+						s.hz = hz * k[ki];
+						ms_run(&s, ms_n(s.hz, 0.55f, 8), 0, 0);
+						ms_feed(&p, &s);
+						imu_turned = imu_my = 0;
+						nt = ms_n(s.hz, 1, 4);
+						ms_run(&s, nt, 0, 45 * s.hz / nt);
+						ms_run(&s, nt, 20 * s.hz / nt, 0);
+						ms_run(&s, ms_n(s.hz, 2, 4), 0, 0);
+						ms_feed(&p, &s);
+						snprintf(what, sizeof(what), "rate %gx, no info, phase %d", (double)k[ki], ph);
+						mm_check(what, mode, s.hz, gyro ? -45 : 0, 20, 0.6f);
+					}
 				/* a new info mid-stream: twice the rate (it does run so),
 				 * a turn right after (about the world's vertical: with
 				 * gravity 45, a gyro alone cos 60 of it, see below) */
@@ -920,19 +927,69 @@ static void test_motion_matrix(void)
 					mm_check("new info, twice the rate", mode, 2 * hz,
 						 mode == MM_GA ? -45 : mode == MM_G ? -22.5f : 0, 0, 0.6f);
 				}
-				/* the real rate changes a little without a new info
-				 * (1.18x): taken within 0.5 s too, a turn 0.6 s later */
+				/* at the very edge (0.5x, 1/2.015x of the info's), a pause
+				 * in the measure's window, wherever it falls in it: samples
+				 * lost (3 + 0.4 period, 3 + 0.6: a gap, 1 + 0.3) or time
+				 * only (0.15, 0.2 and 1 period: a data-ready missed), then a
+				 * turn two batches later: the measure stays taken, the
+				 * turn as it was */
 				{
-					mm_start(&p, &s, mode, hz, id++);
-					s.hz = hz * 1.18f;
-					nt = ms_n(s.hz, 1, 4);
-					ms_run(&s, ms_n(s.hz, 0.6f, 8), 0, 0);
-					imu_turned = imu_my = 0;
-					ms_run(&s, nt, 0, 45 * s.hz / nt);
-					ms_run(&s, ms_n(s.hz, 2, 4), 0, 0);
-					ms_feed(&p, &s);
-					mm_check("rate changes, no info", mode, s.hz, gyro ? -45 : 0, 0, 0.6f);
+					static const float edge[2] = { 0.5f, 1 / 2.015f };
+					static const int ev_lost[] = { 3, 3, 1, 0, 0, 0 };
+					static const float ev_pause[] = { 0.4f, 0.6f, 0.3f, 0.15f, 0.2f, 1 };
+
+					for (int ei = 0; ei < 2; ei++)
+						for (int vi = 0; vi < 6; vi++)
+							for (int ph = 0; ph < 8; ph++) {
+								float rh = hz * edge[ei];
+								int n2 = ms_n(rh, 0.2f, 4);
+								char what[80];
+
+								mm_start2(&p, &s, mode, hz, rh, id++);
+								ms_run(&s, ph * ms_n(rh, 0.25f / 8, 1), 0, 0);
+								ms_gap(&s, ev_lost[vi], ev_pause[vi] / rh, 0);
+								ms_run(&s, 2 * s.batch, 0, 0);
+								ms_feed(&p, &s);
+								imu_turned = imu_my = 0;
+								ms_run(&s, n2, 0, 20 * rh / n2);
+								ms_run(&s, ms_n(rh, 1, 4), 0, 0);
+								ms_feed(&p, &s);
+								snprintf(what, sizeof(what), "at the edge, %d lost + %.2g, phase %d",
+									 ev_lost[vi], (double)ev_pause[vi], ph);
+								mm_check(what, mode, rh, gyro ? -20 : 0, 0, 0.6f);
+							}
 				}
+			}
+
+			/* a gap keeps the measure: right after it a pause of 3.6
+			 * measured periods is a gap again (an accelerometer alone
+			 * does not take the tilt in it) */
+			mm_start(&p, &s, mode, hz, id++);
+			ms_gap(&s, 50, 0, 0);
+			ms_run(&s, ms_n(hz, 0.05f, 2), 0, 0);
+			ms_gap(&s, 0, 3.6f / hz, 20);
+			ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+			ms_feed(&p, &s);
+			mm_check("a gap, then 3.6 periods paused", mode, hz, 0, 0, 1);
+			/* a frame twice (sent again): its samples once */
+			{
+				int nt = ms_n(hz, 1, 4);
+				uint8_t again[8 + 12 * 4 + 6];
+				size_t fl;
+				uint32_t had;
+
+				mm_start(&p, &s, mode, hz, id++);
+				had = p.samples;
+				ms_run(&s, nt / 2, 0, 45 * hz / nt);
+				ms_flush(&s);
+				fl = 8 + 12 * (size_t)s.last_n + 6;
+				memcpy(again, s.buf + s.len - fl, fl);
+				ms_put(&s, again, fl);
+				ms_run(&s, nt - nt / 2, 0, 45 * hz / nt);
+				ms_run(&s, ms_n(hz, 2, 4), 0, 0);
+				ms_feed(&p, &s);
+				mm_check("a frame twice", mode, hz, gyro ? -45 : 0, 0, hz >= 104 ? 0.6f : 2.5f);
+				CHECK(p.samples - had == (uint32_t)(nt + ms_n(hz, 2, 4)));
 			}
 
 			/* before the first measure the info's period may be off by
@@ -968,19 +1025,24 @@ static void test_motion_matrix(void)
 			 * what the samples showed is the view's whole. Without a gyro
 			 * the part of the tilt the made-up gyro has not given yet is
 			 * lost in a gap (not told from a jolt): 0.3 s after the tilt
-			 * 15 % at most, 0.5 s after 3 % */
-			for (int si = 0; si < (gyro ? 1 : 2); si++) {
+			 * 15 % at most, 0.5 s after 3 %; right at the end of a tilt
+			 * over 1 s 15..20 % (at 104 Hz and more) */
+			for (int si = 0; si < (gyro ? 1 : 3); si++) {
 				int nt = ms_n(hz, 1, 4);
 
+				if (si == 2 && hz < 104)
+					continue;
 				mm_start(&p, &s, mode, hz, id++);
 				ms_run(&s, nt, 0, 45 * hz / nt);
 				ms_run(&s, nt, 20 * hz / nt, 0);
-				if (!gyro)
+				if (!gyro && si < 2)
 					ms_run(&s, ms_n(hz, si ? 0.3f : 0.5f, 2), 0, 0);
 				ms_gap(&s, 50, 0, 0);
 				ms_run(&s, ms_n(hz, 2, 4), 0, 0);
 				ms_feed(&p, &s);
-				if (si)
+				if (si == 2)
+					mm_check2("tilted over 1 s, then a gap at once", mode, hz, 0, 17, 0.6f, 1);
+				else if (si)
 					mm_check2("tilted, 0.3 s, then a gap", mode, hz, 0, 18.8f, 0.6f, 1.8f);
 				else
 					mm_check("turned, then a gap at once", mode, hz, gyro ? -45 : 0, 20,
@@ -1205,6 +1267,53 @@ static void test_motion_matrix(void)
 					mode == MM_GA ? "gyro+accel" : "gyro", (double)hz, (double)imu_turned);
 				failures++;
 			}
+			/* plugged out and in (tilted by 60 meanwhile), a turn about
+			 * the world's vertical right after the first read: its zero
+			 * kept, gravity anew (a gyro alone cos 60 of it); and a zero
+			 * not known yet is measured across it (0.6 s + 0.6 s still) */
+			for (int zi = 0; zi < (gyro && hz >= 104 ? 2 : 1); zi++) {
+				uint8_t f[80];
+
+				mm_no_bias = zi;
+				mm_start3(&p, &s, mode, hz, hz, id++, zi ? 0.6f : 0);
+				mm_no_bias = false;
+				input_motion_present(true, hz);
+				input_motion_present(false, 0);
+				imu_parser_init(&p);
+				snprintf(p.serial, sizeof(p.serial), "MM%u", id - 1);
+				s.seq = 3;
+				s.t += 5000000;
+				s.tilt += zi ? 0 : 60;	/* (a tilt: not still, rightly) */
+				ms_put(&s, f, mm_info(f, mode, hz));
+				ms_run(&s, s.batch, 0, 0);
+				ms_feed(&p, &s);
+				input_motion_present(true, hz);
+				if (zi) {
+					struct input_motion_info mi;
+
+					ms_run(&s, ms_n(hz, 0.6f, 4), 0, 0);
+					ms_feed(&p, &s);
+					input_motion_info(&mi);
+					input_motion_present(false, 0);
+					if (!mi.bias_known) {
+						fprintf(stderr, "matrix zero across a reconnect, %s, %g Hz: not known\n",
+							mode == MM_GA ? "gyro+accel" : "gyro", (double)hz);
+						failures++;
+					}
+					continue;
+				}
+				imu_turned = imu_my = 0;
+				{
+					int nt = ms_n(hz, 1, 4);
+
+					ms_run_vert(&s, nt, 45 * hz / nt);
+				}
+				ms_run(&s, ms_n(hz, 2, 4), 0, 0);
+				ms_feed(&p, &s);
+				input_motion_present(false, 0);
+				mm_check("plugged in again, a turn at once", mode, hz,
+					 mode == MM_GA ? -45 : mode == MM_G ? -22.5f : 0, 0, hz >= 104 ? 0.6f : 2.5f);
+			}
 		}
 	}
 	/* the samples' times as a real one's: found late by a delay that creeps
@@ -1225,7 +1334,17 @@ static void test_motion_matrix(void)
 		mm_start3(&p, &s, MM_GA, 1125, 1137, id++, 0.01f);
 		base = s.t;
 		for (int b = 0; b < 3000; b++) {	/* 12000 samples, 10.6 s */
-			uint32_t at = base + (uint32_t)lrintf(4 * b * real_us);
+			uint32_t at;
+
+			/* a second without samples, then 900 lost: the windows
+			 * after them as right */
+			if (b == 1000)
+				base += 1000000;
+			if (b == 2000) {
+				base += (uint32_t)lrintf(900 * real_us);
+				s.seq = (uint16_t)(s.seq + 900);
+			}
+			at = base + (uint32_t)lrintf(4 * b * real_us);
 
 			delay = (delay + creep) % wrap;
 			s.t = at + delay;
