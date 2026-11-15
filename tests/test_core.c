@@ -687,9 +687,9 @@ static void mm_start2(struct imu_parser *p, struct mstream *s, int mode, float h
 	mm_start3(p, s, mode, hz, real_hz, id, 0);
 }
 
-/* ...lain still for 'still' seconds (0: long enough for the first measure,
- * 2 s and 10 batches; with the rate off the info's 3 s and 18 batches, for
- * the second one too); its gyro's zero known from the calibration (0) */
+/* ...lain still for 'still' seconds (0: 2 s and 10 batches, with the rate
+ * off the info's 3 s and 18 batches: measured many times over); its gyro's
+ * zero known from the calibration (0) */
 static void mm_start3(struct imu_parser *p, struct mstream *s, int mode, float hz, float real_hz,
 		      unsigned id, float still)
 {
@@ -713,8 +713,8 @@ static void mm_start3(struct imu_parser *p, struct mstream *s, int mode, float h
 	s->tilt = 0;
 	s->seq = 1000;
 	s->t = 0;
-	/* (0: long enough for the first measure, 8 intervals, too: a slow
-	 * sensor's pauses count as missing once its period is measured) */
+	/* (measured each 0.25 s and 8 intervals; before the first measure a
+	 * pause counts only beyond twice the info's period) */
 	if (still > 0)
 		ms_run(s, ms_n(real_hz, still, 1), 0, 0);
 	else
@@ -801,12 +801,15 @@ static void test_motion_matrix(void)
 			}
 
 			if (hz >= 104) {
-				static const float off[] = { 0.5f, 1.5f, 2.0f };
-				static const float outside[] = { 0.3f, 0.45f, 2.2f, 3.0f };
+				/* 0.5..2x is taken (RATE_SLOWEST 2.02: 2.015x is, 2.025x
+				 * is not) */
+				static const float off[] = { 0.5f, 1.5f, 2.0f, 1 / 2.015f, 2.015f };
+				static const float outside[] = { 0.3f, 0.45f, 1 / 2.025f, 2.025f, 2.2f, 3.0f };
+				int nt;
 
 				/* plugged in with the rate off the info's, a turn 0.3 s
-				 * later: the first measure is quick (0.25 s) */
-				for (unsigned oi = 0; oi < 3; oi++) {
+				 * later: measured each 0.25 s */
+				for (unsigned oi = 0; oi < 5; oi++) {
 					float rh = hz * off[oi];
 					int nt = ms_n(rh, 1, 4);
 
@@ -821,7 +824,7 @@ static void test_motion_matrix(void)
 				 * not taken: the info's period counts (a gyro's turn by
 				 * its ratio); then a long pause (30 of the info's
 				 * periods) with a tilt in it is a gap all the same */
-				for (unsigned oi = 0; oi < 4; oi++) {
+				for (unsigned oi = 0; oi < 6; oi++) {
 					float rh = hz * outside[oi], k = outside[oi];
 					int nt = ms_n(rh, 1, 4);
 
@@ -846,27 +849,61 @@ static void test_motion_matrix(void)
 				ms_run(&s, ms_n(hz, 2, 4), 0, 0);
 				ms_feed(&p, &s);
 				mm_check("long pause before the first measure", mode, hz, 0, 0, 1);
+				/* measured (1.5x), then beyond 2x without a new info
+				 * (4x): the info's period again, not the last measure */
+				mm_start2(&p, &s, mode, hz, 1.5f * hz, id++);
+				s.hz = 4 * hz;
+				ms_run(&s, ms_n(s.hz, 0.6f, 8), 0, 0);
+				ms_feed(&p, &s);
+				imu_turned = imu_my = 0;
+				nt = ms_n(s.hz, 1, 4);
+				ms_run(&s, nt, 0, 45 * s.hz / nt);
+				ms_run(&s, ms_n(s.hz, 1, 4), 0, 0);
+				ms_feed(&p, &s);
+				mm_check("measured, then beyond 2x: the info's", mode, s.hz, gyro ? -45 * 4 : 0, 0,
+					 2.4f);
+				/* the rate halves or doubles without a new info (the
+				 * firmware never does it): taken within 0.5 s (measured
+				 * each 0.25 s), a turn 0.6 s later as it was */
+				for (int ki = 0; ki < 2; ki++) {
+					mm_start(&p, &s, mode, hz, id++);
+					s.hz = hz * (ki ? 2.0f : 0.5f);
+					ms_run(&s, ms_n(s.hz, 0.6f, 8), 0, 0);
+					ms_feed(&p, &s);
+					imu_turned = imu_my = 0;
+					nt = ms_n(s.hz, 1, 4);
+					ms_run(&s, nt, 0, 45 * s.hz / nt);
+					ms_run(&s, nt, 20 * s.hz / nt, 0);
+					ms_run(&s, ms_n(s.hz, 2, 4), 0, 0);
+					ms_feed(&p, &s);
+					mm_check(ki ? "rate doubles, no info" : "rate halves, no info", mode, s.hz,
+						 gyro ? -45 : 0, 20, 0.6f);
+				}
 				/* a new info mid-stream: twice the rate (it does run so),
-				 * a turn right after */
+				 * a turn right after (about the world's vertical: with
+				 * gravity 45, a gyro alone cos 60 of it, see below) */
 				{
 					uint8_t f[80];
 					int nt = ms_n(2 * hz, 1, 4);
 
 					mm_start(&p, &s, mode, hz, id++);
-					ms_flush(&s);
+					/* tilted between the last sample of the old rate
+					 * and the first of the new, numbers and times going
+					 * on: the first sample of a new rate is a gap (the
+					 * "up" of before is stale) */
+					ms_gap(&s, 0, 0, 60);
 					ms_put(&s, f, mm_info(f, mode, 2 * hz));
 					s.hz = 2 * hz;
 					s.batch = (int)fminf(4, fmaxf(1, 2 * hz * 0.004f));
-					ms_run(&s, nt, 0, 45 * 2 * hz / nt);
+					ms_run_vert(&s, nt, 45 * 2 * hz / nt);
 					ms_run(&s, ms_n(2 * hz, 2, 4), 0, 0);
 					ms_feed(&p, &s);
-					mm_check("new info, twice the rate", mode, 2 * hz, gyro ? -45 : 0, 0, 2.5f);
+					mm_check("new info, twice the rate", mode, 2 * hz,
+						 mode == MM_GA ? -45 : mode == MM_G ? -22.5f : 0, 0, 0.6f);
 				}
-				/* the real rate changes without a new info (1.18x): the
-				 * next measure takes it whole, a turn 2.5 s later */
+				/* the real rate changes a little without a new info
+				 * (1.18x): the next measures take it, a turn 2.5 s later */
 				{
-					int nt;
-
 					mm_start(&p, &s, mode, hz, id++);
 					s.hz = hz * 1.18f;
 					nt = ms_n(s.hz, 1, 4);
@@ -875,7 +912,73 @@ static void test_motion_matrix(void)
 					ms_run(&s, nt, 0, 45 * s.hz / nt);
 					ms_run(&s, ms_n(s.hz, 2, 4), 0, 0);
 					ms_feed(&p, &s);
-					mm_check("rate changes, no info", mode, s.hz, gyro ? -45 : 0, 0, 2.5f);
+					mm_check("rate changes, no info", mode, s.hz, gyro ? -45 : 0, 0, 0.6f);
+				}
+			}
+
+			/* before the first measure the info's period may be off by
+			 * up to 2x (RATE_SLOWEST): a pause counts only beyond twice
+			 * the expected time, in such periods; 3.4 of them is no gap (an
+			 * accelerometer alone sees the tilt in it), 3.6 is */
+			for (int ci = 0; ci < 2; ci++) {
+				float many = ci ? 3.6f : 3.4f;
+				int last;
+
+				mm_start3(&p, &s, mode, hz, hz, id++, 0.02f);
+				last = s.pending ? s.pending : s.batch;	/* the interval's samples */
+				ms_gap(&s, 0, (2.02f * many + 1.02f * last) / hz, 20);
+				ms_run(&s, ms_n(hz, 3, 4), 0, 0);
+				ms_feed(&p, &s);
+				mm_check(ci ? "3.6 slow periods paused before the measure"
+					    : "3.4 slow periods paused before the measure", mode, hz, 0,
+					 ci == 0 && !gyro ? 20 : 0, 2);
+			}
+			/* ...so at half the info's rate no batch is a gap before it:
+			 * an accelerometer alone sees a tilt then (a gyro's turn counts
+			 * by the info's period until the measure) */
+			if (!gyro) {
+				int nt = ms_n(hz / 2, 0.1f, 4);
+
+				mm_start3(&p, &s, mode, hz, hz / 2, id++, 0.02f);
+				ms_run(&s, nt, 20 * hz / 2 / nt, 0);
+				ms_run(&s, ms_n(hz / 2, 3, 4), 0, 0);
+				ms_feed(&p, &s);
+				mm_check("half the rate, a tilt before the measure", mode, hz / 2, 0, 20, 2);
+			}
+			/* turned 45 and tilted 20, a gap right after, all in one read:
+			 * what the samples showed is the view's whole (without a gyro
+			 * the tilt settled first: the made-up gyro's last ~0.1 s is
+			 * lost in a gap, a tilt not settled is not told from a jolt) */
+			{
+				int nt = ms_n(hz, 1, 4);
+
+				mm_start(&p, &s, mode, hz, id++);
+				ms_run(&s, nt, 0, 45 * hz / nt);
+				ms_run(&s, nt, 20 * hz / nt, 0);
+				if (!gyro)
+					ms_run(&s, ms_n(hz, 0.5f, 2), 0, 0);
+				ms_gap(&s, 50, 0, 0);
+				ms_run(&s, ms_n(hz, 2, 4), 0, 0);
+				ms_feed(&p, &s);
+				mm_check("turned, then a gap at once", mode, hz, gyro ? -45 : 0, 20,
+					 hz >= 104 ? 0.6f : 2.5f);
+			}
+			/* a slow turn (smoothed: slower than the smoothing's 2.5 deg/s),
+			 * then a gap: the smoothing's tail still comes after it (about
+			 * 1.2 deg/s * 20 ms), what was turned is not lost */
+			if (gyro && hz >= 104) {
+				mm_start(&p, &s, mode, hz, id++);
+				ms_run(&s, ms_n(hz, 0.4f, 4), 0, 1.2f);
+				ms_feed(&p, &s);
+				imu_turned = imu_my = 0;
+				ms_gap(&s, 50, 0, 0);
+				ms_run(&s, ms_n(hz, 0.05f, 4), 0, 0);
+				ms_feed(&p, &s);
+				if (!(imu_turned < -0.012f && imu_turned > -0.035f)) {
+					fprintf(stderr, "matrix slow turn, then a gap, %s, %g Hz: tail %.4f\n",
+						mode == MM_GA ? "gyro+accel" : "gyro", (double)hz,
+						(double)imu_turned);
+					failures++;
 				}
 			}
 
@@ -989,7 +1092,8 @@ static void test_motion_matrix(void)
 			}
 			/* pauses short of a gap now and then (1.5 periods after every
 			 * 20th sample: one interval in 5 even with batches of 4), 24 s:
-			 * not a slower rate, the turn after as it was */
+			 * not a slower rate, a turn while they go on as it was (each
+			 * sample its own period: the pauses' time is no turn) */
 			mm_start(&p, &s, mode, hz, id++);
 			for (int r = 0; r < ms_n(hz, 24, 40) / 20; r++) {
 				ms_run(&s, 20, 0, 0);
@@ -999,10 +1103,14 @@ static void test_motion_matrix(void)
 				int nt = ms_n(hz, 1, 4);
 
 				imu_turned = imu_my = 0;
-				ms_run(&s, nt, 0, 45 * hz / nt);
+				for (int done = 0; done < nt; done += 20) {
+					ms_run(&s, nt - done < 20 ? nt - done : 20, 0, 45 * hz / nt);
+					ms_gap(&s, 0, 1.5f / hz, 0);
+				}
 				ms_run(&s, ms_n(hz, 2, 3), 0, 0);
 				ms_feed(&p, &s);
-				mm_check("pauses now and then, then a turn", mode, hz, gyro ? -45 : 0, 0, 2.5f);
+				mm_check("pauses now and then, a turn", mode, hz, gyro ? -45 : 0, 0,
+					 hz >= 104 ? 0.6f : 2.5f);
 			}
 			/* a slow sensor's few intervals: 3 lost + 0.4 period paused (no
 			 * gap) does not move its rate, so 3 + 0.6 after it is a gap */
@@ -1048,21 +1156,23 @@ static void test_motion_matrix(void)
 	 * (the firmware's polling beats with the sensor's clock) and wraps; the
 	 * intervals are skewed (most a little long, a few short): the period
 	 * is their long-run mean, not their median */
-	{
+	/* the delay creeps slowly (7 us a batch, wraps at 200 us: every ~100
+	 * ms) or fast (70 us, wraps at 350 us: every 5 batches, as wide as on
+	 * the real sensor): a few dozen intervals hold no wrap or one, so only
+	 * a measure over long enough is right; it must be right from the first
+	 * measure on, all along */
+	for (int ji = 0; ji < 2; ji++) {
 		const float real_us = 1e6f / 1137.0f;
+		const uint32_t creep = ji ? 70 : 7, wrap = ji ? 350 : 200;
 		uint32_t delay = 0, base;
 		float worst = 0;
 
-		/* the delay creeps slowly (7 us a batch, wraps at 200 us: every
-		 * ~100 ms, as on the real sensor): a few dozen intervals hold no
-		 * wrap or one, so only a measure over long enough is right; it
-		 * must be right from the first measure on, all along */
 		mm_start3(&p, &s, MM_GA, 1125, 1137, id++, 0.01f);
 		base = s.t;
 		for (int b = 0; b < 3000; b++) {	/* 12000 samples, 10.6 s */
 			uint32_t at = base + (uint32_t)lrintf(4 * b * real_us);
 
-			delay = (delay + 7) % 200;
+			delay = (delay + creep) % wrap;
 			s.t = at + delay;
 			ms_run(&s, 4, 0, 0);
 			if (b % 10 == 9) {
@@ -1072,10 +1182,51 @@ static void test_motion_matrix(void)
 			}
 		}
 		if (!p.period_measured || worst >= 0.0015f) {
-			fprintf(stderr, "matrix jittered times: off by %.3f %% at worst\n",
-				(double)worst * 100);
+			fprintf(stderr, "matrix jittered times (%u us): off by %.3f %% at worst\n",
+				(unsigned)wrap, (double)worst * 100);
 			failures++;
 		}
+	}
+	/* what the driver logs of the rate (imu_rate_news()): refused once;
+	 * a new info does not tell the old refusal; its measure, once; a
+	 * change within 0.5..2x nothing; beyond: refused, back: measured;
+	 * each new info's measure anew */
+	{
+		struct imu_rate_told told = { 0 };
+		uint8_t f[80];
+
+		mm_start2(&p, &s, MM_GA, 1000, 300, id++);
+		CHECK(imu_rate_news(&p, &told) == IMU_RATE_REFUSED && imu_rate_news(&p, &told) == 0);
+		ms_flush(&s);
+		ms_put(&s, f, mm_info(f, MM_GA, 2000));
+		s.hz = 2000;
+		s.batch = 4;
+		ms_run(&s, 200, 0, 0);		/* 0.1 s: not measured yet */
+		ms_feed(&p, &s);
+		CHECK(imu_rate_news(&p, &told) == 0);
+		ms_run(&s, 1000, 0, 0);
+		ms_feed(&p, &s);
+		CHECK(imu_rate_news(&p, &told) == IMU_RATE_MEASURED && imu_rate_news(&p, &told) == 0);
+		CHECK(fabsf(p.period_us - 500) < 1);
+		s.hz = 3000;
+		ms_run(&s, 9000, 0, 0);
+		ms_feed(&p, &s);
+		CHECK(imu_rate_news(&p, &told) == 0 && p.period_measured && fabsf(p.period_us - 333) < 1);
+		s.hz = 8000;
+		ms_run(&s, 8000, 0, 0);
+		ms_feed(&p, &s);
+		CHECK(imu_rate_news(&p, &told) == IMU_RATE_REFUSED && fabsf(p.period_us - 500) < 1);
+		s.hz = 2000;
+		ms_run(&s, 1200, 0, 0);
+		ms_feed(&p, &s);
+		CHECK(imu_rate_news(&p, &told) == IMU_RATE_MEASURED && fabsf(p.period_us - 500) < 1);
+		/* another info, measured too: told for it */
+		ms_flush(&s);
+		ms_put(&s, f, mm_info(f, MM_GA, 1000));
+		s.hz = 1000;
+		ms_run(&s, 600, 0, 0);
+		ms_feed(&p, &s);
+		CHECK(imu_rate_news(&p, &told) == IMU_RATE_MEASURED && fabsf(p.period_us - 1000) < 1);
 	}
 	input_set_motion_calibration(NULL);
 
@@ -1128,7 +1279,7 @@ static void test_imu(void)
 		imu_parser_feed(&p, stream + off, n - off < 77 ? n - off : 77);
 	CHECK(p.have_status && p.imu_ok && p.samples == 2999 && p.bad_crc == 0);
 	CHECK(p.proto == 3 && !strcmp(p.name, "TESTIMU") && p.info_seq == 1 && p.channels == 15);
-	CHECK(fabsf(p.period_us - 1000) < 1);	/* measured over 2 s of the sensor's clock */
+	CHECK(fabsf(p.period_us - 1000) < 1);	/* measured by the sensor's clock */
 	CHECK(p.batch_bytes == IMU_SAMPLE_FRAME);
 	CHECK(imu_events > 0 && fabsf(imu_turned + 32.78f) < 1.5f);
 	/* a frame with a bad CRC is skipped */

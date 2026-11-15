@@ -182,7 +182,8 @@ struct input_motion_tune {
 void input_motion_tune(struct input_motion_tune *t);
 void input_set_motion_tune(const struct input_motion_tune *t);	/* NULL: the default */
 /* The stream had a gap (samples lost for a while), or the port was opened
- * again: what came before is stale */
+ * again: what needs the samples to go on is stale (the gyro made from
+ * gravity, gravity's "up"); what was turned stays */
 void input_motion_gap(void);
 /* deg/s, g, s; a channel the sensor lacks is ignored (0) */
 void input_report_motion(const float gyro[3], const float accel[3], float dt);

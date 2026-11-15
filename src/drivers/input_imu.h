@@ -33,12 +33,14 @@ extern const struct hal_input_ops input_imu;
  * that changes the sensor tells core/input at once, before its samples
  * (input_motion_sensor(): id "<name>-<serial>", channels, noise). The
  * sample period is measured by the sensor's own clock, from samples that
- * carry their own time: over SPAN_US (the first time a quarter second), the
- * mean of the intervals within 25 % of their median, taken within 0.5..2x
- * of the info's rate. Missing samples by time count once it is measured.
+ * carry their own time: anew over each SPAN_US (a quarter second), the mean
+ * of the intervals within 25 % of their median, taken within 0.5..2x of the
+ * info's rate (beyond it the info's again). Missing samples by time count
+ * beyond the period measured, or beyond twice the info's while there is
+ * none.
  */
 #define SPAN_MAX 1024		/* intervals kept over SPAN_US (their median, then the mean near it) */
-#define SPAN_MIN 16		/* ...at least this many (a slow sensor's: one pause is little) */
+#define SPAN_MIN 8		/* ...at least this many (a slow sensor's: one pause is little) */
 
 struct imu_parser {
 	uint8_t buf[512];
@@ -58,7 +60,7 @@ struct imu_parser {
 	float nominal_us;		/* of a sample, as the device says */
 	float period_us;		/* measured */
 	bool period_measured;
-	float period_refused;		/* a measure beyond 0.5..2x of the info's, 0 none */
+	float period_refused;		/* the last measure, beyond 0.5..2x of the info's; 0 none */
 	bool have_prev;
 	uint16_t prev_seq;
 	bool have_real;			/* the last sample with a time of its own */
@@ -80,4 +82,14 @@ bool imu_live(uint64_t now_ms, uint64_t last_ms, uint32_t samples, float period_
  * (said once) */
 bool imu_watch(bool *live, uint64_t now_ms, uint64_t last_ms, uint32_t samples, float period_us);
 void imu_parser_feed(struct imu_parser *p, const uint8_t *data, size_t n);
+
+/* What the driver logs of the rate: what it told so far, of which info */
+enum { IMU_RATE_MEASURED = 1, IMU_RATE_REFUSED = 2 };
+struct imu_rate_told {
+	unsigned info_seq;
+	int told;		/* IMU_RATE_*, 0 nothing yet */
+};
+/* IMU_RATE_* to log now (once each time it becomes so; anew for each
+ * info), 0 nothing new */
+int imu_rate_news(const struct imu_parser *p, struct imu_rate_told *t);
 uint16_t imu_crc16(const uint8_t *data, size_t n);

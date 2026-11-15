@@ -612,7 +612,7 @@ void input_motion_sensor(const struct input_motion_desc *d)
 
 void input_motion_gap(void)
 {
-	/* the reader's word: what came before the gap is stale */
+	/* the reader's word: what goes on from sample to sample starts anew */
 	motion_synth_reset(&in.motion.synth);
 	motion_gap(&in.motion.m);
 }

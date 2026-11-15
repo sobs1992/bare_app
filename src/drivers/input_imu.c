@@ -49,9 +49,8 @@
 #define STATUS_STREAM 8u
 #define STATUS_FAKE 16u
 #define DEFAULT_US 1000.0f	/* the period until PKT_INFO says it */
-#define SPAN_US 2000000u		/* the period is measured over that much time */
-#define SPAN_FIRST_US 250000u	/* ...the first time (and SPAN_FIRST_MIN intervals) */
-#define SPAN_FIRST_MIN 8
+#define SPAN_US 250000u		/* the period is measured anew over that much time */
+#define BAND 0.25f		/* the intervals within that of their median count */
 #define GAP_MISSING 3		/* samples missing (by number or by time) that are no gap yet */
 #define RATE_SLOWEST 2.02f	/* a measured period is taken within 1/x..x of the info's (2x, rounding) */
 #define RETRY_MS 100
@@ -112,6 +111,7 @@ static void set_nominal(struct imu_parser *p, uint32_t odr_mhz)
 		return;
 	p->nominal_us = p->period_us = us;
 	p->period_measured = false;
+	p->period_refused = 0;	/* (of the rate before) */
 	p->have_prev = p->have_real = false;
 	p->span_us = 0;
 	p->span_n = 0;
@@ -227,49 +227,58 @@ static int cmp_float(const void *a, const void *b)
 	return x < y ? -1 : x > y;
 }
 
-/*
- * The real period, from the samples' own times: each interval between two
- * timed samples gives one (elapsed / samples); over SPAN_US and SPAN_MIN
- * intervals at least (the first time over SPAN_FIRST_US and SPAN_FIRST_MIN,
- * so a rate off the info's counts soon after the plug), the mean of those
- * within 25 % of their median is taken: a pause (rare, far off; a short one
- * near is one of many) does not count, a rate off the info's (every
- * interval) does, and the timing's skewed jitter averages out. Taken within
- * 0.5..2x of the info's rate; else the info's stays.
- */
-static void measure_rate(struct imu_parser *p, float elapsed, unsigned n)
+/* The mean of v[0..n) within BAND of their median (v sorted meanwhile): a
+ * pause is far off, the times' jitter (skewed: found late by a creeping
+ * delay) averages out */
+static float near_median(float *v, unsigned n)
 {
-	float one = elapsed / n, m;
-	/* the first measure is quick: until then the info's rate counts */
-	bool first = !p->period_measured;
+	double sum = 0;
+	unsigned used = 0;
+	float m;
 
-	if (p->span_n < SPAN_MAX)
-		p->span_vals[p->span_n++] = one;
-	p->span_us += (uint64_t)elapsed;
-	if (p->span_us < (first ? SPAN_FIRST_US : SPAN_US) || p->span_n < (first ? SPAN_FIRST_MIN : SPAN_MIN))
-		return;
-	qsort(p->span_vals, p->span_n, sizeof(p->span_vals[0]), cmp_float);
-	m = p->span_vals[p->span_n / 2];
-	/* the mean of those near the median: a pause is far off, the times'
-	 * jitter (skewed: found late by a creeping delay) averages out */
-	{
-		double sum = 0;
-		unsigned used = 0;
+	qsort(v, n, sizeof(v[0]), cmp_float);
+	m = v[n / 2];
+	for (unsigned i = 0; i < n; i++)
+		if (fabsf(v[i] - m) <= BAND * m) {
+			sum += v[i];
+			used++;
+		}
+	return (float)(sum / used);	/* the median itself is among them */
+}
 
-		for (unsigned i = 0; i < p->span_n; i++)
-			if (fabsf(p->span_vals[i] - m) <= 0.25f * m) {
-				sum += p->span_vals[i];
-				used++;
-			}
-		m = (float)(sum / used);	/* the median itself is among them */
-	}
+/* A measure: taken within 0.5..2x of the info's rate, else the info's again
+ * (and the measure kept to be told) */
+static void take_rate(struct imu_parser *p, float m)
+{
 	if (m >= p->nominal_us / RATE_SLOWEST && m <= RATE_SLOWEST * p->nominal_us) {
 		p->period_us = m;	/* trimmed: no further smoothing */
 		p->period_measured = true;
 		p->period_refused = 0;
 	} else {
-		p->period_refused = m;	/* beyond 0.5..2x: the info's stays */
+		p->period_us = p->nominal_us;
+		p->period_measured = false;
+		p->period_refused = m;
 	}
+}
+
+/*
+ * The real period, from the samples' own times: each interval between two
+ * timed samples gives one (elapsed / samples); over each SPAN_US and SPAN_MIN
+ * intervals at least, the mean of those within BAND of their median is
+ * taken: a pause (rare, far off; a short one near is one of many) does not
+ * count, a rate off the info's (every interval) does, and the timing's
+ * skewed jitter averages out (within 0.05 % on a real sensor's times). Measured
+ * anew all along: a rate off the info's after the plug, or changed without
+ * an info, counts within half a second.
+ */
+static void measure_rate(struct imu_parser *p, float elapsed, unsigned n)
+{
+	if (p->span_n < SPAN_MAX)
+		p->span_vals[p->span_n++] = elapsed / n;
+	p->span_us += (uint64_t)elapsed;
+	if (p->span_us < SPAN_US || p->span_n < SPAN_MIN)
+		return;
+	take_rate(p, near_median(p->span_vals, p->span_n));
 	p->span_us = 0;
 	p->span_n = 0;
 }
@@ -307,11 +316,11 @@ static void on_sample(struct imu_parser *p, uint32_t t, uint16_t seq, const uint
 	if (timed && p->have_real) {
 		uint16_t n = (uint16_t)(seq - p->real_seq);
 		float expected = n * p->period_us, elapsed = (float)(uint32_t)(t - p->real_t);
-		/* time beyond what the numbers say: more missing samples. Before
-		 * the period is measured (or with the measure refused) the
-		 * info's may be off by up to RATE_SLOWEST: only the time beyond
-		 * that counts, in such periods (a whole batch at half the info's
-		 * rate is no pause) */
+		/* time beyond what the numbers say: more missing samples. With
+		 * no measure (none yet, or refused) the info's period may be off
+		 * by up to RATE_SLOWEST: only the time beyond that counts, in
+		 * such periods (a whole batch at half the info's rate is no
+		 * pause) */
 		float slow = p->period_measured ? 1 : RATE_SLOWEST;
 
 		if (elapsed > expected * slow)
@@ -407,9 +416,9 @@ struct imu {
 	char serial[33];	/* the USB device's, "" none */
 	bool live;		/* samples came lately (LIVE_MS, or 3 of its periods) */
 	uint64_t last_ms;	/* now_ms() of the last read that gave samples */
-	unsigned info_seen;	/* parser.info_seq seen (the rate is logged again) */
+	struct imu_rate_told rate;	/* logged of the rate */
 	size_t vmin;		/* the port's VMIN now */
-	bool told_zero, told_rate;	/* logged: the gyro's zero, the rate measured */
+	bool told_zero;		/* logged: the gyro's zero */
 	struct uevent_mon *mon;
 	struct ml_timer *retry, *watch;
 	int retries;
@@ -467,10 +476,6 @@ static void on_readable(int fd, short revents, void *ud)
 
 	while ((n = read(fd, buf, sizeof(buf))) > 0)
 		imu_parser_feed(&h->parser, buf, (size_t)n);
-	if (h->parser.info_seq != h->info_seen) {
-		h->info_seen = h->parser.info_seq;
-		h->told_rate = false;
-	}
 	/* samples flowing: wake for a batch of them */
 	if (n != 0 && h->parser.samples != had && h->parser.batch_bytes != h->vmin)
 		set_vmin(h, h->parser.batch_bytes);
@@ -497,6 +502,20 @@ bool imu_watch(bool *live, uint64_t now, uint64_t last, uint32_t samples, float 
 	return was && !*live;	/* (the old one: said every second while gone) */
 }
 
+int imu_rate_news(const struct imu_parser *p, struct imu_rate_told *t)
+{
+	int now = p->period_measured ? IMU_RATE_MEASURED : p->period_refused > 0 ? IMU_RATE_REFUSED : 0;
+
+	if (t->info_seq != p->info_seq) {
+		t->info_seq = p->info_seq;
+		t->told = 0;	/* a new rate: told anew */
+	}
+	if (!now || now == t->told)
+		return 0;
+	t->told = now;
+	return now;
+}
+
 /* Every second: the rate measured, and the stream asked for if it stopped
  * (no samples for LIVE_MS or 3 of the sensor's periods, whichever is longer) */
 static void on_watch(void *ud)
@@ -513,13 +532,14 @@ static void on_watch(void *ud)
 	if (!h->live)
 		set_vmin(h, 1);	/* no samples: a status alone wakes too */
 	report_present(h);
-	if (!h->told_rate && h->parser.period_measured) {
-		h->told_rate = true;
+	switch (imu_rate_news(&h->parser, &h->rate)) {
+	case IMU_RATE_MEASURED:
 		LOGI(TAG, "%s: %.1f samples a second", h->node, 1e6 / h->parser.period_us);
-	} else if (!h->told_rate && h->parser.period_refused > 0) {
-		h->told_rate = true;
+		break;
+	case IMU_RATE_REFUSED:
 		LOGW(TAG, "%s: %.1f samples a second, beyond 0.5..2x of the info's %.1f: the info's kept",
 		     h->node, 1e6 / h->parser.period_refused, 1e6 / h->parser.nominal_us);
+		break;
 	}
 	{
 		struct input_motion_info mi;
@@ -589,8 +609,7 @@ static bool open_port(struct imu *h, const char *tty)
 	memcpy(h->parser.serial, h->serial, sizeof(h->parser.serial));
 	h->vmin = 1;
 	h->live = false;
-	h->info_seen = 0;
-	h->told_rate = false;
+	h->rate = (struct imu_rate_told){ 0 };
 	mainloop_add_fd(h->ml, fd, POLLIN, on_readable, h);
 	send_cmd(h, "si");
 	LOGI(TAG, "%s: motion sensor", path);

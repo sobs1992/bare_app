@@ -148,9 +148,9 @@ void motion_synth_gyro(struct motion_synth *s, const float accel[3], float dt, f
 void motion_take(struct motion *m, float *x, float *y);
 /* Forget what was turned and not taken (the game was not in front) */
 void motion_drop(struct motion *m);
-/* A gap in the samples (the stream's reader says so): what came before it is
- * stale, gravity's "up", the smoothing, the still window; what was turned
- * and not taken stays */
+/* A gap in the samples (the stream's reader says so): gravity's "up" of
+ * before it is stale; what was turned (not taken yet, or in the smoothing's
+ * tail) stays */
 void motion_gap(struct motion *m);
 
 /*
