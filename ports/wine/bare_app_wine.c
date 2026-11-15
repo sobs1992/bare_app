@@ -103,7 +103,9 @@ static struct {
 	int edge_zone;			/* edge_zone: pixels of the screen's edge the pointer keeps
 					 * out of unless the stick pushes it there */
 	bool fill;			/* scale = fill: the whole frame, the aspect not kept */
-	int rows;			/* rows = N: only the display mode's top N rows shown */
+	int rows;			/* rows = N [TOP [WxH]]: only N of the display mode's rows */
+	int rows_top;			/* shown, from row TOP (0: the top ones), */
+	uint32_t rows_w, rows_h;	/* in display mode WxH only (0: in any) */
 	struct action button[GP_COUNT];
 } cfg;
 
@@ -347,7 +349,12 @@ static int read_ini(const char *path)
 		} else if (!strcmp(key, "locale")) {
 			snprintf(cfg.locale, sizeof(cfg.locale), "%s", value);
 		} else if (!strcmp(key, "rows")) {
-			cfg.rows = atoi(value);
+			int n = sscanf(value, "%d %d %ux%u", &cfg.rows, &cfg.rows_top, &cfg.rows_w, &cfg.rows_h);
+
+			if (n < 1 || n == 3 || cfg.rows <= 0 || cfg.rows_top < 0)
+				msg("%s:%d: rows %s?", path, lineno, value);
+			if (n < 4)
+				cfg.rows_w = cfg.rows_h = 0;
 		} else if (!strcmp(key, "scale")) {
 			if (strcmp(value, "fill") && strcmp(value, "aspect"))
 				msg("%s:%d: scale %s?", path, lineno, value);
@@ -763,10 +770,32 @@ static int build_axis(struct axis *a, int from, int to)
 	return 0;
 }
 
-/* The display mode's rows shown: the top "rows" of them, else all */
+/* Whether "rows" holds for display mode m */
+static bool rows_apply(const struct wb_mode *m)
+{
+	return cfg.rows > 0 && (uint32_t)cfg.rows < m->height &&
+	       (!cfg.rows_w || (m->width == cfg.rows_w && m->height == cfg.rows_h));
+}
+
+/* The display mode's rows shown: "rows" of them, else all */
 static uint32_t shown_rows(const struct wb_mode *m)
 {
-	return cfg.rows > 0 && (uint32_t)cfg.rows < m->height ? (uint32_t)cfg.rows : m->height;
+	return rows_apply(m) ? (uint32_t)cfg.rows : m->height;
+}
+
+/* The first row shown. The cursor is kept in the rows shown, counted from
+ * this one: Windows' positions are this much further down. */
+static uint32_t shown_top(const struct wb_mode *m)
+{
+	uint32_t top = (uint32_t)cfg.rows_top;
+
+	return !rows_apply(m) ? 0 : top > m->height - shown_rows(m) ? m->height - shown_rows(m) : top;
+}
+
+/* Row y of the rows shown */
+static const uint32_t *shown_row(int y)
+{
+	return screen + (size_t)(shown_top(&mode) + y) * mode.width;
 }
 
 static void set_mode(struct wb_mode m)
@@ -819,7 +848,7 @@ static void set_mode(struct wb_mode m)
 		cur_y = mh - 1;
 	dirty = true;
 	msg("display mode %ux%u, shown %dx%d%s", m.width, m.height, dst_w, dst_h,
-	    cfg.fill ? " (fill)" : mh < m.height ? " (its top rows)" : "");
+	    cfg.fill ? " (fill)" : mh < m.height ? " (some of its rows)" : "");
 }
 
 static void blit(const struct surface *s)
@@ -886,12 +915,12 @@ static void take_down_row(int y)
 	uint32_t s;
 
 	if (wy[0] == WEIGHT_ONE && ax.taps == 2 && w == (uint32_t)dst_w) {
-		memcpy(out, screen + (size_t)ay.first[y] * w, (size_t)w * 4);	/* 1:1 */
+		memcpy(out, shown_row(ay.first[y]), (size_t)w * 4);	/* 1:1 */
 		return;
 	}
 	memset(line, 0, (size_t)w * 3 * sizeof(*line));
 	for (k = 0; k < ay.taps && wy[k]; k++) {
-		const uint32_t *r = screen + (size_t)(ay.first[y] + k) * w;
+		const uint32_t *r = shown_row(ay.first[y] + k);
 		uint32_t f = wy[k], *l = line;
 
 		for (s = 0; s < w; s++, l += 3) {
@@ -924,7 +953,7 @@ static void take_down(void)
 	int y, k;
 
 	for (y = 0; y < (int)shown_rows(&mode); y++) {
-		const uint32_t *now = screen + (size_t)y * mode.width;
+		const uint32_t *now = shown_row(y);
 		uint32_t *was = last_screen + (size_t)y * mode.width;
 
 		row_changed[y] = redo_all || memcmp(now, was, row);
@@ -1044,7 +1073,7 @@ static void put_frame(void)
 				continue;
 			}
 			memset(out, 0, (size_t)mx * 4);
-			memcpy(out + mx, screen + (size_t)(view_y + y - my) * mode.width + view_x, (size_t)w * 4);
+			memcpy(out + mx, shown_row(view_y + y - my) + view_x, (size_t)w * 4);
 			memset(out + mx + w, 0, (size_t)(fw - mx - w) * 4);
 		}
 		fx = mx + (int)cur_x - view_x;
@@ -1089,8 +1118,7 @@ static void put_full(void)
 	int y;
 
 	for (y = 0; y < (int)shown_rows(&mode); y++)
-		memcpy((uint8_t *)full + (size_t)y * stride, screen + (size_t)y * mode.width,
-		       (size_t)mode.width * 4);
+		memcpy((uint8_t *)full + (size_t)y * stride, shown_row(y), (size_t)mode.width * 4);
 	if (cursor_shown)
 		draw_cursor((uint8_t *)full, mode.width, shown_rows(&mode), stride, (int)cur_x, (int)cur_y);
 	game_link_full_publish(&app, mode.width, shown_rows(&mode));
@@ -1188,7 +1216,8 @@ static void send_mouse_at(int x, int y, uint32_t flags, int wheel)
 	if (trace && (flags || wheel))
 		msg("mouse %d,%d flags %#x wheel %d", x, y, flags, wheel);
 	m.mouse.x = pointer_x = x;
-	m.mouse.y = pointer_y = y;
+	pointer_y = y;
+	m.mouse.y = y + (int)shown_top(&mode);
 	m.mouse.flags = flags | WB_MOUSE_MOVE;
 	if (wheel) {
 		m.mouse.flags |= WB_MOUSE_WHEEL;
@@ -1417,8 +1446,11 @@ static void on_client_msg(struct client *c, const struct wb_msg *m, int fd)
 		if (trace)
 			msg("pid %d: cursor moved to %d,%d", (int)c->pid, m->cursor_pos.x, m->cursor_pos.y);
 		cur_x = m->cursor_pos.x < 0 ? 0 : m->cursor_pos.x >= mode.width ? mode.width - 1 : m->cursor_pos.x;
-		cur_y = m->cursor_pos.y < 0 ? 0 : m->cursor_pos.y >= (int32_t)shown_rows(&mode) ?
-			(int32_t)shown_rows(&mode) - 1 : m->cursor_pos.y;
+		{
+			int32_t y = m->cursor_pos.y - (int32_t)shown_top(&mode);
+
+			cur_y = y < 0 ? 0 : y >= (int32_t)shown_rows(&mode) ? (int32_t)shown_rows(&mode) - 1 : y;
+		}
 		dirty = cursor_shown;
 		break;
 	default:
