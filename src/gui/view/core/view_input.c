@@ -77,12 +77,16 @@ static void on_quit_hold(void *ud)
 }
 
 /* Quitting takes holding the combo: the backend warns meanwhile. Over a
- * running game the combo ends the game, not the application. */
+ * running game the combo ends the game, not the application. A device
+ * (a platform that powers off) is not left by it: the application is all
+ * there is on it, and the power key turns it off. */
 static void quit_combo_changed(void)
 {
 	uint32_t combo = vcore.pf->quit_combo;
 	bool held = (input_buttons() & combo) == combo;
 
+	if (held && !vcore.quit_hold && vcore.pf->poweroff && !view_game_in_front())
+		return;
 	if (held && !vcore.quit_hold && !vcore.quit_sent) {
 		vcore.quit_game = view_game_in_front();
 		vcore.quit_hold = mainloop_add_timer(vcore.ml, HOLD_MS, 0, on_quit_hold, NULL);

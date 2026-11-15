@@ -39,7 +39,8 @@ void battery_icon_set(lv_obj_t *icon, int capacity, bool charging);
 
 /* screens/ */
 extern const struct widget_ops home_screen, settings_screen, input_test_screen, layers_screen,
-	game_screen, wifi_screen, wifi_key_screen, usb_disk_screen, controls_screen, motion_screen;
+	game_screen, wifi_screen, wifi_key_screen, usb_disk_screen, controls_screen, motion_screen,
+	library_screen;
 /* A game screen is up: it says a low battery itself (screens/game.c) */
 bool game_screen_battery(void);
 

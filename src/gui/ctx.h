@@ -28,6 +28,7 @@ enum screen_id {
 	SCREEN_USB_DISK,	/* the games partition as a USB disk for the computer */
 	SCREEN_CONTROLS,	/* the controls of the game of view_game_selected() */
 	SCREEN_MOTION,		/* the motion sensor: its state, calibration */
+	SCREEN_LIBRARY,		/* every game, a grid of covers (home shows HOME_GAMES) */
 	SCREEN_COUNT
 };
 

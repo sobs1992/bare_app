@@ -7,6 +7,10 @@
  * what A does at the bottom. Left and Right go along a row, Up and Down
  * between the rows (port_input_set_2d()).
  *
+ * The row holds the HOME_GAMES played last, then "All games": the library
+ * (SCREEN_LIBRARY, the same file), every game as a grid of smaller tiles in
+ * the same order, scrolled up and down, the name of the focused one above.
+ *
  * On the grid (widgets/console.c, in cells): the header rows 0-2, the name
  * from 2.25, the tiles 7 cells square from row 4, a cell apart, the round
  * buttons 1.5 cells from row 12, the footer from row 14.
@@ -31,7 +35,10 @@
 #define MENU_MAX 64
 
 #define TILE_CELLS 7
-#define TILE_SMALL 120		/* below it the small font on the tile */
+#define HOME_GAMES 10		/* the games on home, then "All games" */
+#define LIB_TILE_HALVES 9	/* the library's tiles: 4.5 cells */
+#define LIB_GAP_QUARTERS 3	/* between them: 0.75 cell */
+#define TILE_SMALL 160		/* below it the small font on the tile (the library's) */
 #define TITLE_ROW 9		/* the name's top: 2.25 cells, in quarters */
 #define TILES_ROW 4
 #define ROUNDS_ROW 12
@@ -61,10 +68,14 @@ static const struct entry entries[] = {
 #ifdef CONFIG_SCREEN_LAYERS
 	{ LV_SYMBOL_IMAGE, S_LAYERS, ACT_OPEN_SCREEN, SCREEN_LAYERS, VIDEO_TEST_PATTERN, false, { 0 } },
 #endif
-	{ LV_SYMBOL_POWER, S_QUIT, ACT_POWER_OFF, 0, VIDEO_NONE, false, { 0 } },
 };
 
 #define N_ENTRIES (sizeof(entries) / sizeof(entries[0]))
+
+/* The last tile of home: the library */
+static const struct entry library_entry = {
+	LV_SYMBOL_LIST, S_LIBRARY, ACT_OPEN_SCREEN, SCREEN_LIBRARY, VIDEO_NONE, false, { 0 }
+};
 
 /* Every game's entries, then entries[] */
 static struct entry menu[MENU_MAX];
@@ -272,14 +283,17 @@ static void on_click(lv_event_t *e)
 
 struct home {
 	lv_obj_t *scr, *title, *row, *rounds, *footer;
-	lv_obj_t *tiles[MENU_MAX], *buttons[N_ENTRIES];
-	const struct entry *tile_entry[MENU_MAX], *button_entry[N_ENTRIES];
+	lv_obj_t *tiles[MENU_MAX + 1], *buttons[N_ENTRIES + 1];
+	const struct entry *tile_entry[MENU_MAX + 1], *button_entry[N_ENTRIES + 1];
 	int n_tiles, n_buttons, last_tile, last_button;
 	lv_group_t *group;
 	int32_t tile;		/* side */
+	bool library;		/* the library: the tiles in a grid, no round buttons */
+	int cols;		/* the library's tiles a row */
 };
 
 static struct home *home;	/* one home screen at a time */
+static lv_obj_t *library_scr;	/* the library's screen while it is there */
 
 /* A colour of its own for a game without a cover, from its title */
 static lv_color_t title_color(const char *title)
@@ -305,8 +319,7 @@ static int index_of(lv_obj_t *const *objs, int n, lv_obj_t *obj)
 static void set_action(const struct entry *en)
 {
 	const struct entry *running = view_video_minimized() != VIDEO_NONE ? running_entry() : NULL;
-	enum str_id what = en->game.def ? (en == running ? S_HOME_RESUME : S_HOME_START)
-			   : en->action == ACT_POWER_OFF ? S_QUIT : S_HOME_OPEN;
+	enum str_id what = en->game.def ? (en == running ? S_HOME_RESUME : S_HOME_START) : S_HOME_OPEN;
 
 	if (en->game.def)
 		footer_set(home->footer, "X", tr(S_CONTROLS), "A", tr(what), NULL);
@@ -330,8 +343,13 @@ static void focus_changed(lv_obj_t *obj, const struct entry *en)
 
 static void on_focused(lv_event_t *e)
 {
-	if (home)
-		focus_changed(lv_event_get_target_obj(e), lv_event_get_user_data(e));
+	lv_obj_t *obj = lv_event_get_target_obj(e);
+
+	/* only the current screen's: the screen before it (home on the way to
+	 * the library, the library on the way back) is deleted after it is
+	 * built, and the focus goes through its objects as they go */
+	if (home && lv_obj_get_screen(obj) == home->scr)
+		focus_changed(obj, lv_event_get_user_data(e));
 }
 
 /* Left, Right along a row, Up, Down between them; the other keys as usual */
@@ -342,9 +360,24 @@ static void on_key(lv_event_t *e)
 	int t = index_of(home->tiles, home->n_tiles, obj);
 	int b = index_of(home->buttons, home->n_buttons, obj);
 
-	if (key == UI_LV_KEY_ALT && t >= 0) {	/* X: the game's controls */
+	if (key == UI_LV_KEY_ALT && t >= 0 && home->tile_entry[t]->game.def) {	/* X: its controls */
 		view_game_select(home->tile_entry[t]->game);
 		gui_action_post(ACT_OPEN_SCREEN, SCREEN_CONTROLS);
+		return;
+	}
+	if (home->library && t >= 0) {
+		int n = home->n_tiles, c = home->cols;
+
+		if (key == LV_KEY_LEFT && t > 0)
+			to = home->tiles[t - 1];
+		else if (key == LV_KEY_RIGHT && t + 1 < n)
+			to = home->tiles[t + 1];
+		else if (key == LV_KEY_UP && t >= c)
+			to = home->tiles[t - c];
+		else if (key == LV_KEY_DOWN && t / c < (n - 1) / c)	/* a row below: its tile or the last */
+			to = home->tiles[t + c < n ? t + c : n - 1];
+		if (to)
+			lv_group_focus_obj(to);
 		return;
 	}
 	if (key == LV_KEY_LEFT)
@@ -378,7 +411,7 @@ static void focus_frame(lv_obj_t *obj, int32_t radius)
 static lv_obj_t *tile_new(lv_obj_t *parent, const struct entry *en, bool minimized)
 {
 	lv_obj_t *t = lv_button_create(parent), *o;
-	const char *title = entry_text(en), *cover = game_cover(en->game);
+	const char *title = entry_text(en), *cover = en->game.def ? game_cover(en->game) : NULL;
 	char src[PATH_MAX + 4];
 	lv_color_t c = title_color(title);
 
@@ -398,6 +431,19 @@ static lv_obj_t *tile_new(lv_obj_t *parent, const struct entry *en, bool minimiz
 		lv_image_set_src(o, src);
 		lv_obj_set_size(o, LV_PCT(100), LV_PCT(100));
 		lv_image_set_inner_align(o, LV_IMAGE_ALIGN_COVER);
+	} else if (!en->game.def) {	/* "All games": its symbol over its name */
+		lv_obj_set_style_bg_color(t, COLOR_ROUND, 0);
+		lv_obj_set_style_bg_grad_color(t, lv_color_darken(COLOR_ROUND, LV_OPA_50), 0);
+		o = lv_label_create(t);
+		lv_obj_set_style_text_font(o, UI_FONT_MID, 0);
+		lv_label_set_text(o, en->symbol);
+		lv_obj_align(o, LV_ALIGN_CENTER, 0, -ui_cell() / 2);
+		o = lv_label_create(t);
+		lv_obj_set_width(o, home->tile - ui_cell());
+		lv_obj_set_style_text_align(o, LV_TEXT_ALIGN_CENTER, 0);
+		lv_obj_set_style_text_font(o, home->tile < TILE_SMALL ? UI_FONT_SMALL : UI_FONT_MID, 0);
+		lv_label_set_text(o, title);
+		lv_obj_align(o, LV_ALIGN_CENTER, 0, ui_cell());
 	} else {
 		o = lv_label_create(t);
 		lv_obj_set_width(o, home->tile - ui_cell());
@@ -411,7 +457,7 @@ static lv_obj_t *tile_new(lv_obj_t *parent, const struct entry *en, bool minimiz
 		lv_label_set_text(o, LV_SYMBOL_PLAY);
 		lv_obj_align(o, LV_ALIGN_TOP_LEFT, ui_px(10), ui_px(8));
 	}
-	if (game_missing_text(en->game, src, sizeof(src))) {
+	if (en->game.def && game_missing_text(en->game, src, sizeof(src))) {
 		/* dimmed under a veil: the focus frame stays bright */
 		o = lv_obj_create(t);
 		lv_obj_remove_style_all(o);
@@ -459,8 +505,7 @@ static lv_obj_t *round_new(lv_obj_t *parent, const struct entry *en, int32_t siz
 	lv_obj_set_style_bg_color(b, lv_color_lighten(COLOR_ROUND, LV_OPA_20), LV_STATE_FOCUS_KEY);
 	label = lv_label_create(b);
 	lv_obj_set_style_text_font(label, UI_FONT_MID, 0);
-	lv_obj_set_style_text_color(label, en->action == ACT_POWER_OFF ? UI_COLOR_WARN
-					    : lv_color_white(), 0);
+	lv_obj_set_style_text_color(label, lv_color_white(), 0);
 	lv_label_set_text(label, en->symbol);
 	lv_obj_center(label);
 	lv_obj_add_event_cb(b, on_click, LV_EVENT_CLICKED, (void *)en);
@@ -477,25 +522,76 @@ static void on_screen_delete(lv_event_t *e)
 		port_input_set_2d(NULL);
 	if (home == h)
 		home = NULL;
+	if (library_scr == h->scr)
+		library_scr = NULL;
 	free(h);
 }
 
-static void *home_init(lv_obj_t *parent, lv_obj_t **root)
+/* The tiles of the row (home) or of the grid (the library) */
+static lv_obj_t *tiles_area(lv_obj_t *scr, int32_t w, int32_t frame)
+{
+	int32_t u = ui_cell(), margin = ui_margin();
+	lv_obj_t *area = lv_obj_create(scr);
+
+	lv_obj_remove_style_all(area);
+	if (!home->library) {
+		/* the whole width: the tiles scroll under the margins */
+		lv_obj_set_size(area, w, home->tile + 2 * frame);
+		lv_obj_set_pos(area, 0, TILES_ROW * u - frame);
+		lv_obj_set_flex_flow(area, LV_FLEX_FLOW_ROW);
+		lv_obj_set_flex_align(area, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+		lv_obj_set_style_pad_left(area, margin, 0);
+		lv_obj_set_style_pad_right(area, margin, 0);
+		lv_obj_set_style_pad_column(area, u, 0);
+		lv_obj_set_scroll_dir(area, LV_DIR_HOR);
+	} else {
+		/* rows of cols tiles, centred, scrolled up and down between the
+		 * name and the footer */
+		int32_t gap = LIB_GAP_QUARTERS * u / 4;
+		int32_t span = home->cols * home->tile + (home->cols - 1) * gap;
+
+		lv_obj_set_size(area, w, (ROUNDS_ROW + 2) * u - TILES_ROW * u + frame);
+		lv_obj_set_pos(area, 0, TILES_ROW * u - frame);
+		lv_obj_set_flex_flow(area, LV_FLEX_FLOW_ROW_WRAP);
+		lv_obj_set_flex_align(area, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+		lv_obj_set_style_pad_left(area, (w - span) / 2, 0);
+		lv_obj_set_style_pad_right(area, 0, 0);
+		lv_obj_set_style_pad_top(area, frame, 0);
+		lv_obj_set_style_pad_bottom(area, frame, 0);
+		lv_obj_set_style_pad_column(area, gap, 0);
+		lv_obj_set_style_pad_row(area, gap, 0);
+		lv_obj_set_scroll_dir(area, LV_DIR_VER);
+	}
+	lv_obj_set_scrollbar_mode(area, LV_SCROLLBAR_MODE_OFF);
+	return area;
+}
+
+static void *screen_init(lv_obj_t **root, bool library)
 {
 	lv_display_t *disp = lv_display_get_default();
 	int32_t w = lv_display_get_horizontal_resolution(disp);
 	int32_t u = ui_cell(), round = ROUND_HALVES * u / 2;
 	int32_t frame = focus_reach(), margin = ui_margin();
-	lv_obj_t *scr, *focus = NULL;
+	lv_obj_t *scr, *focus = NULL, *lib_tile = NULL;
+	int shown = 0;
 	size_t i;
 
-	(void)parent;
 	build_menu();
 	home = calloc(1, sizeof(*home));
 	if (!home)
 		return NULL;
 	home->group = lv_group_get_default();
-	home->tile = TILE_CELLS * u;
+	home->library = library;
+	if (!library) {
+		home->tile = TILE_CELLS * u;
+	} else {
+		int32_t gap = LIB_GAP_QUARTERS * u / 4;
+
+		home->tile = LIB_TILE_HALVES * u / 2;
+		home->cols = (int)((w - 2 * margin + gap) / (home->tile + gap));
+		if (home->cols < 1)
+			home->cols = 1;
+	}
 
 	scr = lv_obj_create(NULL);
 	home->scr = scr;
@@ -511,28 +607,19 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_label_set_text(home->title, n_games ? "" : tr(S_HOME_NO_GAMES));
 	lv_obj_set_pos(home->title, margin, TITLE_ROW * u / 4);
 
-	/* the whole width: the tiles scroll under the margins */
-	home->row = lv_obj_create(scr);
-	lv_obj_remove_style_all(home->row);
-	lv_obj_set_size(home->row, w, home->tile + 2 * frame);
-	lv_obj_set_pos(home->row, 0, TILES_ROW * u - frame);
-	lv_obj_set_flex_flow(home->row, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(home->row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_left(home->row, margin, 0);
-	lv_obj_set_style_pad_right(home->row, margin, 0);
-	lv_obj_set_style_pad_column(home->row, u, 0);
-	lv_obj_set_scroll_dir(home->row, LV_DIR_HOR);
-	lv_obj_set_scrollbar_mode(home->row, LV_SCROLLBAR_MODE_OFF);
+	home->row = tiles_area(scr, w, frame);
 
-	home->rounds = lv_obj_create(scr);
-	lv_obj_remove_style_all(home->rounds);
-	lv_obj_set_size(home->rounds, w, round + 2 * frame);
-	lv_obj_set_pos(home->rounds, 0, ROUNDS_ROW * u - frame);
-	lv_obj_set_flex_flow(home->rounds, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(home->rounds, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-			      LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_column(home->rounds, u, 0);
-	lv_obj_set_scrollable(home->rounds, false);
+	if (!library) {
+		home->rounds = lv_obj_create(scr);
+		lv_obj_remove_style_all(home->rounds);
+		lv_obj_set_size(home->rounds, w, round + 2 * frame);
+		lv_obj_set_pos(home->rounds, 0, ROUNDS_ROW * u - frame);
+		lv_obj_set_flex_flow(home->rounds, LV_FLEX_FLOW_ROW);
+		lv_obj_set_flex_align(home->rounds, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+				      LV_FLEX_ALIGN_CENTER);
+		lv_obj_set_style_pad_column(home->rounds, u, 0);
+		lv_obj_set_scrollable(home->rounds, false);
+	}
 
 	home->footer = footer_create(scr);
 
@@ -541,19 +628,37 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 		lv_obj_t *o;
 
 		if (menu[i].game.def) {
+			if (!library && shown++ >= HOME_GAMES)
+				continue;
 			o = tile_new(home->row, &menu[i], minimized);
 			home->tile_entry[home->n_tiles] = &menu[i];
 			home->tiles[home->n_tiles++] = o;
 			if (minimized)
 				focus = o;
-		} else {
+		} else if (!library) {
+			if (n_games && !home->n_buttons) {	/* the row ends in "All games" */
+				o = lib_tile = tile_new(home->row, &library_entry, false);
+				home->tile_entry[home->n_tiles] = &library_entry;
+				home->tiles[home->n_tiles++] = o;
+			}
 			o = round_new(home->rounds, &menu[i], round);
 			home->button_entry[home->n_buttons] = &menu[i];
 			home->buttons[home->n_buttons++] = o;
 		}
 	}
+	if (!library && n_games && !home->n_buttons) {	/* no round buttons in this build */
+		lv_obj_t *o = lib_tile = tile_new(home->row, &library_entry, false);
+
+		home->tile_entry[home->n_tiles] = &library_entry;
+		home->tiles[home->n_tiles++] = o;
+	}
 	port_input_set_2d(home->group);
-	/* the game that is minimised, else the first one */
+	if (library)
+		library_scr = scr;
+	/* back from the library (still the screen shown while this one is
+	 * built): its tile; else the game that is minimised, else the first */
+	if (lib_tile && library_scr && lv_screen_active() == library_scr)
+		focus = lib_tile;
 	if (!focus)
 		focus = home->n_tiles ? home->tiles[0] : home->n_buttons ? home->buttons[0] : NULL;
 	if (focus) {
@@ -570,7 +675,24 @@ static void *home_init(lv_obj_t *parent, lv_obj_t **root)
 	return NULL;	/* the state goes with the screen (on_screen_delete) */
 }
 
+static void *home_init(lv_obj_t *parent, lv_obj_t **root)
+{
+	(void)parent;
+	return screen_init(root, false);
+}
+
+static void *library_init(lv_obj_t *parent, lv_obj_t **root)
+{
+	(void)parent;
+	return screen_init(root, true);
+}
+
 const struct widget_ops home_screen = {
 	.name = "home",
 	.init = home_init,
+};
+
+const struct widget_ops library_screen = {
+	.name = "library",
+	.init = library_init,
 };
