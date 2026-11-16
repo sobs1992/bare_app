@@ -27,6 +27,13 @@ void view_input_grab(view_grab_cb cb, void *ud)
 {
 	vcore.grab = cb;
 	vcore.grab_ud = ud;
+	vcore.grab_all = false;
+}
+
+void view_input_grab_all(view_grab_cb cb, void *ud)
+{
+	view_input_grab(cb, ud);
+	vcore.grab_all = true;
 }
 
 void view_input_release(void *ud)
@@ -34,6 +41,7 @@ void view_input_release(void *ud)
 	if (vcore.grab_ud == ud) {
 		vcore.grab = NULL;
 		vcore.grab_ud = NULL;
+		vcore.grab_all = false;
 	}
 }
 
@@ -269,7 +277,7 @@ void view_on_gamepad(const struct gp_event *ev, void *ud)
 	 * when the screen went off must not stay pressed in a game. */
 	if ((vcore.screen_off || vcore.asleep) && (ev->type == GP_EV_BUTTON ? ev->pressed : ev->value != 0))
 		return;
-	if (ev->type == GP_EV_BUTTON) {
+	if (ev->type == GP_EV_BUTTON && !(vcore.grab && vcore.grab_all)) {
 		if (combo && (GP_BIT(ev->code) & combo)) {
 			if (!ev->repeat)
 				quit_combo_changed();
@@ -285,6 +293,11 @@ void view_on_gamepad(const struct gp_event *ev, void *ud)
 			return;
 		}
 #endif
+	} else if (ev->type == GP_EV_BUTTON && ev->pressed &&
+		   (ev->code == GP_VOL_UP || ev->code == GP_VOL_DOWN)) {
+		/* the volume keys set the volume also under a grab of all */
+		gui_action_post(ACT_VOLUME_STEP, ev->code == GP_VOL_UP ? VIEW_VOLUME_STEP
+								 : -VIEW_VOLUME_STEP);
 	}
 	deliver(ev);
 }

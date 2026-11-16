@@ -53,13 +53,17 @@ int view_subscribe(uint32_t sections, view_cb cb, void *self);
 void view_unsubscribe(int id);
 const struct gui_ctx *view_ctx(void);
 
-/* Raw gamepad events to one owner (e.g. an input test screen). While
- * grabbed no UI keys are produced; the quit combo still works (over a
- * running game it ends the game instead of the application). Release
- * only drops the grab if 'ud' still owns it: a new screen may already
- * have grabbed before the old one is deleted. */
+/* Raw gamepad events to one owner (e.g. a game's screen). While grabbed
+ * no UI keys are produced; the quit combo still works (over a running
+ * game it ends the game instead of the application), and F5 held shows
+ * the system monitor. view_input_grab_all() gives the owner those buttons
+ * too, as any other (the input test: every button is under test). The
+ * power key stays the view's, the volume keys still set the volume.
+ * Release only drops the grab if 'ud' still owns it: a new screen may
+ * already have grabbed before the old one is deleted. */
 typedef void (*view_grab_cb)(const struct gp_event *ev, void *ud);
 void view_input_grab(view_grab_cb cb, void *ud);
+void view_input_grab_all(view_grab_cb cb, void *ud);
 void view_input_release(void *ud);
 
 const char *ui_key_name(enum ui_key key);

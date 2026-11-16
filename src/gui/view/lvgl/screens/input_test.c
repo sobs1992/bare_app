@@ -683,7 +683,9 @@ static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_style_text_align(t->hint, LV_TEXT_ALIGN_CENTER, 0);
 
 	show(t);
-	view_input_grab(on_input, t);
+	/* every button is under test: F5 and F6 too (the system monitor and
+	 * the quit combo otherwise) */
+	view_input_grab_all(on_input, t);
 	*root = scr;
 	return t;
 }

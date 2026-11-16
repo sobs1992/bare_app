@@ -43,6 +43,7 @@ struct view_state {
 	int nsubs, next_id;
 	view_grab_cb grab;
 	void *grab_ud;
+	bool grab_all;		/* the quit combo and F5 go to the grab too */
 	bool quit_sent;
 	struct ml_timer *quit_hold;	/* the quit combo is held: quits when it fires */
 	bool quit_game;			/* ...ends the game in front instead */
