@@ -4,6 +4,12 @@
  * into one. The device stays open for a burst of sounds (a dragged slider)
  * and is closed a second after the last one: games play to the same
  * device and need it free.
+ *
+ * While the stream runs its sound thread holds the device for good,
+ * passing on what games play into the loopback: the sounds go into the
+ * loopback too, so they reach the device (and the stream) that way. There
+ * the device is closed after each sound: a game started right after one
+ * would get another substream of the loopback, which nobody listens to.
  */
 #include <errno.h>
 #include <math.h>
@@ -15,6 +21,10 @@
 #include "core/util.h"
 #include "hal/platform.h"
 #include "services.h"
+#ifdef CONFIG_STREAM
+#include "drivers/pcm_alsa.h"
+#include "stream/stream.h"
+#endif
 
 #define TAG "sound"
 #define RATE 48000
@@ -52,12 +62,31 @@ static void play_click(void *h, int rate, bool fresh)
 	free(buf);
 }
 
+/* The platform's device, or the stream's loopback while the stream runs
+ * (*once: close it after the sound) */
+static void *open_device(int *rate, bool *once)
+{
+#ifdef CONFIG_STREAM
+	char play[32], cap[32];
+
+	if (so.ops == &pcm_alsa && stream_running() &&
+	    stream_loopback(play, cap, sizeof(play)) == 0) {
+		struct pcm_alsa_params p = { .device = play };
+
+		*once = true;
+		return so.ops->open(&p, rate);
+	}
+#endif
+	*once = false;
+	return so.ops->open(so.params, rate);
+}
+
 static void *player(void *ud)
 {
 	struct timespec until;
 	void *h = NULL;
 	int rate = RATE, id;
-	bool fresh;
+	bool fresh, once = false;
 
 	(void)ud;
 	pthread_mutex_lock(&so.lock);
@@ -81,9 +110,13 @@ static void *player(void *ud)
 		pthread_mutex_unlock(&so.lock);
 		fresh = !h;
 		if (!h)
-			h = so.ops->open(so.params, &rate);
+			h = open_device(&rate, &once);
 		if (h && id == SOUND_VOLUME)
 			play_click(h, rate, fresh);
+		if (h && once) {
+			so.ops->close(h);
+			h = NULL;
+		}
 		pthread_mutex_lock(&so.lock);
 	}
 	pthread_mutex_unlock(&so.lock);

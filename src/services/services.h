@@ -32,7 +32,8 @@ int audio_set_route(enum hal_audio_route route);
 /*
  * Interface sounds (services/sound.c): played by a thread of its own on
  * the platform's PCM device, which is free again a second after the last
- * one. Without a device nothing happens.
+ * one, or into the stream's loopback while the stream runs (it holds the
+ * device then). Without a device nothing happens.
  */
 enum sound_id { SOUND_VOLUME };
 int sound_start(const struct platform *pf);
