@@ -422,6 +422,7 @@ int view_video_set(enum video_source src)
 
 #ifdef CONFIG_STREAM
 #define STREAM_FPS 30
+#define STREAM_IDLE_MS 250	/* how often it looks for a first player */
 #define STREAM_KBPS 3000
 
 /* The game's own picture (game_ipc.h) can be bigger than the screen: up
@@ -445,16 +446,21 @@ static const struct hal_fb *game_full(bool watched)
 #endif
 }
 
+static void stream_tick_arm(bool watched);
+
 /* The screen as it is into the stream's frame, while somebody watches; a
  * game in front as it drew it when it says (bare_app's own overlays, as
  * the frame rate, are not in it then) */
 static void on_stream_tick(void *ud)
 {
-	const struct hal_fb *ui, *video, *full = game_full(stream_viewers() > 0);
+	bool watched = stream_viewers() > 0;
+	const struct hal_fb *ui, *video, *full;
 	struct hal_fb *fb;
 	int y;
 
 	(void)ud;
+	stream_tick_arm(watched);
+	full = game_full(watched);
 	if (full) {
 		if (!(fb = stream_frame_begin(full->width, full->height)))
 			return;
@@ -464,13 +470,29 @@ static void on_stream_tick(void *ud)
 		stream_frame_end();
 		return;
 	}
-	if (!vcore.display->ops->layers || !stream_viewers())
+	if (!vcore.display->ops->layers || !watched)
 		return;
 	vcore.display->ops->layers(vcore.display, &ui, &video);
 	if (!(fb = stream_frame_begin(ui->width, ui->height)))
 		return;
 	shot_compose(fb, ui, video);
 	stream_frame_end();
+}
+
+/* The frame timer: at the frame rate while somebody plays, else a slow one
+ * that only looks for the first player (the view thread woke 30 times a
+ * second for nobody before). The first frame of a new player is late by
+ * STREAM_IDLE_MS at most; players buffer more than that. */
+static void stream_tick_arm(bool watched)
+{
+	uint32_t ms = watched ? 1000 / STREAM_FPS : STREAM_IDLE_MS;
+
+	if (vcore.stream_tick && vcore.stream_watched == watched)
+		return;
+	if (vcore.stream_tick)
+		mainloop_timer_cancel(vcore.ml, vcore.stream_tick);
+	vcore.stream_tick = mainloop_add_timer(vcore.ml, ms, ms, on_stream_tick, NULL);
+	vcore.stream_watched = watched;
 }
 
 /* The setting says it runs or not: start or stop it */
@@ -506,8 +528,7 @@ void view_stream_follow(void)
 		vcore.stream_play[0] = vcore.stream_cap[0] = '\0';
 		return;
 	}
-	vcore.stream_tick = mainloop_add_timer(vcore.ml, 1000 / STREAM_FPS, 1000 / STREAM_FPS, on_stream_tick,
-					   NULL);
+	stream_tick_arm(false);
 }
 #endif
 

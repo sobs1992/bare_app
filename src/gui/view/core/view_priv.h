@@ -76,6 +76,7 @@ struct view_state {
 	void *video_end_ud;
 #ifdef CONFIG_STREAM
 	struct ml_timer *stream_tick;	/* composes a frame for the stream */
+	bool stream_watched;		/* at the frame rate: somebody plays */
 	char stream_play[32], stream_cap[32];	/* the loopback, "" none */
 #endif
 };
