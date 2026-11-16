@@ -314,8 +314,12 @@ static void *game_init(lv_obj_t *parent, lv_obj_t **root)
 	if (!g->game.def) {
 		show_message(g, tr(S_GAME_FAILED));
 	} else if (view_video_set(VIDEO_GAME) == 0) {	/* or back from minimised */
-		/* the home screen puts it first */
-		gui_action_post_str(ACT_GAME_PLAYED, g->key);
+		/* the home screen puts it first (a game of the tiles: not the
+		 * stress test, a round button) */
+#ifdef CONFIG_GAME_BENCH
+		if (g->game.def != &game_bench)
+#endif
+			gui_action_post_str(ACT_GAME_PLAYED, g->key);
 		lv_obj_set_style_bg_opa(g->scr, LV_OPA_TRANSP, 0);
 		view_input_grab(on_input, g);
 		view_video_on_end(on_end, g);

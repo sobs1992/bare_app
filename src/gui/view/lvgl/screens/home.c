@@ -68,6 +68,10 @@ static const struct entry entries[] = {
 #ifdef CONFIG_SCREEN_LAYERS
 	{ LV_SYMBOL_IMAGE, S_LAYERS, ACT_OPEN_SCREEN, SCREEN_LAYERS, VIDEO_TEST_PATTERN, false, { 0 } },
 #endif
+#ifdef CONFIG_GAME_BENCH
+	/* a game of its own, not in the games' rows */
+	{ LV_SYMBOL_CHARGE, S_BENCH, ACT_OPEN_SCREEN, SCREEN_GAME, VIDEO_GAME, false, { &game_bench, 0 } },
+#endif
 };
 
 #define N_ENTRIES (sizeof(entries) / sizeof(entries[0]))
@@ -80,6 +84,13 @@ static const struct entry library_entry = {
 /* Every game's entries, then entries[] */
 static struct entry menu[MENU_MAX];
 static size_t n_menu, n_games;
+
+/* A round button (entries[] in menu): X does nothing there, the controls
+ * are the tiles' */
+static bool is_round(const struct entry *en)
+{
+	return en >= menu + n_games && en < menu + n_menu;
+}
 
 /* Where g is in the list of the games played, the latest first; RECENT_MAX:
  * never played */
@@ -319,9 +330,10 @@ static int index_of(lv_obj_t *const *objs, int n, lv_obj_t *obj)
 static void set_action(const struct entry *en)
 {
 	const struct entry *running = view_video_minimized() != VIDEO_NONE ? running_entry() : NULL;
-	enum str_id what = en->game.def ? (en == running ? S_HOME_RESUME : S_HOME_START) : S_HOME_OPEN;
+	enum str_id what = !en->game.def ? S_HOME_OPEN : en == running ? S_HOME_RESUME
+			   : is_round(en) ? S_HOME_OPEN : S_HOME_START;
 
-	if (en->game.def)
+	if (en->game.def && !is_round(en))
 		footer_set(home->footer, "X", tr(S_CONTROLS), "A", tr(what), NULL);
 	else
 		footer_set(home->footer, "A", tr(what), NULL);
@@ -627,7 +639,7 @@ static void *screen_init(lv_obj_t **root, bool library)
 		bool minimized = view_video_minimized() != VIDEO_NONE && running_entry() == &menu[i];
 		lv_obj_t *o;
 
-		if (menu[i].game.def) {
+		if (i < n_games) {	/* a game; the stress test is a game but a round button */
 			if (!library && shown++ >= HOME_GAMES)
 				continue;
 			o = tile_new(home->row, &menu[i], minimized);

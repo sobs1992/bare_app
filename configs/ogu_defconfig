@@ -15,3 +15,7 @@ CONFIG_SCREEN_USB_DISK=y
 CONFIG_GAME_HALFLIFE=y
 CONFIG_GAME_WINE=y
 CONFIG_GAME_NATIVE=y
+# the stress test where Layers was; its log on the data partition
+# CONFIG_SCREEN_LAYERS is not set
+CONFIG_GAME_BENCH=y
+CONFIG_GAME_BENCH_DIR="/data/bench"

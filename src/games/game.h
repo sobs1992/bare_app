@@ -92,6 +92,8 @@ struct game_def {
 
 /* The games of this build in menu order, NULL-terminated */
 extern const struct game_def *const games[];
+/* The stress test (GAME_BENCH): a game, but a round button of home */
+extern const struct game_def game_bench;
 
 /* One entry of a game; def NULL: no game */
 struct game_ref {

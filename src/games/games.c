@@ -55,6 +55,13 @@ const char *game_title(struct game_ref g)
 
 bool game_find(const char *what, struct game_ref *out)
 {
+#ifdef CONFIG_GAME_BENCH
+	/* not in games[]: a round button of home */
+	if (!strcmp(what, game_bench.id) || !strcasecmp(tr(game_bench.title), what)) {
+		*out = (struct game_ref){ &game_bench, 0 };
+		return true;
+	}
+#endif
 	for (const struct game_def *const *g = games; *g; g++) {
 		int n = game_entries(*g, false);
 

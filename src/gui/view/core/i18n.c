@@ -17,6 +17,9 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_SETTINGS]        = { "Settings" RU("Настройки") },
 	[S_LAYERS]          = { "Layers" RU("Слои") },
 	[S_QUIT]            = { "Quit" RU("Выход") },
+	[S_BENCH]           = { "Stress test" RU("Стресс-тест") },
+	[S_BENCH_HINT]      = { "B  quit    A  hide the text\nF5  minimise (the test pauses)"
+				RU("B  выход    A  скрыть текст\nF5  свернуть (тест на паузе)") },
 	[S_BRIGHTNESS]      = { "Brightness" RU("Яркость") },
 	[S_NOT_AVAILABLE]   = { "not available" RU("недоступна") },
 	[S_STICK_CAL_REST]  = { "Let go of the sticks...\nB  cancel"

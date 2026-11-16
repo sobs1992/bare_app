@@ -460,6 +460,25 @@ config GAME_WINE_BIN
 
 endif
 
+config GAME_BENCH
+	bool "Stress test: GPU + CPU + memory, in place of Layers"
+	depends on VIEW_LVGL
+	select GAMES
+	help
+	  bare_app_bench (ports/bench, needs EGL and OpenGL ES 3): a fur
+	  donut and big textures load the GPU, memory checks every CPU,
+	  and four detectors look for bits that flip on their way between
+	  DRAM, the CPUs and the GPU (the GO Ultra's bit 42). A round
+	  button of the home screen where Layers was; the counters on the
+	  screen, every error in GAME_BENCH_DIR/bench.log.
+
+config GAME_BENCH_DIR
+	string "Directory of the stress test's log"
+	depends on GAME_BENCH
+	default "~/.local/share/bare_app/bench"
+	help
+	  "~/" means $HOME. Created when the test starts.
+
 endmenu
 
 menu "Debugging"
