@@ -20,3 +20,22 @@ foreach(want "screen 1 \\(depth 2\\)" "screen 0 \\(depth 1\\)" "sysmon: shown, s
 		message(FATAL_ERROR "missing in the log: ${want}")
 	endif()
 endforeach()
+
+# The power key: let go after 1 s cancels; held 2 s the screen goes dark
+# (the sign to let go) before turning off (on the PC: quitting)
+file(WRITE ${script} "wait:300 power:1000 wait:500 power:2600 wait:500\n")
+execute_process(
+	COMMAND ${BARE_APP} --platform pc-mem --backend headless
+	INPUT_FILE ${script}
+	ERROR_VARIABLE log
+	RESULT_VARIABLE rc
+	TIMEOUT 10)
+message("${log}")
+if(NOT rc EQUAL 0)
+	message(FATAL_ERROR "bare_app exited with ${rc}")
+endif()
+foreach(want "notify 9 \\(1500\\).*notify 9 \\(0\\).*notify 9 \\(1500\\).*cannot switch the screen off.*quit requested")
+	if(NOT log MATCHES "${want}")
+		message(FATAL_ERROR "missing in the log: ${want}")
+	endif()
+endforeach()

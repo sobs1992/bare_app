@@ -105,7 +105,7 @@ static void quit_combo_changed(void)
  * it. That wake press arrives once it is awake again: everything until
  * shortly after NOTIFY_RESUMED is ignored. Holding the key turns the
  * device off: past POWER_SHORT_MS the backend warns, letting go then
- * cancels.
+ * cancels; at HOLD_MS the screen goes dark, the sign to let go.
  */
 void view_screen_on(void)
 {
@@ -144,7 +144,11 @@ static void on_power_hold(void *ud)
 	vcore.power_hold = NULL;
 	vcore.power_down = false;
 	vcore.quit_sent = true;
-	gui_action_post(ACT_POWER_OFF, 0);	/* the warning stays until the end */
+	/* dark at once: the key can be let go, the device turns off by
+	 * itself (held on, the PMIC's own long press may cut the power
+	 * before the file systems are put away) */
+	gui_action_post(ACT_SCREEN_OFF, 1);
+	gui_action_post(ACT_POWER_OFF, 0);
 }
 
 static void power_key(const struct gp_event *ev)
