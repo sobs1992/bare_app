@@ -423,7 +423,6 @@ int view_video_set(enum video_source src)
 #ifdef CONFIG_STREAM
 #define STREAM_FPS 30
 #define STREAM_KBPS 3000
-#define STREAM_PORT 8554
 
 /* The game's own picture (game_ipc.h) can be bigger than the screen: up
  * to what the hardware encoders take (meson-venc, rk-vepu-h264) */
@@ -519,6 +518,19 @@ void view_stream_end(void)
 		mainloop_timer_cancel(vcore.ml, vcore.stream_tick);
 	vcore.stream_tick = NULL;
 	stream_stop();
+#endif
+}
+
+bool view_stream_status(int *viewers, int *port)
+{
+#ifdef CONFIG_STREAM
+	*viewers = stream_viewers();
+	*port = STREAM_PORT;
+	return stream_running();
+#else
+	*viewers = 0;
+	*port = 0;
+	return false;
 #endif
 }
 

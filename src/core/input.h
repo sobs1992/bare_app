@@ -215,5 +215,6 @@ void input_declare(uint32_t buttons, uint32_t axes);	/* GP_BIT() masks, added up
 uint32_t input_buttons_present(void);
 uint32_t input_axes_present(void);
 
+/* The buttons' names in files ("a", "l1", "vol+"): core/gp_names.c */
 const char *gp_button_name(enum gp_button b);
-enum gp_button gp_button_from_name(const char *name);
+enum gp_button gp_button_from_name(const char *name);	/* any case; GP_NONE */

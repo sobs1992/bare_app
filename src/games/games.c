@@ -122,23 +122,24 @@ const char *game_cover_in(char *buf, size_t size, const char *dir)
 	return buf;
 }
 
-/* The names of the controls in the games' ini files (wine.ini [keys]
- * and [labels], game.ini [labels]): bare_app_wine's */
-static const char *const control_names[GAME_CONTROLS] = {
-	[GP_UP] = "up", [GP_DOWN] = "down", [GP_LEFT] = "left", [GP_RIGHT] = "right",
-	[GP_A] = "a", [GP_B] = "b", [GP_X] = "x", [GP_Y] = "y",
-	[GP_L1] = "l1", [GP_R1] = "r1", [GP_L2] = "l2", [GP_R2] = "r2",
-	[GP_SELECT] = "select", [GP_START] = "start", [GP_MENU] = "menu",
-	[GP_F1] = "f1", [GP_F2] = "f2", [GP_F3] = "f3", [GP_F4] = "f4", [GP_F5] = "f5", [GP_F6] = "f6",
-	[GAME_STICK_LEFT] = "stick", [GAME_STICK_RIGHT] = "rstick",
-};
+/* The names of the controls in the games' ini files (wine.ini [keys] and
+ * [labels], game.ini [labels]): the buttons' names (core/gp_names.c) up to
+ * F6 (the volume and power keys are bare_app's own) and the two sticks */
+const char *game_control_name(int c)
+{
+	if (c == GAME_STICK_LEFT)
+		return "stick";
+	if (c == GAME_STICK_RIGHT)
+		return "rstick";
+	return c >= 0 && c < GP_VOL_UP ? gp_button_name(c) : NULL;
+}
 
 int game_control_by_name(const char *name)
 {
 	int c;
 
 	for (c = 0; c < GAME_CONTROLS; c++)
-		if (control_names[c] && !strcasecmp(control_names[c], name))
+		if (game_control_name(c) && !strcasecmp(game_control_name(c), name))
 			return c;
 	return -1;
 }

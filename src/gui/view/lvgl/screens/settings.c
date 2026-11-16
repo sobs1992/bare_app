@@ -31,9 +31,6 @@
 
 #include "../widget.h"
 #include "gui/action.h"
-#ifdef CONFIG_STREAM
-#include "stream/stream.h"
-#endif
 
 #define STEP 5		/* percent per slider step */
 #define SIDE_CELLS 7	/* the categories' column */
@@ -814,16 +811,17 @@ static void update_system(struct settings *s, const struct gui_ctx *c)
 static void update_stream(struct settings *s, const struct gui_ctx *c)
 {
 	char text[96];
-	int n = stream_viewers();
+	int n, port;
+	bool running = view_stream_status(&n, &port);
 
 	s->stream = c->settings.stream;
 	if (!s->stream)
 		snprintf(text, sizeof(text), "%s", tr(S_OFF));
-	else if (!stream_running())
+	else if (!running)
 		snprintf(text, sizeof(text), "%s", tr(S_STREAM_FAILED));
 	else
-		snprintf(text, sizeof(text), "rtsp://%s:8554/live%s%s",
-			 c->wifi.ip[0] ? c->wifi.ip : "<IP>", n ? "  " LV_SYMBOL_EYE_OPEN " " : "",
+		snprintf(text, sizeof(text), "rtsp://%s:%d/live%s%s",
+			 c->wifi.ip[0] ? c->wifi.ip : "<IP>", port, n ? "  " LV_SYMBOL_EYE_OPEN " " : "",
 			 n ? (n == 1 ? "1" : n == 2 ? "2" : n == 3 ? "3" : "4") : "");
 	ui_set_text(s->rows[R_STREAM].value, text);
 }

@@ -17,6 +17,7 @@
 #include "core/log.h"
 #include "game.h"
 #include "ini.h"
+#include "wine_defaults.h"
 
 #define TAG "wine"
 #define HOST "bare_app_wine"
@@ -89,6 +90,8 @@ static bool ini_value(const char *section, const char *key, const char *value, v
 			LOGW(TAG, "%s: minimize = %s?", g->dir, value);
 	} else if (!strcasecmp(key, "volume"))
 		g->trigger_volume = !strcasecmp(value, "triggers");
+	else if (!strcasecmp(key, "volume_triggers"))	/* as game.ini says it */
+		g->trigger_volume = !strcasecmp(value, "yes") || !strcasecmp(value, "true") || !strcmp(value, "1");
 	return true;
 }
 
@@ -171,17 +174,19 @@ static void wine_info(int i, struct game_info *gi)
 /*
  * What a control does, for the controls screen: [labels] (or [labels.ru]
  * in Russian) of wine.ini, else what [keys] makes of it ("Enter+Q", "left
- * click", "mouse"), with bare_app_wine's set_defaults() for what [keys]
- * leaves out.
+ * click", "mouse"), with the defaults bare_app_wine uses for what [keys]
+ * leaves out (wine_defaults.h). NULL: nothing by default.
  */
-static const char *const default_keys[GAME_CONTROLS] = {
-	[GP_UP] = "up", [GP_DOWN] = "down", [GP_LEFT] = "left", [GP_RIGHT] = "right",
-	[GP_A] = "lbutton", [GP_B] = "rbutton", [GP_X] = "enter", [GP_Y] = "space",
-	[GP_L1] = "pgup", [GP_R1] = "pgdn", [GP_L2] = "shift", [GP_R2] = "ctrl",
-	[GP_SELECT] = "tab", [GP_START] = "esc",
-	[GP_F1] = "f1", [GP_F2] = "f2", [GP_F3] = "f3", [GP_F4] = "f4",
-	[GAME_STICK_LEFT] = "mouse", [GAME_STICK_RIGHT] = "wheel",
-};
+static const char *default_key(int c)
+{
+	const char *name = game_control_name(c);
+	size_t i;
+
+	for (i = 0; name && i < WINE_DEFAULT_KEYS; i++)
+		if (!strcmp(wine_default_keys[i].control, name))
+			return wine_default_keys[i].action;
+	return NULL;
+}
 
 /* One key or mouse action of [keys] as shown: "Esc", "Num 5", "left click" */
 static void key_text(char *out, size_t size, const char *k)
@@ -242,7 +247,7 @@ static void action_text(char *out, size_t size, const char *v)
 /* What a stick is used as ([keys] stick, rstick) */
 static void stick_text(const struct wine_game *g, int c, char *out, size_t size)
 {
-	const char *use = g->keys[c][0] ? g->keys[c] : default_keys[c];
+	const char *use = g->keys[c][0] ? g->keys[c] : default_key(c);
 	static const struct { const char *use; enum str_id id; } uses[] = {
 		{ "mouse", S_CTL_MOUSE }, { "arrows", S_CTL_ARROWS }, { "wheel", S_CTL_WHEEL },
 		{ "numpad", S_CTL_NUMPAD }, { "turn", S_CTL_TURN }, { "scroll", S_CTL_SCROLL },
@@ -257,7 +262,7 @@ static void stick_text(const struct wine_game *g, int c, char *out, size_t size)
 			char part[48];
 
 			action_text(part, sizeof(part), g->rstick_dir[i][0] ? g->rstick_dir[i]
-							   : default_keys[GP_UP + i]);
+							   : default_key(GP_UP + i));
 			n += (size_t)snprintf(out + n, size - n, "%s%s", i ? "/" : "", part);
 		}
 		return;
@@ -288,7 +293,7 @@ static const char *wine_label(int i, int c)
 		snprintf(shown[c], sizeof(shown[c]), "%s", tr(S_CTL_SCROLL));
 	else
 		action_text(shown[c], sizeof(shown[c]),
-			    g->keys[c][0] ? g->keys[c] : default_keys[c] ? default_keys[c] : "none");
+			    g->keys[c][0] ? g->keys[c] : default_key(c) ? default_key(c) : "none");
 	return shown[c];
 }
 

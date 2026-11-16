@@ -3118,6 +3118,67 @@ static void test_sysmon(void)
 }
 #endif
 
+#if defined(CONFIG_GAME_WINE) || defined(CONFIG_GAME_NATIVE)
+#include "games/ini.h"
+
+struct ini_seen { char text[512]; int n; };
+
+static bool ini_collect(const char *section, const char *key, const char *value, void *ud)
+{
+	struct ini_seen *s = ud;
+	size_t n = strlen(s->text);
+
+	snprintf(s->text + n, sizeof(s->text) - n, "[%s]%s=%s;", section, key, value);
+	return ++s->n < 100;
+}
+
+/* ini.c: sections, trimming, comments at the start and after a blank, no '=' */
+static void test_ini(void)
+{
+	char path[] = "/tmp/bare_app_test_iniXXXXXX", lines[64];
+	struct ini_seen seen = { "", 0 };
+	int fd = mkstemp(path);
+	FILE *f;
+
+	CHECK(fd >= 0);
+	if (fd < 0)
+		return;
+	f = fdopen(fd, "w");
+	fputs("; a comment\n# another\n  name =  Game One  \nexe=game.exe ; trailing\n"
+	      "url = http://x/#frag\nno equals here\n[ keys ]\na = enter+q\n\n[labels.ru]\na=удар\n", f);
+	fclose(f);
+	CHECK(ini_read(path, ini_collect, &seen) == 0);
+	CHECK(!strcmp(seen.text, "[]name=Game One;[]exe=game.exe;[]url=http://x/#frag;"
+				 "[keys]a=enter+q;[labels.ru]a=удар;"));
+	CHECK(ini_read("/nonexistent/x.ini", ini_collect, &seen) == -1);
+	unlink(path);
+	ini_copy_lines(lines, sizeof(lines), "one\\ntwo\\n");
+	CHECK(!strcmp(lines, "one\ntwo\n"));
+	ini_copy_lines(lines, 4, "abcdef");
+	CHECK(!strcmp(lines, "abc"));
+}
+
+/* The controls' names: the buttons' table (any case) up to F6, the sticks */
+static void test_control_names(void)
+{
+	int c;
+
+	for (c = 0; c < GAME_CONTROLS; c++) {
+		const char *name = game_control_name(c);
+
+		if (c >= GP_VOL_UP && c < GP_COUNT)
+			CHECK(name == NULL);
+		else
+			CHECK(name && game_control_by_name(name) == c);
+	}
+	CHECK(game_control_by_name("A") == GP_A && game_control_by_name("RSTICK") == GAME_STICK_RIGHT);
+	CHECK(game_control_by_name("vol+") < 0 && game_control_by_name("power") < 0 &&
+	      game_control_by_name("") < 0);
+	CHECK(gp_button_from_name("VOL+") == GP_VOL_UP && gp_button_from_name("Power") == GP_POWER);
+	CHECK(!strcmp(gp_button_name(GP_F6), "f6") && !strcmp(gp_button_name(GP_NONE), "?"));
+}
+#endif
+
 #ifdef CONFIG_GAME_WINE
 /*
  * What a Windows game's controls do (game_control_label()): wine.ini's
@@ -3208,6 +3269,10 @@ int main(void)
 	test_rtcp_in();
 	test_ts();
 	test_hid();
+#if defined(CONFIG_GAME_WINE) || defined(CONFIG_GAME_NATIVE)
+	test_ini();
+	test_control_names();
+#endif
 #ifdef CONFIG_GAME_WINE
 	test_game_labels();
 #endif

@@ -93,6 +93,8 @@ static bool ini_value(const char *section, const char *key, const char *value, v
 		ini_copy_lines(g->hint_ru, sizeof(g->hint_ru), value);
 	else if (!strcasecmp(key, "volume_triggers"))
 		g->trigger_volume = yes(value);
+	else if (!strcasecmp(key, "volume"))	/* as wine.ini says it */
+		g->trigger_volume = !strcasecmp(value, "triggers");
 	else if (!strcasecmp(key, "gyro")) {
 		char *end;
 		float c = strtof(value, &end);

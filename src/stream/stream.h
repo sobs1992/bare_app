@@ -28,6 +28,8 @@
 
 #include "hal/hal.h"
 
+#define STREAM_PORT 8554	/* RTSP, as the players expect */
+
 struct stream_config {
 	int width, height;	/* of the frames, at first */
 	int max_width, max_height;	/* the biggest frame (0: width, height) */

@@ -43,6 +43,7 @@ endif()
 set(CORE_SOURCES
 	src/core/bus.c
 	src/core/frametimes.c
+	src/core/gp_names.c
 	src/core/input.c
 	src/core/joystick.c
 	src/core/log.c
@@ -220,7 +221,7 @@ target_link_libraries(bare_app PRIVATE bare_app_core m)
 install(TARGETS bare_app RUNTIME DESTINATION bin)
 
 # ---- Doom: a separate program under GPLv2 in ports/doom ----------------------
-# Nothing of it is linked into bare_app (see src/games/doom.h)
+# Nothing of it is linked into bare_app (see src/games/doom.c)
 if(CONFIG_GAME_DOOM)
 	add_subdirectory(ports/doom)
 endif()

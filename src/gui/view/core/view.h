@@ -118,6 +118,10 @@ const struct platform *view_platform(void);
 
 /* Frames shown since the source was set (a game that is still loading: 0) */
 unsigned view_video_frames(void);
+
+/* The stream (CONFIG_STREAM): runs or not, who watches and its RTSP port;
+ * false, 0 and 0 without it. Any thread. */
+bool view_stream_status(int *viewers, int *port);
 /* When the latest of them were shown (now_us()), oldest first, up to max
  * (core/frametimes.h); returns how many. Starts again when a minimised
  * game comes back. */

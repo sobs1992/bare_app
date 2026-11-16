@@ -48,6 +48,7 @@
 
 #include "core/input.h"
 #include "games/game_ipc_client.h"
+#include "games/wine_defaults.h"
 #include "winebare_proto.h"
 
 extern char **environ;
@@ -127,16 +128,6 @@ static const struct { const char *name; uint16_t vk; } key_names[] = {
 	{ "lalt", 0xa4 }, { "ralt", 0xa5 }, { "-", 0xbd }, { "=", 0xbb }, { ",", 0xbc },
 	{ ".", 0xbe }, { "/", 0xbf }, { "`", 0xc0 }, { "[", 0xdb }, { "]", 0xdd },
 	{ ";", 0xba }, { "'", 0xde }, { "\\", 0xdc },
-};
-
-static const char *const button_names[GP_COUNT] = {
-	[GP_UP] = "up", [GP_DOWN] = "down", [GP_LEFT] = "left", [GP_RIGHT] = "right",
-	[GP_A] = "a", [GP_B] = "b", [GP_X] = "x", [GP_Y] = "y",
-	[GP_L1] = "l1", [GP_R1] = "r1", [GP_L2] = "l2", [GP_R2] = "r2",
-	[GP_SELECT] = "select", [GP_START] = "start", [GP_MENU] = "menu",
-	[GP_F1] = "f1", [GP_F2] = "f2", [GP_F3] = "f3",
-	[GP_F4] = "f4", [GP_F5] = "f5", [GP_F6] = "f6",
-	[GP_VOL_UP] = "vol+", [GP_VOL_DOWN] = "vol-", [GP_POWER] = "power",
 };
 
 /*
@@ -253,34 +244,28 @@ static const char *const rstick_dir_names[4] = {
 	"rstick_up", "rstick_down", "rstick_left", "rstick_right",
 };
 
+/* The buttons' and the sticks' defaults are games/wine_defaults.h: bare_app's
+ * controls screen shows the same list */
 static void set_defaults(void)
 {
-	static const char *const keys[][2] = {
-		{ "up", "up" }, { "down", "down" }, { "left", "left" }, { "right", "right" },
-		{ "a", "lbutton" }, { "b", "rbutton" }, { "x", "enter" }, { "y", "space" },
-		{ "l1", "pgup" }, { "r1", "pgdn" }, { "l2", "shift" }, { "r2", "ctrl" },
-		{ "select", "tab" }, { "start", "esc" },
-		{ "f1", "f1" }, { "f2", "f2" }, { "f3", "f3" }, { "f4", "f4" },
-	};
 	static const struct wb_mode modes[] = { { 640, 480 }, { 800, 600 }, { 1024, 768 } };
 	size_t i;
 	int b;
 
 	cfg.mode = (struct wb_mode){ 800, 600 };
 	cfg.gamma = 1.0f;
-	cfg.lstick = STICK_MOUSE;
-	cfg.rstick = STICK_WHEEL;
+	cfg.lstick = parse_stick(wine_default_stick(true));
+	cfg.rstick = parse_stick(wine_default_stick(false));
 	cfg.dpad = STICK_ARROWS;
 	cfg.cursor_speed = 0.8f;
 	cfg.mouse_speed = 1.0f;
 	for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++)
 		add_mode(modes[i]);
-	for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
-		for (b = 0; b < GP_COUNT; b++)
-			if (button_names[b] && !strcmp(button_names[b], keys[i][0]))
-				parse_action(keys[i][1], &cfg.button[b]);
+	for (i = 0; i < WINE_DEFAULT_KEYS; i++)
+		if ((b = gp_button_from_name(wine_default_keys[i].control)) != GP_NONE)
+			parse_action(wine_default_keys[i].action, &cfg.button[b]);
 	for (i = 0; i < 4; i++)
-		parse_action(button_names[GP_UP + i], &cfg.rstick_dir[i]);
+		parse_action(gp_button_name(GP_UP + i), &cfg.rstick_dir[i]);
 }
 
 static int read_ini(const char *path)
@@ -341,9 +326,8 @@ static int read_ini(const char *path)
 			else {
 				struct action *a = NULL;
 
-				for (b = 0; b < GP_COUNT && !a; b++)
-					if (button_names[b] && !strcmp(button_names[b], key))
-						a = &cfg.button[b];
+				if ((b = gp_button_from_name(key)) != GP_NONE)
+					a = &cfg.button[b];
 				for (b = 0; b < 4 && !a; b++)
 					if (!strcmp(rstick_dir_names[b], key))
 						a = &cfg.rstick_dir[b];

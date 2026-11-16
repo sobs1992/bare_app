@@ -22,16 +22,6 @@
 #define REPEAT_MASK (DIR_MASK | GP_BIT(GP_VOL_UP) | GP_BIT(GP_VOL_DOWN) | GP_BIT(GP_L2) | \
 		     GP_BIT(GP_R2))
 
-static const char *const names[GP_COUNT] = {
-	[GP_UP] = "up", [GP_DOWN] = "down", [GP_LEFT] = "left", [GP_RIGHT] = "right",
-	[GP_A] = "a", [GP_B] = "b", [GP_X] = "x", [GP_Y] = "y",
-	[GP_L1] = "l1", [GP_R1] = "r1", [GP_L2] = "l2", [GP_R2] = "r2",
-	[GP_SELECT] = "select", [GP_START] = "start", [GP_MENU] = "menu",
-	[GP_F1] = "f1", [GP_F2] = "f2", [GP_F3] = "f3",
-	[GP_F4] = "f4", [GP_F5] = "f5", [GP_F6] = "f6",
-	[GP_VOL_UP] = "vol+", [GP_VOL_DOWN] = "vol-", [GP_POWER] = "power",
-};
-
 static struct {
 	struct mainloop *ml;
 	struct input_config cfg;
@@ -711,21 +701,6 @@ uint32_t input_buttons_present(void)
 uint32_t input_axes_present(void)
 {
 	return in.axes_present;
-}
-
-const char *gp_button_name(enum gp_button b)
-{
-	return b >= 0 && b < GP_COUNT ? names[b] : "?";
-}
-
-enum gp_button gp_button_from_name(const char *name)
-{
-	int b;
-
-	for (b = 0; b < GP_COUNT; b++)
-		if (!strcmp(names[b], name))
-			return b;
-	return GP_NONE;
 }
 
 /* ---- keyboards and mice ------------------------------------------------ */
