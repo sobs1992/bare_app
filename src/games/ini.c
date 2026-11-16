@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 static char *trim(char *s)
 {
@@ -52,6 +53,11 @@ int ini_read(const char *path,
 	}
 	fclose(f);
 	return 0;
+}
+
+bool ini_yes(const char *value)
+{
+	return !strcasecmp(value, "yes") || !strcasecmp(value, "true") || !strcmp(value, "1");
 }
 
 void ini_copy_lines(char *dst, size_t size, const char *src)

@@ -52,11 +52,6 @@ static int count;
 
 #define COPY(dst, src) snprintf(dst, sizeof(dst), "%s", src)
 
-static bool yes(const char *v)
-{
-	return !strcasecmp(v, "yes") || !strcasecmp(v, "true") || !strcmp(v, "1");
-}
-
 static bool ini_value(const char *section, const char *key, const char *value, void *ud)
 {
 	struct native_game *g = ud;
@@ -92,7 +87,7 @@ static bool ini_value(const char *section, const char *key, const char *value, v
 	else if (!strcasecmp(key, "hint.ru"))
 		ini_copy_lines(g->hint_ru, sizeof(g->hint_ru), value);
 	else if (!strcasecmp(key, "volume_triggers"))
-		g->trigger_volume = yes(value);
+		g->trigger_volume = ini_yes(value);
 	else if (!strcasecmp(key, "volume"))	/* as wine.ini says it */
 		g->trigger_volume = !strcasecmp(value, "triggers");
 	else if (!strcasecmp(key, "gyro")) {

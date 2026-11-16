@@ -99,7 +99,7 @@ hint.ru = A  прыжок    B  огонь    F1  меню\nF5  свернуть
 | `scale`, `filter` | `fit`, `stretch`, `integer`; `linear`, `nearest` |
 | `hint`, `hint.ru` | подсказка после первого кадра, `\n` — новая строка |
 | `cover` | картинка игры на главном экране (PNG); путь относительно ini. По умолчанию `cover.png` рядом с `game.ini`, а для `<id>.ini` — `<id>.png` |
-| `volume_triggers` | `yes`: L2/R2 меняют громкость и не идут в игру |
+| `volume_triggers` | `yes` (или `volume = triggers`, как в `wine.ini`): L2/R2 меняют громкость и не идут в игру |
 | `[env]` | любые переменные окружения игры |
 
 Имена кнопок: `up down left right a b x y l1 r1 l2 r2 select start menu f1`…`f6`.
@@ -196,7 +196,18 @@ $(eval $(cmake-package))
 `board/common/buildroot/Config.in`. Хеш архива кладут в `mygame.hash`, им Buildroot
 проверяет загрузку.
 
-**2. Описание** `board/common/buildroot/package/bare-app/games/mygame.ini`:
+**2. Описание** `board/common/buildroot/package/mygame/mygame.ini` — рядом с пакетом,
+который его и ставит (строка в `mygame.mk`, как у `rbdoom3-bfg` и `iortcw`):
+
+```make
+define MYGAME_POST_INSTALL_TARGET_INI
+	$(INSTALL) -D -m 0644 $(MYGAME_PKGDIR)/mygame.ini \
+		$(TARGET_DIR)/usr/share/bare_app/games/mygame.ini
+endef
+MYGAME_POST_INSTALL_TARGET_HOOKS += MYGAME_POST_INSTALL_TARGET_INI
+```
+
+Сам файл:
 
 ```ini
 name = My Game
@@ -212,7 +223,8 @@ hint.ru = A  прыжок    B  огонь    Start  меню\nF5  сверну�
 окном и мелкие пиксели размываются, помогает `filter = nearest` или
 `scale = integer`.
 
-**3. Опция и установка ini** — как у Chocolate Doom:
+**3. Опция** в `board/common/buildroot/package/bare-app/Config.in` — игра включается
+одной строкой `APPS_CONFIG` прошивки:
 
 ```kconfig
 config BR2_PACKAGE_BARE_APP_MYGAME
@@ -221,9 +233,8 @@ config BR2_PACKAGE_BARE_APP_MYGAME
 	select BR2_PACKAGE_MYGAME
 ```
 
-```make
-BARE_APP_GAME_INIS-$(BR2_PACKAGE_BARE_APP_MYGAME) += mygame.ini
-```
+(Ini чужого пакета Buildroot, как `chocolate-doom.ini`, лежит в
+`package/bare-app/games/` и ставится строкой `BARE_APP_GAME_INIS-...` в `bare-app.mk`.)
 
 **4. Прошивка и сборка:**
 

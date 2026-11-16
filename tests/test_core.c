@@ -3156,6 +3156,7 @@ static void test_ini(void)
 	CHECK(!strcmp(lines, "one\ntwo\n"));
 	ini_copy_lines(lines, 4, "abcdef");
 	CHECK(!strcmp(lines, "abc"));
+	CHECK(ini_yes("yes") && ini_yes("TRUE") && ini_yes("1") && !ini_yes("no") && !ini_yes("") && !ini_yes("2"));
 }
 
 /* The controls' names: the buttons' table (any case) up to F6, the sticks */

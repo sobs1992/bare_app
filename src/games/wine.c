@@ -91,7 +91,7 @@ static bool ini_value(const char *section, const char *key, const char *value, v
 	} else if (!strcasecmp(key, "volume"))
 		g->trigger_volume = !strcasecmp(value, "triggers");
 	else if (!strcasecmp(key, "volume_triggers"))	/* as game.ini says it */
-		g->trigger_volume = !strcasecmp(value, "yes") || !strcasecmp(value, "true") || !strcmp(value, "1");
+		g->trigger_volume = ini_yes(value);
 	return true;
 }
 

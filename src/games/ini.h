@@ -15,3 +15,6 @@ int ini_read(const char *path,
 
 /* A value with "\n" for new lines (hints) into dst, cut to size */
 void ini_copy_lines(char *dst, size_t size, const char *src);
+
+/* "yes", "true" or "1" (any case) */
+bool ini_yes(const char *value);
