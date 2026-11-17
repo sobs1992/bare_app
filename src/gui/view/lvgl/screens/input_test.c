@@ -37,7 +37,11 @@
 #define REST_SPREAD 0.04f	/* ...moving less than that */
 #define DEADZONE_STEP 0.01f
 #define SENS_STEP 0.05f
-#define TUNE_FIELDS 3		/* a row per field of each stick: dead zone, sensitivity, snap-back */
+/* MODE_TUNE: a row per field of each stick */
+enum tune_field {
+	TUNE_DEADZONE, TUNE_DEADZONE_DOWN, TUNE_SENSITIVITY, TUNE_SNAPBACK, TUNE_TOUCH_FILTER,
+	TUNE_FIELDS
+};
 
 /* The tuning panel in place of the middle buttons (hidden meanwhile):
  * between the D-pad and X Y A B, from the top down as far as its rows
@@ -69,6 +73,7 @@ struct input_test {
 	uint32_t last_a, last_b, last_x;
 	/* MODE_TUNE: the panel, a row per stick and field (NULL: no such stick) */
 	lv_obj_t *tune, *row[INPUT_STICKS][TUNE_FIELDS], *row_value[INPUT_STICKS][TUNE_FIELDS];
+	lv_obj_t *head[INPUT_STICKS];	/* the stick's name over its rows */
 	int sel;			/* the row picked: stick * TUNE_FIELDS + field */
 	struct input_stick_tune before[INPUT_STICKS];	/* to cancel */
 	enum mode mode;
@@ -99,6 +104,12 @@ static const struct {
 	[GP_F3]    = { 49, 16, 8, 6, false }, [GP_F4]    = { 31, 24, 8, 6, false },
 	[GP_F5]    = { 40, 24, 8, 6, false }, [GP_F6]    = { 49, 24, 8, 6, false },
 };
+
+/* The dead zone straight down as it works: never narrower than the round one */
+static float tune_deadzone_down(const struct input_stick_tune *t)
+{
+	return t->deadzone_down > t->deadzone ? t->deadzone_down : t->deadzone;
+}
 
 /* Positions count from inside the box's border (its content area, no
  * padding): at 1 the dot touches the border from inside */
@@ -240,13 +251,23 @@ static void show_tune(struct input_test *t)
 			continue;
 		input_stick_tune(s, &tune);
 		for (f = 0; f < TUNE_FIELDS; f++) {
-			if (f == 2)
-				lv_snprintf(text, sizeof(text), "%s", tr(tune.snapback ? S_ON : S_OFF));
+			bool on = f == TUNE_SNAPBACK ? tune.snapback : tune.touch_filter;
+			float v = f == TUNE_SENSITIVITY ? tune.sensitivity :
+				  f == TUNE_DEADZONE_DOWN ? tune_deadzone_down(&tune) : tune.deadzone;
+
+			if (f == TUNE_SNAPBACK || f == TUNE_TOUCH_FILTER)
+				lv_snprintf(text, sizeof(text), "%s", tr(on ? S_ON : S_OFF));
 			else
-				lv_snprintf(text, sizeof(text), "%d%%",
-					    (int)lrintf((f ? tune.sensitivity : tune.deadzone) * 100));
+				lv_snprintf(text, sizeof(text), "%d%%", (int)lrintf(v * 100));
 			lv_label_set_text(t->row_value[s][f], text);
 			lv_obj_set_state(t->row[s][f], LV_STATE_CHECKED, t->sel == s * TUNE_FIELDS + f);
+			if (t->sel != s * TUNE_FIELDS + f)
+				continue;
+			/* two sticks' rows may not fit: the one picked in view,
+			 * with the stick's name when it is the first */
+			if (f == 0)
+				lv_obj_scroll_to_view(t->head[s], LV_ANIM_OFF);
+			lv_obj_scroll_to_view(t->row[s][f], LV_ANIM_OFF);
 		}
 	}
 }
@@ -369,12 +390,26 @@ static void tune_change(struct input_test *t, int dir)
 	struct input_stick_tune tune;
 
 	input_stick_tune(s, &tune);
-	if (t->sel % TUNE_FIELDS == 2)
-		tune.snapback = !tune.snapback;
-	else if (t->sel % TUNE_FIELDS)
-		tune.sensitivity = roundf(tune.sensitivity / SENS_STEP + (float)dir) * SENS_STEP;
-	else
+	switch ((enum tune_field)(t->sel % TUNE_FIELDS)) {
+	case TUNE_DEADZONE:
 		tune.deadzone = roundf(tune.deadzone / DEADZONE_STEP + (float)dir) * DEADZONE_STEP;
+		break;
+	case TUNE_DEADZONE_DOWN:
+		/* from what it shows: never below the dead zone */
+		tune.deadzone_down = roundf(tune_deadzone_down(&tune) / DEADZONE_STEP + (float)dir) *
+				     DEADZONE_STEP;
+		break;
+	case TUNE_SENSITIVITY:
+		tune.sensitivity = roundf(tune.sensitivity / SENS_STEP + (float)dir) * SENS_STEP;
+		break;
+	case TUNE_SNAPBACK:
+		tune.snapback = !tune.snapback;
+		break;
+	case TUNE_TOUCH_FILTER:
+	case TUNE_FIELDS:
+		tune.touch_filter = !tune.touch_filter;
+		break;
+	}
 	input_set_stick_tune(s, &tune);	/* it keeps them in range */
 }
 
@@ -563,7 +598,11 @@ static lv_obj_t *button_new(lv_obj_t *pad, enum gp_button b, int32_t q)
 /* MODE_TUNE's panel (TUNE_*): a heading per stick, a row per field */
 static void tune_panel(struct input_test *t, lv_obj_t *pad, int32_t q)
 {
-	static const enum str_id fields[TUNE_FIELDS] = { S_DEAD_ZONE, S_SENSITIVITY, S_SNAPBACK };
+	static const enum str_id fields[TUNE_FIELDS] = {
+		[TUNE_DEADZONE] = S_DEAD_ZONE, [TUNE_DEADZONE_DOWN] = S_DEAD_ZONE_DOWN,
+		[TUNE_SENSITIVITY] = S_SENSITIVITY, [TUNE_SNAPBACK] = S_SNAPBACK,
+		[TUNE_TOUCH_FILTER] = S_TOUCH_FILTER,
+	};
 	lv_obj_t *panel = lv_obj_create(pad);
 	int s, f;
 
@@ -573,7 +612,9 @@ static void tune_panel(struct input_test *t, lv_obj_t *pad, int32_t q)
 	lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 	lv_obj_set_style_pad_row(panel, ui_px(1), 0);
-	lv_obj_set_scrollable(panel, false);
+	/* scrolls only to show the row picked (show_tune()) */
+	lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
+	lv_obj_set_scroll_dir(panel, LV_DIR_VER);
 	for (s = 0; s < INPUT_STICKS; s++) {
 		lv_obj_t *head;
 
@@ -584,6 +625,7 @@ static void tune_panel(struct input_test *t, lv_obj_t *pad, int32_t q)
 		lv_obj_set_style_text_font(head, UI_FONT_SMALL, 0);
 		lv_obj_set_style_text_color(head, UI_COLOR_DIM, 0);
 		lv_label_set_text(head, tr(s ? S_RIGHT_STICK : S_LEFT_STICK));
+		t->head[s] = head;
 		for (f = 0; f < TUNE_FIELDS; f++) {
 			lv_obj_t *row = lv_obj_create(panel), *name, *value;
 
@@ -676,6 +718,14 @@ static void *input_test_init(lv_obj_t *parent, lv_obj_t **root)
 		t->values = lv_label_create(text);
 		lv_obj_set_style_text_align(t->values, LV_TEXT_ALIGN_CENTER, 0);
 		lv_obj_set_style_text_color(t->values, UI_COLOR_DIM, 0);
+	}
+	if (t->tune && t->values) {
+		/* the panel no longer than leaves the values a line per stick */
+		int lines = t->dot[0] && t->dot[1] ? 2 : 1;
+		int32_t line = lv_font_get_line_height(lv_obj_get_style_text_font(t->values,
+										  LV_PART_MAIN));
+
+		lv_obj_set_style_max_height(t->tune, LV_MAX(t->body_h - q - lines * line, 0), 0);
 	}
 	t->hint = lv_label_create(text);
 	lv_obj_set_width(t->hint, LV_PCT(100));

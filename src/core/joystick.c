@@ -63,25 +63,29 @@ static float edge_at(const struct joy_stick_cal *c, float angle)
 	return c->edge[k] * (1 - t) + c->edge[(k + 1) % JOY_SECTORS] * t;
 }
 
-void joy_stick_apply(const struct joy_stick_cal *c, float deadzone, float x, float y,
-		     float *out_x, float *out_y)
+float joy_stick_apply(const struct joy_stick_cal *c, float deadzone, float deadzone_down,
+		      float x, float y, float *out_x, float *out_y)
 {
-	float ux, uy, len, r;
+	float ux, uy, len, r, down;
 
 	scale(c, x - c->cx, y - c->cy, &ux, &uy);
 	len = hypotf(ux, uy);
 	*out_x = *out_y = 0;
 	if (len <= 0)
-		return;
+		return 0;
 	r = len / edge_at(c, atan2f(uy, ux));
 	if (r > 1)
 		r = 1;
+	if (deadzone_down > deadzone && uy > 0) {
+		down = uy / len;	/* the sine of the angle from the side */
+		deadzone += (deadzone_down - deadzone) * down * down;
+	}
 	if (r <= deadzone)
-		return;
+		return r;
 	/* keep the output continuous at the dead zone's edge */
-	r = (r - deadzone) / (1 - deadzone);
-	*out_x = ux / len * r;
-	*out_y = uy / len * r;
+	*out_x = ux / len * (r - deadzone) / (1 - deadzone);
+	*out_y = uy / len * (r - deadzone) / (1 - deadzone);
+	return r;
 }
 
 void joy_stick_gain(float gain, float *x, float *y)
@@ -128,6 +132,29 @@ bool joy_snap_update(struct joy_snap *s, unsigned long long now_ms, float r)
 		s->low = r;
 		return true;
 	}
+	return false;
+}
+
+bool joy_touch_update(struct joy_touch *t, unsigned long long now_ms, float r, bool out,
+		      unsigned *wait_ms)
+{
+	*wait_ms = 0;
+	if (!out) {
+		t->open = t->out = false;
+		return true;	/* nothing to hold back */
+	}
+	if (t->open)
+		return true;
+	if (!t->out) {
+		t->out = true;
+		t->since = now_ms;
+	}
+	if (r >= JOY_TOUCH_FAST || now_ms - t->since >= JOY_TOUCH_MS) {
+		t->open = true;
+		t->out = false;
+		return true;
+	}
+	*wait_ms = (unsigned)(JOY_TOUCH_MS - (now_ms - t->since));
 	return false;
 }
 

@@ -78,15 +78,15 @@ static void test_joystick(void)
 
 	/* no calibration: from the rest position to the range's ends */
 	joy_stick_default(&sc, 0.2f, 0);
-	joy_stick_apply(&sc, 0.1f, 0.2f, 0, &x, &y);
+	joy_stick_apply(&sc, 0.1f, 0, 0.2f, 0, &x, &y);
 	CHECK(NEAR(x, 0) && NEAR(y, 0));
-	joy_stick_apply(&sc, 0.1f, 1, 0, &x, &y);
+	joy_stick_apply(&sc, 0.1f, 0, 1, 0, &x, &y);
 	CHECK(NEAR(x, 1) && NEAR(y, 0));
-	joy_stick_apply(&sc, 0.1f, -1, 0, &x, &y);
+	joy_stick_apply(&sc, 0.1f, 0, -1, 0, &x, &y);
 	CHECK(NEAR(x, -1));
-	joy_stick_apply(&sc, 0.1f, 0.25f, 0.05f, &x, &y);	/* round dead zone */
+	joy_stick_apply(&sc, 0.1f, 0, 0.25f, 0.05f, &x, &y);	/* round dead zone */
 	CHECK(NEAR(x, 0) && NEAR(y, 0));
-	joy_stick_apply(&sc, 0.1f, 0.2f, 0.5f, &x, &y);	/* half way down */
+	joy_stick_apply(&sc, 0.1f, 0, 0.2f, 0.5f, &x, &y);	/* half way down */
 	CHECK(NEAR(x, 0) && NEAR(y, 0.4f / 0.9f));
 
 	/* calibration: rest position, then turned along the edge twice */
@@ -107,16 +107,70 @@ static void test_joystick(void)
 	/* the edge is now the unit circle everywhere, the rest position 0 */
 	for (a = 0; a < 6.28f; a += 0.1f) {
 		square_stick(a, &x, &y);
-		joy_stick_apply(&sc, 0.15f, x, y, &x, &y);
+		joy_stick_apply(&sc, 0.15f, 0, x, y, &x, &y);
 		CHECK(fabsf(hypotf(x, y) - 1) < 0.02f);
 	}
-	joy_stick_apply(&sc, 0.15f, 0.1f, -0.05f, &x, &y);
+	joy_stick_apply(&sc, 0.15f, 0, 0.1f, -0.05f, &x, &y);
 	CHECK(NEAR(x, 0) && NEAR(y, 0));
 	/* straight right and straight up stay so */
-	joy_stick_apply(&sc, 0.15f, 0.9f, -0.05f, &x, &y);
+	joy_stick_apply(&sc, 0.15f, 0, 0.9f, -0.05f, &x, &y);
 	CHECK(NEAR(x, 1) && NEAR(y, 0));
-	joy_stick_apply(&sc, 0.15f, 0.1f, -0.95f, &x, &y);
+	joy_stick_apply(&sc, 0.15f, 0, 0.1f, -0.95f, &x, &y);
 	CHECK(NEAR(x, 0) && NEAR(y, -1));
+
+	/* the lower half of the dead zone wider: 0.25 straight down, 0.15 at the sides */
+	joy_stick_default(&sc, 0, 0);
+	CHECK(NEAR(joy_stick_apply(&sc, 0.15f, 0.25f, 0, 0.2f, &x, &y), 0.2f));
+	CHECK(NEAR(x, 0) && NEAR(y, 0));			/* down: inside */
+	joy_stick_apply(&sc, 0.15f, 0.25f, 0, -0.2f, &x, &y);	/* up: out */
+	CHECK(NEAR(x, 0) && NEAR(y, -0.05f / 0.85f));
+	joy_stick_apply(&sc, 0.15f, 0.25f, 0.2f, 0, &x, &y);	/* the side: out */
+	CHECK(NEAR(x, 0.05f / 0.85f) && NEAR(y, 0));
+	joy_stick_apply(&sc, 0.15f, 0.25f, 0, 0.3f, &x, &y);	/* continuous at its edge */
+	CHECK(NEAR(x, 0) && NEAR(y, 0.05f / 0.75f));
+	joy_stick_apply(&sc, 0.15f, 0.25f, 0, 1, &x, &y);
+	CHECK(NEAR(y, 1));
+	/* 45 degrees down: sin^2 = 0.5, 0.2 wide */
+	joy_stick_apply(&sc, 0.15f, 0.25f, 0.19f * 0.7071f, 0.19f * 0.7071f, &x, &y);
+	CHECK(NEAR(x, 0) && NEAR(y, 0));
+	joy_stick_apply(&sc, 0.15f, 0.25f, 0.21f * 0.7071f, 0.21f * 0.7071f, &x, &y);
+	CHECK(x > 0 && y > 0);
+	{
+		float x2, y2;
+
+		/* narrower than the round one, or none: round */
+		joy_stick_apply(&sc, 0.15f, 0.1f, 0.1f, 0.12f, &x, &y);
+		joy_stick_apply(&sc, 0.15f, 0, 0.1f, 0.12f, &x2, &y2);
+		CHECK(NEAR(x, x2) && NEAR(y, y2) && x > 0);
+	}
+
+	/* the touch filter, a reading every 10 ms */
+	{
+		struct joy_touch tf = { 0 };
+		unsigned long long t = 1000;
+		unsigned wait;
+		int i;
+
+		/* a touch: out to 0.4 for 90 ms, back: never passed */
+		for (i = 0; i < 9; i++, t += 10) {
+			CHECK(!joy_touch_update(&tf, t, 0.4f, true, &wait));
+			CHECK(wait == JOY_TOUCH_MS - 10 * (unsigned)i);
+		}
+		CHECK(joy_touch_update(&tf, t, 0.1f, false, &wait) && wait == 0);
+		/* out again: the time counts from here, not from the touch before */
+		CHECK(!joy_touch_update(&tf, t += 10, 0.3f, true, &wait) && wait == JOY_TOUCH_MS);
+		/* held out: passes at JOY_TOUCH_MS (the timer asks with the same reading) */
+		CHECK(!joy_touch_update(&tf, t + JOY_TOUCH_MS - 1, 0.3f, true, &wait) && wait == 1);
+		CHECK(joy_touch_update(&tf, t += JOY_TOUCH_MS, 0.3f, true, &wait) && wait == 0);
+		/* and keeps passing while out, even close to the dead zone */
+		CHECK(joy_touch_update(&tf, t += 10, 0.16f, true, &wait) && wait == 0);
+		CHECK(joy_touch_update(&tf, t += 10, 0, false, &wait));
+		/* pushed far: at once */
+		CHECK(!joy_touch_update(&tf, t += 10, 0.3f, true, &wait));
+		CHECK(joy_touch_update(&tf, t += 10, JOY_TOUCH_FAST, true, &wait) && wait == 0);
+		CHECK(joy_touch_update(&tf, t += 10, 0, false, &wait));
+		CHECK(joy_touch_update(&tf, t += 10, 1, true, &wait));
+	}
 
 	/* sensitivity: scaled, cut at the edge in the same direction */
 	x = 0.3f, y = -0.4f;
@@ -2662,6 +2716,67 @@ static void release_right(void *ud)
 	mainloop_quit(ud);
 }
 
+/* The touch filter through the module, steps on timers: a stick that
+ * sends nothing more is let through by the module's own timer */
+static int touch_step;
+
+static void touch_steps(void *ud)
+{
+	struct mainloop *ml = ud;
+	uint32_t next = 0;
+
+	switch (touch_step++) {
+	case 0:	/* half the time: held back */
+		CHECK(input_axis(GP_AXIS_RX) == 0);
+		next = JOY_TOUCH_MS;
+		break;
+	case 1:	/* past it, no new reading: through */
+		CHECK(NEAR(input_axis(GP_AXIS_RX), 0.25f / 0.85f));
+		input_report_axis(GP_AXIS_RX, 0.1f);
+		CHECK(input_axis(GP_AXIS_RX) == 0);
+		input_report_axis(GP_AXIS_RX, 0.4f);	/* out again: held back again */
+		CHECK(input_axis(GP_AXIS_RX) == 0);
+		next = JOY_TOUCH_MS / 2;
+		break;
+	case 2:	/* a touch: back before the time, the timer must not let it through */
+		CHECK(input_axis(GP_AXIS_RX) == 0);
+		input_report_axis(GP_AXIS_RX, 0.1f);
+		next = JOY_TOUCH_MS;
+		break;
+	default:
+		CHECK(input_axis(GP_AXIS_RX) == 0);
+		mainloop_quit(ml);
+		return;
+	}
+	mainloop_add_timer(ml, next, 0, touch_steps, ml);
+}
+
+static void test_touch_filter(void)
+{
+	struct input_config cfg = { .repeat_delay_ms = 50, .repeat_period_ms = 20,
+				    .stick_press = 0.5f, .stick_release = 0.3f };
+	struct input_stick_tune t = { .deadzone = 0.15f, .sensitivity = 1, .touch_filter = true };
+	struct mainloop *ml = mainloop_new("test");
+
+	input_init(ml, &cfg, on_input, NULL);
+	input_set_stick_tune(1, &t);
+	input_report_axis(GP_AXIS_RX, 0.4f);
+	CHECK(input_axis(GP_AXIS_RX) == 0);
+	touch_step = 0;
+	mainloop_add_timer(ml, JOY_TOUCH_MS / 2, 0, touch_steps, ml);
+	mainloop_run(ml);
+	CHECK(touch_step == 4);
+	input_report_axis(GP_AXIS_RX, 0.6f);	/* far: at once */
+	CHECK(NEAR(input_axis(GP_AXIS_RX), 0.45f / 0.85f));
+	input_report_axis(GP_AXIS_RX, 0);
+	t.touch_filter = false;			/* off: at once */
+	input_set_stick_tune(1, &t);
+	input_report_axis(GP_AXIS_RX, 0.4f);
+	CHECK(NEAR(input_axis(GP_AXIS_RX), 0.25f / 0.85f));
+	input_deinit();
+	mainloop_free(ml);
+}
+
 static void test_input(void)
 {
 	struct input_config cfg = { .repeat_delay_ms = 50, .repeat_period_ms = 20,
@@ -2733,6 +2848,46 @@ static void test_input(void)
 		unlink(path);
 		input_report_axis(GP_AXIS_RX, 0);
 	}
+
+	/* a platform's default (the OGA's): the sticks get it, a file without
+	 * the new fields keeps them, the file keeps them all */
+	{
+		const char *path = "test_sticks.conf";
+		const struct input_stick_tune oga = { .deadzone = 0.15f, .deadzone_down = 0.25f,
+						      .sensitivity = 1, .touch_filter = true };
+		struct input_stick_tune t;
+		FILE *f;
+
+		input_set_stick_tune_default(&oga);
+		input_stick_tune(1, &t);
+		CHECK(NEAR(t.deadzone_down, 0.25f) && t.touch_filter && !t.snapback);
+		f = fopen(path, "w");
+		CHECK(f != NULL);
+		if (f) {
+			fputs("left.deadzone = 0.20\nleft.snapback = 1\n", f);
+			fclose(f);
+		}
+		CHECK(input_load_calibration(path) == 0);
+		input_stick_tune(0, &t);
+		CHECK(NEAR(t.deadzone, 0.2f) && t.snapback && NEAR(t.deadzone_down, 0.25f) &&
+		      t.touch_filter);
+		t.deadzone_down = 0.3f;
+		t.touch_filter = false;
+		input_set_stick_tune(0, &t);
+		CHECK(input_save_calibration() == 0);
+		input_set_stick_tune(0, NULL);
+		input_stick_tune(0, &t);
+		CHECK(NEAR(t.deadzone, 0.15f) && t.touch_filter);	/* the platform's */
+		CHECK(input_load_calibration(path) == 0);
+		input_stick_tune(0, &t);
+		CHECK(NEAR(t.deadzone_down, 0.3f) && !t.touch_filter && t.snapback);
+		unlink(path);
+		input_set_stick_tune_default(NULL);
+		input_stick_tune(0, &t);
+		CHECK(NEAR(t.deadzone, cfg.stick_deadzone) && t.deadzone_down == 0 &&
+		      !t.touch_filter);
+	}
+
 
 	input_deinit();
 	mainloop_free(ml);
@@ -3256,6 +3411,7 @@ int main(void)
 	test_config();
 	test_mailbox();
 	test_input();
+	test_touch_filter();
 	test_volume();
 	test_blit();
 	test_damage();

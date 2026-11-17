@@ -38,7 +38,10 @@ static struct {
 		struct joy_stick_cal cal;
 		struct input_stick_tune tune;
 		struct joy_snap snap;
+		struct joy_touch touch;
+		struct ml_timer *touch_timer;	/* to look again at a stick held back */
 	} stick[INPUT_STICKS];
+	struct input_stick_tune tune_default;
 	char cal_path[256];
 	uint32_t buttons_present, axes_present;
 	int stick_x, stick_y;	/* -1/0/+1 */
@@ -137,22 +140,29 @@ void input_init(struct mainloop *ml, const struct input_config *cfg, input_cb cb
 		.stick_deadzone = 0.15f,
 	};
 
-	int s;
-
 	memset(&in, 0, sizeof(in));
 	in.ml = ml;
 	in.cfg = cfg ? *cfg : def;
 	in.cb = cb;
 	in.ud = ud;
-	for (s = 0; s < INPUT_STICKS; s++)
-		input_stick_tune_default(&in.stick[s].tune);
+	input_set_stick_tune_default(NULL);
 	motion_init(&in.motion.m);
 	input_set_motion_tune(NULL);
 }
 
+static void touch_timer_cancel(int s)
+{
+	mainloop_timer_cancel(in.ml, in.stick[s].touch_timer);
+	in.stick[s].touch_timer = NULL;
+}
+
 void input_deinit(void)
 {
+	int s;
+
 	stop_repeat();
+	for (s = 0; s < INPUT_STICKS; s++)
+		touch_timer_cancel(s);
 	in.cb = NULL;
 }
 
@@ -200,15 +210,46 @@ static const struct joy_stick_cal *stick_cal(int s, struct joy_stick_cal *def)
 	return def;
 }
 
+static void update_stick(int s);
+
+static void on_touch_timer(void *ud)
+{
+	int s = (int)(intptr_t)ud;
+
+	in.stick[s].touch_timer = NULL;	/* a one-shot timer is gone once it has run */
+	update_stick(s);
+}
+
+/* The touch filter (joy_touch_update()) when the stick's tune has it on */
+static bool touch_passes(int s, uint64_t now, float r, float x, float y)
+{
+	unsigned wait = 0;
+	bool pass = true;
+
+	if (in.stick[s].tune.touch_filter)
+		pass = joy_touch_update(&in.stick[s].touch, now, r, x != 0 || y != 0, &wait);
+	else
+		memset(&in.stick[s].touch, 0, sizeof(in.stick[s].touch));
+	touch_timer_cancel(s);
+	if (wait && in.ml)
+		in.stick[s].touch_timer = mainloop_add_timer(in.ml, wait, 0, on_touch_timer,
+							     (void *)(intptr_t)s);
+	return pass;
+}
+
 /* Both axes of a stick move together: the edge and the dead zone are round */
 static void update_stick(int s)
 {
+	const struct input_stick_tune *tune = &in.stick[s].tune;
 	struct joy_stick_cal def;
-	float x, y;
+	uint64_t now = now_ms();
+	float x, y, r;
 
-	joy_stick_apply(stick_cal(s, &def), in.stick[s].tune.deadzone, in.raw[2 * s],
-			in.raw[2 * s + 1], &x, &y);
-	if (joy_snap_update(&in.stick[s].snap, now_ms(), hypotf(x, y)) && in.stick[s].tune.snapback)
+	r = joy_stick_apply(stick_cal(s, &def), tune->deadzone, tune->deadzone_down,
+			    in.raw[2 * s], in.raw[2 * s + 1], &x, &y);
+	if (!touch_passes(s, now, r, x, y))
+		x = y = 0;
+	if (joy_snap_update(&in.stick[s].snap, now, hypotf(x, y)) && tune->snapback)
 		x = y = 0;
 	joy_stick_gain(in.stick[s].tune.sensitivity, &x, &y);
 	set_axis(2 * s, x);
@@ -279,11 +320,32 @@ static float clampf(float v, float lo, float hi)
 	return v < lo ? lo : v > hi ? hi : v;
 }
 
+/* In range: the dead zones, the sensitivity */
+static void tune_clamp(struct input_stick_tune *t)
+{
+	t->deadzone = clampf(t->deadzone, 0, INPUT_DEADZONE_MAX);
+	t->deadzone_down = clampf(t->deadzone_down, 0, INPUT_DEADZONE_MAX);
+	t->sensitivity = clampf(t->sensitivity, INPUT_SENS_MIN, INPUT_SENS_MAX);
+}
+
 void input_stick_tune_default(struct input_stick_tune *t)
 {
-	t->deadzone = clampf(in.cfg.stick_deadzone, 0, INPUT_DEADZONE_MAX);
-	t->sensitivity = 1;
-	t->snapback = false;
+	*t = in.tune_default;
+}
+
+void input_set_stick_tune_default(const struct input_stick_tune *t)
+{
+	int s;
+
+	if (t) {
+		in.tune_default = *t;
+	} else {
+		in.tune_default = (struct input_stick_tune){
+			.deadzone = in.cfg.stick_deadzone, .sensitivity = 1 };
+	}
+	tune_clamp(&in.tune_default);
+	for (s = 0; s < INPUT_STICKS; s++)
+		input_set_stick_tune(s, NULL);
 }
 
 void input_stick_tune(int stick, struct input_stick_tune *t)
@@ -301,19 +363,14 @@ void input_set_stick_tune(int stick, const struct input_stick_tune *t)
 	if (stick < 0 || stick >= INPUT_STICKS)
 		return;
 	to = &in.stick[stick].tune;
-	if (!t) {
-		input_stick_tune_default(to);
-	} else {
-		to->deadzone = clampf(t->deadzone, 0, INPUT_DEADZONE_MAX);
-		to->sensitivity = clampf(t->sensitivity, INPUT_SENS_MIN, INPUT_SENS_MAX);
-		to->snapback = t->snapback;
-	}
+	*to = t ? *t : in.tune_default;
+	tune_clamp(to);
 	update_stick(stick);
 }
 
 static const char *const stick_names[INPUT_STICKS] = { "left", "right" };
 
-/* "left.deadzone = 0.15": a stick's dead zone, sensitivity or snap-back */
+/* "left.deadzone = 0.15": a field of a stick's tune */
 static bool load_tune_line(int s, const char *field, const char *value)
 {
 	struct input_stick_tune t = in.stick[s].tune;
@@ -330,6 +387,10 @@ static bool load_tune_line(int s, const char *field, const char *value)
 		t.sensitivity = v;
 	else if (!strcmp(field, "snapback"))
 		t.snapback = v != 0;
+	else if (!strcmp(field, "deadzone_down"))
+		t.deadzone_down = v;
+	else if (!strcmp(field, "touch_filter"))
+		t.touch_filter = v != 0;
 	else
 		return false;
 	input_set_stick_tune(s, &t);
@@ -495,12 +556,15 @@ int input_save_calibration(void)
 	}
 	fputs("# bare_app stick calibration, written by the input test\n", f);
 	for (s = 0; s < INPUT_STICKS; s++) {
+		const struct input_stick_tune *t = &in.stick[s].tune;
+		const char *n = stick_names[s];
+
 		if (in.stick[s].set && joy_stick_format(&in.stick[s].cal, buf, sizeof(buf)) > 0)
-			fprintf(f, "%s = %s\n", stick_names[s], buf);
-		fprintf(f, "%s.deadzone = %.2f\n%s.sensitivity = %.2f\n%s.snapback = %d\n",
-			stick_names[s], (double)in.stick[s].tune.deadzone, stick_names[s],
-			(double)in.stick[s].tune.sensitivity, stick_names[s],
-			in.stick[s].tune.snapback);
+			fprintf(f, "%s = %s\n", n, buf);
+		fprintf(f, "%s.deadzone = %.2f\n%s.deadzone_down = %.2f\n%s.sensitivity = %.2f\n"
+			"%s.snapback = %d\n%s.touch_filter = %d\n",
+			n, (double)t->deadzone, n, (double)t->deadzone_down, n,
+			(double)t->sensitivity, n, t->snapback, n, t->touch_filter);
 	}
 	for (int i = 0; i < in.motion.ncals; i++)
 		if (motion_cal_format(&in.motion.cals[i].cal, buf, sizeof(buf)) > 0)

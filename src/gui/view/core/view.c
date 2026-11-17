@@ -224,6 +224,7 @@ static void *view_thread(void *arg)
 		return NULL;
 	}
 	input_init(vcore.ml, NULL, view_on_gamepad, NULL);
+	input_set_stick_tune_default(vcore.pf->stick_tune);
 	input_set_raw_query(view_hid_game_in_front);
 	input_set_devices_cb(on_devices);
 	load_stick_calibration();

@@ -112,4 +112,11 @@ const struct platform platform_oga = {
 	.poweroff = "/sbin/poweroff",	/* busybox: init runs rcK, then powers off */
 	.suspend = "/usr/sbin/pm-suspend",	/* the SDK's: suspend to RAM, the power key wakes */
 	.config_path = "/etc/bare_app.conf",
+	/* A light stick: a finger resting on it from above tips it down by
+	 * 0.1..0.4 of the reach at once and lets it creep back over 100..300 ms
+	 * (touches from below do not jump). Measured 2026-11-17 on a Black
+	 * Edition: the wider lower half and the touch filter hold back all of
+	 * 55 such touches, pushes and flicks pass 20..70 ms later. */
+	.stick_tune = &(const struct input_stick_tune){
+		.deadzone = 0.15f, .deadzone_down = 0.25f, .sensitivity = 1, .touch_filter = true },
 };

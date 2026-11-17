@@ -103,12 +103,16 @@ int input_save_calibration(void);		/* to the file loaded from */
 
 /*
  * Dead zone and sensitivity of each stick, set in the input test and
- * saved with the calibration ("left.deadzone = 0.15", "left.sensitivity =
- * 1.00", "left.snapback = 1"). The dead zone is round, a part of the
- * calibrated reach; the sensitivity multiplies the position past it
- * (joy_stick_gain()); snap-back puts a stick that creeps home slowly after
- * being let go at rest at once (joy_snap_update()). Games and the stick's
- * D-pad get the result.
+ * saved with the calibration ("left.deadzone = 0.15", "left.deadzone_down
+ * = 0.25", "left.sensitivity = 1.00", "left.snapback = 1",
+ * "left.touch_filter = 1"). The dead zone is round, a part of the
+ * calibrated reach, its lower half wider by deadzone_down (joy_stick_apply());
+ * the sensitivity multiplies the position past it (joy_stick_gain());
+ * snap-back puts a stick that creeps home slowly after being let go at rest
+ * at once (joy_snap_update()); the touch filter keeps a stick that a finger
+ * tips out of the dead zone for a moment at rest (joy_touch_update()).
+ * Games and the stick's D-pad get the result. A platform may bring its own
+ * defaults (struct platform.stick_tune): a stick worn in its own way.
  */
 #define INPUT_DEADZONE_MAX 0.5f
 #define INPUT_SENS_MIN 0.5f
@@ -117,11 +121,16 @@ int input_save_calibration(void);		/* to the file loaded from */
 struct input_stick_tune {
 	float deadzone, sensitivity;
 	bool snapback;
+	float deadzone_down;	/* straight down; up to deadzone: a round dead zone */
+	bool touch_filter;
 };
 
 void input_stick_tune(int stick, struct input_stick_tune *t);
 void input_stick_tune_default(struct input_stick_tune *t);
 void input_set_stick_tune(int stick, const struct input_stick_tune *t);	/* NULL: default */
+/* The default of every stick from now on (and both sticks set to it);
+ * NULL: the one from input_config */
+void input_set_stick_tune_default(const struct input_stick_tune *t);
 
 /*
  * A motion sensor (drivers/input_imu.c; core/motion.h does the math). The

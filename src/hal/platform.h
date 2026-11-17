@@ -55,6 +55,9 @@ struct platform {
 	const char *usb_disk;
 	/* settings file ("~/" = $HOME), NULL: nothing is kept between runs */
 	const char *config_path;
+	/* The sticks' tune until the input test saves one (core/input.h),
+	 * NULL: core/input's own default */
+	const struct input_stick_tune *stick_tune;
 };
 
 /* By name if given, otherwise by /proc/device-tree/compatible, otherwise "pc" */

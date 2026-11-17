@@ -30,8 +30,16 @@ struct joy_stick_cal {
 };
 
 void joy_stick_default(struct joy_stick_cal *c, float rest_x, float rest_y);
-void joy_stick_apply(const struct joy_stick_cal *c, float deadzone, float x, float y,
-		     float *out_x, float *out_y);
+/*
+ * The dead zone is round, deadzone wide; deadzone_down widens its lower
+ * half (a stick that a light touch from above tips down): that wide
+ * straight down, narrowing as the sine of the angle squared to deadzone
+ * at the sides. Below deadzone it changes nothing. Returns the stick's
+ * distance from the rest position before the dead zone is taken away
+ * (1 = the edge).
+ */
+float joy_stick_apply(const struct joy_stick_cal *c, float deadzone, float deadzone_down,
+		      float x, float y, float *out_x, float *out_y);
 /* Sensitivity: a stick's position (out of joy_stick_apply()) times gain,
  * cut at the unit circle */
 void joy_stick_gain(float gain, float *x, float *y);
@@ -60,6 +68,30 @@ struct joy_snap {
 };
 
 bool joy_snap_update(struct joy_snap *s, unsigned long long now_ms, float r);
+
+/*
+ * Touch filter: a finger resting on a light stick tips it out of the dead
+ * zone for a moment and lets it go back (measured on the OGA: up to 0.46
+ * of the reach, out for 15..210 ms, mostly under 100). A stick pushed on
+ * purpose either goes far at once or stays out. joy_touch_update() takes
+ * each reading: r from joy_stick_apply() and whether it is past the dead
+ * zone. It passes the stick (true) once it has been out JOY_TOUCH_MS
+ * without a break, or at once when it gets JOY_TOUCH_FAST far, and then
+ * until it is back in the dead zone. While it holds the stick back it
+ * says in *wait_ms when to ask again with the same reading (a stick held
+ * still sends nothing); 0 otherwise.
+ */
+#define JOY_TOUCH_MS 100
+#define JOY_TOUCH_FAST 0.5f
+
+struct joy_touch {
+	bool open;		/* passing */
+	bool out;		/* past the dead zone since 'since', not passed yet */
+	unsigned long long since;
+};
+
+bool joy_touch_update(struct joy_touch *t, unsigned long long now_ms, float r, bool out,
+		      unsigned *wait_ms);
 
 /* "cx cy xn xp yn yp edge0 .. edge15", for a settings file */
 int joy_stick_format(const struct joy_stick_cal *c, char *buf, size_t size);
