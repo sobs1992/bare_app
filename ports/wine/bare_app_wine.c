@@ -109,12 +109,13 @@ static struct {
 	int edge_zone;			/* edge_zone: pixels of the screen's edge the pointer keeps
 					 * out of unless the stick pushes it there */
 	bool fill;			/* scale = fill: the whole frame, the aspect not kept */
+	bool relative;			/* mouse = relative: moves sent as moves, see move_cursor() */
 	float gamma;			/* gamma = G: the screen's values to the power 1/G */
 	int rows;			/* rows = N [TOP [WxH]]: only N of the display mode's rows */
 	int rows_top;			/* shown, from row TOP (0: the top ones), */
 	uint32_t rows_w, rows_h;	/* in display mode WxH only (0: in any) */
 	struct action button[GP_COUNT];
-	struct action rstick_dir[4];	/* rstick = arrows: up, down, left, right pushed */
+	struct action stick_dir[2][4];	/* stick, rstick = arrows: up, down, left, right pushed */
 } cfg;
 
 static const struct { const char *name; uint16_t vk; } key_names[] = {
@@ -239,9 +240,10 @@ static char *trim(char *s)
 	return s;
 }
 
-/* [keys] names of the right stick's directions (rstick = arrows), as cfg.rstick_dir */
-static const char *const rstick_dir_names[4] = {
-	"rstick_up", "rstick_down", "rstick_left", "rstick_right",
+/* [keys] names of the sticks' directions (stick, rstick = arrows), as cfg.stick_dir */
+static const char *const stick_dir_names[2][4] = {
+	{ "stick_up", "stick_down", "stick_left", "stick_right" },
+	{ "rstick_up", "rstick_down", "rstick_left", "rstick_right" },
 };
 
 /* The buttons' and the sticks' defaults are games/wine_defaults.h: bare_app's
@@ -264,8 +266,10 @@ static void set_defaults(void)
 	for (i = 0; i < WINE_DEFAULT_KEYS; i++)
 		if ((b = gp_button_from_name(wine_default_keys[i].control)) != GP_NONE)
 			parse_action(wine_default_keys[i].action, &cfg.button[b]);
-	for (i = 0; i < 4; i++)
-		parse_action(gp_button_name(GP_UP + i), &cfg.rstick_dir[i]);
+	for (i = 0; i < 4; i++) {
+		parse_action(gp_button_name(GP_UP + i), &cfg.stick_dir[0][i]);
+		parse_action(gp_button_name(GP_UP + i), &cfg.stick_dir[1][i]);
+	}
 }
 
 static int read_ini(const char *path)
@@ -328,9 +332,9 @@ static int read_ini(const char *path)
 
 				if ((b = gp_button_from_name(key)) != GP_NONE)
 					a = &cfg.button[b];
-				for (b = 0; b < 4 && !a; b++)
-					if (!strcmp(rstick_dir_names[b], key))
-						a = &cfg.rstick_dir[b];
+				for (b = 0; b < 8 && !a; b++)
+					if (!strcmp(stick_dir_names[b / 4][b % 4], key))
+						a = &cfg.stick_dir[b / 4][b % 4];
 				if (!a || parse_action(value, a) < 0)
 					msg("%s:%d: %s = %s?", path, lineno, key, value);
 			}
@@ -376,6 +380,8 @@ static int read_ini(const char *path)
 				msg("%s:%d: rows %s?", path, lineno, value);
 			if (n < 4)
 				cfg.rows_w = cfg.rows_h = 0;
+		} else if (!strcmp(key, "mouse")) {
+			cfg.relative = !strcmp(value, "relative");
 		} else if (!strcmp(key, "scale")) {
 			if (strcmp(value, "fill") && strcmp(value, "aspect"))
 				msg("%s:%d: scale %s?", path, lineno, value);
@@ -1500,6 +1506,19 @@ static void send_mouse_at(int x, int y, uint32_t flags, int wheel)
 		return;
 	if (trace && (flags || wheel))
 		msg("mouse %d,%d flags %#x wheel %d", x, y, flags, wheel);
+	if (cfg.relative) {
+		/* the buttons and the wheel where the game's pointer is: moves are
+		 * move_cursor()'s */
+		if (!flags && !wheel)
+			return;
+		m.mouse.flags = flags | WB_MOUSE_RELATIVE;
+		if (wheel) {
+			m.mouse.flags |= WB_MOUSE_WHEEL;
+			m.mouse.wheel = wheel;
+		}
+		client_send(c, &m);
+		return;
+	}
 	m.mouse.x = pointer_x = x;
 	pointer_y = y;
 	m.mouse.y = y + (int)shown_top(&mode);
@@ -1865,14 +1884,12 @@ static void do_action(const struct action *a, bool pressed)
 
 static void on_button(enum gp_button b, bool pressed, bool stick)
 {
-	static const uint16_t arrows[4] = { 0x26, 0x28, 0x25, 0x27 };	/* up down left right */
-
 	if ((unsigned)b >= GP_COUNT)
 		return;
 	if (stick) {
-		/* the stick as a D-pad: arrows only if asked for */
+		/* the stick as a D-pad: arrows (or stick_up...) only if asked for */
 		if (cfg.lstick == STICK_ARROWS && b <= GP_RIGHT)
-			send_key(arrows[b], pressed);
+			do_action(&cfg.stick_dir[0][b], pressed);
 		return;
 	}
 	if (b <= GP_RIGHT && (cfg.dpad == STICK_MOUSE || cfg.dpad == STICK_SCROLL)) {
@@ -2176,6 +2193,35 @@ static void move_cursor(float nx, float ny)
 	ox = (int)cur_x;
 	oy = (int)cur_y;
 
+	if (cfg.relative) {
+		/*
+		 * mouse = relative: the move itself, whole pixels, the rest kept
+		 * for the next one, and not stopped at the screen's edge. Prince
+		 * of Persia reads the mouse by DirectInput (raw input) while Wine
+		 * holds its cursor in one place: a place sent was a move from
+		 * there, the same move again with every later one, a click with
+		 * it (its pointer, the dagger, jumped off a button when clicked).
+		 */
+		static float rel_x, rel_y;
+		struct client *c = input_client();
+		struct wb_msg m = { .type = WB_INPUT_MOUSE };
+
+		rel_x += nx - cur_x;
+		rel_y += ny - cur_y;
+		cur_x = nx < 0 ? 0 : nx > mode.width - 1 ? mode.width - 1 : nx;
+		cur_y = ny < 0 ? 0 : ny > shown_rows(&mode) - 1 ? shown_rows(&mode) - 1 : ny;
+		m.mouse.x = (int32_t)rel_x;
+		m.mouse.y = (int32_t)rel_y;
+		if (c && (m.mouse.x || m.mouse.y)) {
+			rel_x -= m.mouse.x;
+			rel_y -= m.mouse.y;
+			m.mouse.flags = WB_MOUSE_MOVE | WB_MOUSE_RELATIVE;
+			client_send(c, &m);
+		}
+		if (((int)cur_x != ox || (int)cur_y != oy) && (cursor_shown || magnify))
+			dirty = true;
+		return;
+	}
 	cur_x = nx < 0 ? 0 : nx > mode.width - 1 ? mode.width - 1 : nx;
 	cur_y = ny < 0 ? 0 : ny > shown_rows(&mode) - 1 ? shown_rows(&mode) - 1 : ny;
 	/*
@@ -2390,9 +2436,9 @@ static void on_axis(enum gp_axis a, int value)
 		bool n = v < -0.5f, p = v > 0.5f;
 
 		if (n != out[neg])
-			do_action(&cfg.rstick_dir[neg], out[neg] = n);
+			do_action(&cfg.stick_dir[1][neg], out[neg] = n);
 		if (p != out[pos])
-			do_action(&cfg.rstick_dir[pos], out[pos] = p);
+			do_action(&cfg.stick_dir[1][pos], out[pos] = p);
 	}
 }
 

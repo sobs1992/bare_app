@@ -32,9 +32,10 @@ struct wine_game {
 	int minimize;			/* "minimize": f1..f6, -1 F5 (games' own) */
 	bool trigger_volume;		/* "volume = triggers": L2, R2 */
 	/* [keys] as written: a control's action or a stick's use, "" not
-	 * given; the D-pad's use, the right stick's direction keys */
+	 * given; the D-pad's use, the sticks' direction keys ([0] stick_up..,
+	 * [1] rstick_up..) */
 	char keys[GAME_CONTROLS][48];
-	char dpad[12], rstick_dir[4][32];
+	char dpad[12], stick_dir[2][4][32];
 	char labels[2][GAME_CONTROLS][64];	/* [labels], [labels.ru] */
 };
 
@@ -44,17 +45,21 @@ static int count;
 /* [keys] and [labels] of wine.ini */
 static void section_value(struct wine_game *g, const char *section, const char *key, const char *value)
 {
-	static const char *const dirs[4] = { "rstick_up", "rstick_down", "rstick_left", "rstick_right" };
-	int c = game_control_by_name(key), i;
+	static const char *const dirs[2][4] = {
+		{ "stick_up", "stick_down", "stick_left", "stick_right" },
+		{ "rstick_up", "rstick_down", "rstick_left", "rstick_right" },
+	};
+	int c = game_control_by_name(key), i, s;
 
 	if (!strcasecmp(section, "keys")) {
 		if (c >= 0)
 			snprintf(g->keys[c], sizeof(g->keys[c]), "%s", value);
 		else if (!strcasecmp(key, "dpad"))
 			snprintf(g->dpad, sizeof(g->dpad), "%s", value);
-		for (i = 0; i < 4; i++)
-			if (!strcasecmp(key, dirs[i]))
-				snprintf(g->rstick_dir[i], sizeof(g->rstick_dir[i]), "%s", value);
+		for (s = 0; s < 2; s++)
+			for (i = 0; i < 4; i++)
+				if (!strcasecmp(key, dirs[s][i]))
+					snprintf(g->stick_dir[s][i], sizeof(g->stick_dir[s][i]), "%s", value);
 	} else if (c >= 0 && (!strcasecmp(section, "labels") || !strcasecmp(section, "labels.ru"))) {
 		i = !strcasecmp(section, "labels.ru");
 		snprintf(g->labels[i][c], sizeof(g->labels[i][c]), "%s", value);
@@ -127,7 +132,7 @@ static int wine_scan(void)
 		g->name[0] = g->exe[0] = g->hint[0] = g->hint_ru[0] = g->cover[0] = '\0';
 		memset(g->keys, 0, sizeof(g->keys));
 		memset(g->labels, 0, sizeof(g->labels));
-		memset(g->rstick_dir, 0, sizeof(g->rstick_dir));
+		memset(g->stick_dir, 0, sizeof(g->stick_dir));
 		g->dpad[0] = '\0';
 		g->minimize = -1;
 		g->trigger_volume = false;
@@ -252,17 +257,16 @@ static void stick_text(const struct wine_game *g, int c, char *out, size_t size)
 		{ "mouse", S_CTL_MOUSE }, { "arrows", S_CTL_ARROWS }, { "wheel", S_CTL_WHEEL },
 		{ "numpad", S_CTL_NUMPAD }, { "turn", S_CTL_TURN }, { "scroll", S_CTL_SCROLL },
 	};
+	const char (*dir)[32] = g->stick_dir[c == GAME_STICK_RIGHT];
 	size_t i, n = 0;
 
 	out[0] = '\0';
-	/* the right stick's own keys: "Home/End/Del/PgDn" */
-	if (c == GAME_STICK_RIGHT && !strcasecmp(use, "arrows") &&
-	    (g->rstick_dir[0][0] || g->rstick_dir[1][0] || g->rstick_dir[2][0] || g->rstick_dir[3][0])) {
+	/* a stick's own keys: "Home/End/Del/PgDn", "W/S/A/D" */
+	if (!strcasecmp(use, "arrows") && (dir[0][0] || dir[1][0] || dir[2][0] || dir[3][0])) {
 		for (i = 0; i < 4 && n + 1 < size; i++) {
 			char part[48];
 
-			action_text(part, sizeof(part), g->rstick_dir[i][0] ? g->rstick_dir[i]
-							   : default_key(GP_UP + i));
+			action_text(part, sizeof(part), dir[i][0] ? dir[i] : default_key(GP_UP + i));
 			n += (size_t)snprintf(out + n, size - n, "%s%s", i ? "/" : "", part);
 		}
 		return;
@@ -336,8 +340,16 @@ static struct game_proc *wine_start(int i, const struct game_env *ge)
 	}
 	g = &found[i];
 	game_proc_sibling(HOST, host, sizeof(host));
-	game_vars_add(&env, "BARE_APP_WINE_PREFIX=%s",
-		      game_setting("BARE_APP_WINE_PREFIX", CONFIG_GAME_WINE_PREFIX));
+	const char *prefix = game_setting("BARE_APP_WINE_PREFIX", CONFIG_GAME_WINE_PREFIX);
+	const char *slash = strrchr(prefix, '/');
+
+	game_vars_add(&env, "BARE_APP_WINE_PREFIX=%s", prefix);
+	/* Mesa's compiled shaders (and GStreamer's registry) beside the prefix,
+	 * /data/wine/cache, kept from one start to the next: not in ~/.cache
+	 * on the system partition, which a reflash wipes. A game's shaders are
+	 * compiled once, the first time each effect is drawn, then read back */
+	game_vars_add(&env, "XDG_CACHE_HOME=%.*s/cache",
+		      slash && slash != prefix ? (int)(slash - prefix) : (int)strlen(prefix), prefix);
 	game_vars_add(&env, "BARE_APP_WINE_BIN=%s", game_setting("BARE_APP_WINE_BIN", CONFIG_GAME_WINE_BIN));
 
 	char *const argv[] = { (char *)HOST, (char *)g->dir, NULL };

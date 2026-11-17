@@ -61,6 +61,10 @@ enum wb_msg_type {
 #define WB_MOUSE_MIDDLE_DOWN 0x20
 #define WB_MOUSE_MIDDLE_UP 0x40
 #define WB_MOUSE_WHEEL 0x80	/* wheel: steps, + = away from the user */
+/* x, y are a move by that much, not a place (wine.ini "mouse = relative"):
+ * a game reading the mouse by DirectInput gets the move as it is wherever
+ * Wine keeps its cursor; without WB_MOUSE_MOVE only the buttons */
+#define WB_MOUSE_RELATIVE 0x100
 
 struct wb_mode {
 	uint16_t width, height;
