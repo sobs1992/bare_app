@@ -2,10 +2,11 @@
  * Status bar, the header of every screen (widgets/console.c): the screen's
  * title on the left, the time in the middle; on the right one USB icon
  * while a keyboard, a mouse or the motion sensor is plugged in (CTX_INPUT),
- * volume (CTX_AUDIO), Wi-Fi (CTX_WIFI) and battery (CTX_POWER). Should the
- * icons reach the time (a narrow screen, more icons) it moves left of them,
- * out of the middle. The time only once the clock has been set (a board
- * without a set RTC starts in 1970 or 2000).
+ * volume (CTX_AUDIO), Wi-Fi (CTX_WIFI) and battery (CTX_POWER). Should a
+ * long title or the icons reach the time (a narrow screen) it moves right of
+ * the title or left of the icons, out of the middle; the title stops short
+ * of what is right of it (cut with dots). The time only once the clock has
+ * been set (a board without a set RTC starts in 1970 or 2000).
  */
 #include <stdlib.h>
 #include <time.h>
@@ -26,28 +27,40 @@ struct statusbar {
 	int shown_link;		/* enum wifi_link, -1 nothing yet */
 	int shown_devices;	/* INPUT_DEV_*, -1 nothing yet */
 	lv_obj_t *right;	/* the icons */
-	int32_t fit_right, fit_width;	/* fit_clock() placed the time for these */
+	int32_t fit_right, fit_clock_w, fit_title_w;	/* fit() placed them for these */
 };
 
-/* The time in the middle, or left of the icons when they reach it */
-static void fit_clock(struct statusbar *s)
+/* The title, the time and the icons in a row (the file's comment) */
+static void fit(struct statusbar *s)
 {
-	int32_t gap = ui_px(GAP_PX), right, width;
+	lv_obj_t *bar = lv_obj_get_parent(s->clock);
+	int32_t gap = ui_px(GAP_PX), right, clock_w, title_w, x1, limit;
+	lv_area_t area, box;
+	lv_point_t size;
 
-	if (lv_obj_is_hidden(s->clock))
-		return;
-	lv_obj_update_layout(lv_obj_get_parent(s->clock));
-	right = lv_obj_get_x(s->right);
-	width = lv_obj_get_width(s->clock);
-	/* nothing moved: leave it (aligning again redraws it) */
-	if (right == s->fit_right && width == s->fit_width)
+	lv_obj_update_layout(bar);
+	lv_obj_get_coords(s->right, &area);
+	right = area.x1;
+	clock_w = lv_obj_is_hidden(s->clock) ? -1 : lv_obj_get_width(s->clock);
+	lv_text_get_size(&size, lv_label_get_text(s->title), lv_obj_get_style_text_font(s->title, 0),
+			 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+	title_w = size.x;
+	/* nothing moved: leave them (aligning again redraws) */
+	if (right == s->fit_right && clock_w == s->fit_clock_w && title_w == s->fit_title_w)
 		return;
 	s->fit_right = right;
-	s->fit_width = width;
-	lv_obj_align(s->clock, LV_ALIGN_CENTER, 0, 0);
-	lv_obj_update_layout(lv_obj_get_parent(s->clock));
-	if (lv_obj_get_x2(s->clock) + gap > right)
-		lv_obj_align_to(s->clock, s->right, LV_ALIGN_OUT_LEFT_MID, -gap, 0);
+	s->fit_clock_w = clock_w;
+	s->fit_title_w = title_w;
+	lv_obj_get_content_coords(bar, &box);
+	limit = right;
+	if (clock_w >= 0) {
+		x1 = box.x1 + (lv_area_get_width(&box) - clock_w) / 2;
+		x1 = LV_MAX(x1, box.x1 + title_w + gap);	/* right of the title */
+		x1 = LV_MIN(x1, right - gap - clock_w);		/* left of the icons */
+		lv_obj_align(s->clock, LV_ALIGN_LEFT_MID, x1 - box.x1, 0);
+		limit = x1;
+	}
+	lv_obj_set_style_max_width(s->title, LV_MAX(limit - gap - box.x1, 0), 0);
 }
 
 /* The icon (widgets/battery.c); with the level unknown, a bolt on the charger */
@@ -89,7 +102,7 @@ static void update_clock(struct statusbar *s)
 	lv_obj_set_hidden(s->clock, minute < 0);
 	if (minute >= 0 && localtime_r(&now, &tm))
 		lv_label_set_text_fmt(s->clock, "%d:%02d", tm.tm_hour, tm.tm_min);
-	fit_clock(s);
+	fit(s);
 }
 
 static void on_tick(lv_timer_t *t)
@@ -118,7 +131,7 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 	s->shown_flags = -1;
 	s->shown_link = -1;
 	s->shown_devices = -1;
-	s->fit_right = s->fit_width = -1;
+	s->fit_right = s->fit_clock_w = s->fit_title_w = -2;	/* nothing placed yet */
 	bar = lv_obj_create(parent);
 	lv_obj_remove_style_all(bar);
 	/* the header rows of the grid, on the screen's background */
@@ -129,8 +142,7 @@ static void *statusbar_init(lv_obj_t *parent, lv_obj_t **root)
 	s->title = lv_label_create(bar);
 	lv_obj_set_style_text_font(s->title, UI_FONT_MID, 0);
 	lv_obj_align(s->title, LV_ALIGN_LEFT_MID, 0, 0);
-	/* a long title (an SSID) stops short of the time in the middle */
-	lv_obj_set_style_max_width(s->title, LV_PCT(40), 0);
+	/* fit() sets how far a long title (an SSID) goes */
 	lv_label_set_long_mode(s->title, LV_LABEL_LONG_MODE_DOTS);
 	lv_label_set_text(s->title, "");
 
@@ -220,7 +232,7 @@ static void statusbar_update(void *self, const struct gui_ctx *c, uint32_t chang
 		s->shown_cap = c->power.capacity;
 		update_battery(s, c);
 	}
-	fit_clock(s);	/* the icons may have grown towards it */
+	fit(s);	/* the icons may have grown towards it */
 }
 
 static void statusbar_deinit(void *self)
@@ -243,10 +255,13 @@ void statusbar_set_title(lv_obj_t *bar, const char *symbol, const char *title)
 {
 	struct statusbar *s = widget_self(bar);
 
-	if (s && symbol)
+	if (!s)
+		return;
+	if (symbol)
 		lv_label_set_text_fmt(s->title, "%s  %s", symbol, title);
-	else if (s)
+	else
 		lv_label_set_text(s->title, title);
+	fit(s);
 }
 
 lv_obj_t *statusbar_create(lv_obj_t *parent, const char *symbol, const char *title)

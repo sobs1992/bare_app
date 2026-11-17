@@ -211,7 +211,7 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 	[S_MOTION]          = { "Motion sensor" RU("Датчик движения") },
 	[S_MOTION_NONE]     = { "Not connected: plug the motion sensor into the USB port"
 				RU("Не подключён: вставьте датчик движения в USB") },
-	[S_MOTION_RATE_FMT] = { "Connected: %s, %d samples a second" RU("Подключён: %s, %d измерений в секунду") },
+	[S_MOTION_RATE_FMT] = { "Connected: %s, %d Hz" RU("Подключён: %s, %d Гц") },
 	[S_MOTION_ZERO_WAIT] = { "Put the device down for a second: the gyro's zero is measured"
 				 RU("Положите консоль на секунду: нужно измерить ноль гироскопа") },
 	[S_MOTION_ZERO_OK]  = { "Gyro zero measured" RU("Ноль гироскопа измерен") },
@@ -226,8 +226,8 @@ static const char *const strings[S_COUNT][LANG_COUNT] = {
 				  RU("Это был поворот, а не наклон: ещё раз") },
 	[S_MOTION_CAL_DONE] = { "Motion sensor calibrated" RU("Датчик движения откалиброван") },
 	[S_MOTION_CAL_NONE] = { "Calibration removed" RU("Калибровка удалена") },
-	[S_MOTION_TRY]      = { "Turn and tilt the device: the cross follows (X: back to the middle)"
-				RU("Поворачивайте и наклоняйте консоль: крестик следует за ней (X — в центр)") },
+	[S_MOTION_TRY]      = { "The cross follows the device (X: to the middle)"
+				RU("Крестик следует за консолью (X — в центр)") },
 	[S_PLUGGED]         = { "Plugged in" RU("Подкл.") },
 	[S_UNPLUGGED]       = { "Unplugged" RU("Откл.") },
 	[S_GYRO_INVERT_X]   = { "Invert X" RU("Инверсия X") },

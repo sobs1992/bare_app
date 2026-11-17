@@ -1,7 +1,7 @@
 /*
  * Motion sensor (SCREEN_MOTION, Settings > Games): whether the sensor is
- * plugged in, which chip it is and how fast it samples, whether the gyro's zero and up and
- * down are known, and a cross in a box that follows the device's turns
+ * plugged in, which chip it is and how fast it samples, whether the gyro's zero (only
+ * while not measured) and up and down are known, and a cross in a box that follows the device's turns
  * (GP_EV_MOTION) as a game's view would, MOTION_BOX_DEG across.
  *
  * A calibrates (core/motion.h): the device lies still for CAL_STILL_MS
@@ -39,12 +39,19 @@
 #define CAL_STEADY_DPS 8.0f	/* slower for CAL_STEADY_MS: held as in a game */
 #define CAL_STEADY_MS 400
 #define CAL_TILT_DEG 25.0f
+/* the column's spacing (ui_px()): all of it fits the OGA's 480x320 */
+#define ROW_GAP 4
+#define TUNE_PAD 4
 
 enum cal_step { CAL_OFF, CAL_STILL, CAL_PICK_UP, CAL_STEADY, CAL_TILT, CAL_TURN };
 enum tune_row { TUNE_SENS, TUNE_INVERT_X, TUNE_INVERT_Y, TUNE_ROWS };
 
 struct motion_screen {
 	lv_obj_t *box, *cross, *status, *chan, *zero, *axes, *note, *bar, *footer;
+	lv_obj_t *tune;		/* the rows */
+	/* the state's lines that say something (on_timer()); show_step() shows
+	 * them unless a calibration takes their place */
+	bool want_chan, want_zero, want_axes;
 	int32_t half;		/* of the box */
 	lv_timer_t *timer;
 	float x, y;		/* the cross: degrees from the middle */
@@ -60,13 +67,28 @@ struct motion_screen {
 	bool tuned;		/* changed: saved when the screen closes */
 };
 
-static void footer_hints(struct motion_screen *m)
+static void scroll_column(struct motion_screen *m);
+
+/*
+ * What the column shows: the rows, the sensor's state, then the note; while
+ * calibrating only the note (what to do) and its progress, at the top: a
+ * small screen (the OGA's 480x320) has no room under the rest for them.
+ */
+static void show_step(struct motion_screen *m)
 {
-	if (m->step != CAL_OFF)
+	bool cal = m->step != CAL_OFF;
+
+	if (cal)
 		footer_set(m->footer, "B", tr(S_CANCEL), NULL);
 	else
 		footer_set(m->footer, LV_SYMBOL_LEFT LV_SYMBOL_RIGHT, tr(S_CHANGE), "A", tr(S_CALIBRATE),
 			   "Y", tr(S_RESET), "B", tr(S_BACK), NULL);
+	lv_obj_set_hidden(m->tune, cal);
+	lv_obj_set_hidden(m->status, cal);
+	lv_obj_set_hidden(m->chan, cal || !m->want_chan);
+	lv_obj_set_hidden(m->zero, cal || !m->want_zero);
+	lv_obj_set_hidden(m->axes, cal || !m->want_axes);
+	scroll_column(m);
 }
 
 static void show_tune(struct motion_screen *m)
@@ -86,12 +108,37 @@ static void show_tune(struct motion_screen *m)
 	}
 }
 
+/*
+ * The column scrolled: to its top while calibrating (the note is first);
+ * otherwise the row chosen in view and, on the last row, as much of the
+ * state under the rows as fits with it (lines too long for a small screen)
+ */
+static void scroll_column(struct motion_screen *m)
+{
+	lv_obj_t *col = lv_obj_get_parent(m->tune);
+	int32_t down;
+
+	lv_obj_update_layout(col);
+	if (m->step != CAL_OFF) {
+		lv_obj_scroll_to_y(col, 0, LV_ANIM_OFF);
+		return;
+	}
+	lv_obj_scroll_to_view(m->rows[m->sel], LV_ANIM_OFF);
+	if (m->sel != TUNE_ROWS - 1)
+		return;
+	/* the row's top may go up to the column's */
+	down = LV_MIN(lv_obj_get_scroll_bottom(col),
+		      lv_obj_get_y(m->tune) + lv_obj_get_y(m->rows[m->sel]) - lv_obj_get_scroll_y(col));
+	if (down > 0)
+		lv_obj_scroll_by(col, 0, -down, LV_ANIM_OFF);
+}
+
 static void select_row(struct motion_screen *m, int sel)
 {
 	lv_obj_remove_state(m->rows[m->sel], LV_STATE_FOCUSED);
 	m->sel = (sel + TUNE_ROWS) % TUNE_ROWS;
 	lv_obj_add_state(m->rows[m->sel], LV_STATE_FOCUSED);
-	lv_obj_scroll_to_view(m->rows[m->sel], LV_ANIM_ON);
+	scroll_column(m);
 }
 
 /* Left (dir -1) or Right (+1) on the row chosen */
@@ -143,7 +190,7 @@ static void cal_stop(struct motion_screen *m, enum str_id note, lv_color_t color
 	m->step = CAL_OFF;
 	show_progress(m, -1);
 	set_note(m, note, color);
-	footer_hints(m);
+	show_step(m);
 }
 
 static bool has_accel(void)
@@ -291,14 +338,14 @@ static void cal_start(struct motion_screen *m)
 		m->step = CAL_PICK_UP;
 		set_note(m, S_MOTION_CAL_TILT, lv_color_white());
 		show_progress(m, 0);
-		footer_hints(m);
+		show_step(m);
 		input_motion_listen(on_sample, m);
 		return;
 	}
 	m->step = CAL_STILL;
 	set_note(m, S_MOTION_CAL_STILL, lv_color_white());
 	show_progress(m, 0);
-	footer_hints(m);
+	show_step(m);
 	input_motion_listen(on_sample, m);
 }
 
@@ -330,7 +377,7 @@ static void on_input(const struct gp_event *ev, void *ud)
 		return;
 	if (m->step != CAL_OFF) {
 		if (ev->code == GP_B)
-			cal_stop(m, S_COUNT, UI_COLOR_DIM);
+			cal_stop(m, S_MOTION_TRY, UI_COLOR_DIM);	/* as before it */
 		return;
 	}
 	switch (ev->code) {
@@ -381,29 +428,31 @@ static void on_timer(lv_timer_t *t)
 	if (!mi.present) {
 		lv_label_set_text(m->status, tr(S_MOTION_NONE));
 		lv_obj_set_style_text_color(m->status, UI_COLOR_WARN, 0);
-		lv_obj_set_hidden(m->chan, true);
-		lv_obj_set_hidden(m->zero, true);
-		lv_obj_set_hidden(m->axes, true);
+		m->want_chan = m->want_zero = m->want_axes = false;
 		if (m->step != CAL_OFF)
 			cal_stop(m, S_COUNT, UI_COLOR_DIM);
+		else
+			show_step(m);
 		return;
 	}
 	lv_label_set_text_fmt(m->status, tr(S_MOTION_RATE_FMT), mi.name[0] ? mi.name : "?",
 			      (int)lrintf(mi.rate_hz));
 	lv_obj_set_style_text_color(m->status, UI_COLOR_ON, 0);
 	/* what the sensor lacks */
-	lv_obj_set_hidden(m->chan, mi.channels == (MOTION_CH_GYRO | MOTION_CH_ACCEL));
+	m->want_chan = mi.channels != (MOTION_CH_GYRO | MOTION_CH_ACCEL);
 	lv_label_set_text(m->chan, tr(!mi.channels ? S_MOTION_NO_AIM
 				       : !(mi.channels & MOTION_CH_GYRO) ? S_MOTION_NO_GYRO
 				       : S_MOTION_NO_ACCEL));
 	lv_obj_set_style_text_color(m->chan, UI_COLOR_WARN, 0);
-	lv_obj_set_hidden(m->zero, !(mi.channels & MOTION_CH_GYRO));	/* nothing to measure */
-	lv_obj_set_hidden(m->axes, !mi.channels);
+	/* only while it is not: nothing to do once it is (no room on the OGA) */
+	m->want_zero = (mi.channels & MOTION_CH_GYRO) && !mi.bias_known;
+	m->want_axes = mi.channels;
 	lv_label_set_text(m->zero, tr(mi.bias_known ? S_MOTION_ZERO_OK : S_MOTION_ZERO_WAIT));
 	lv_obj_set_style_text_color(m->zero, mi.bias_known ? UI_COLOR_DIM : UI_COLOR_WARN, 0);
 	lv_label_set_text(m->axes, tr(mi.axes_set ? S_MOTION_AXES_OK
 				      : mi.aim_x ? S_MOTION_AXES_NONE : S_MOTION_AXES_NEEDED));
 	lv_obj_set_style_text_color(m->axes, mi.axes_set ? UI_COLOR_DIM : UI_COLOR_WARN, 0);
+	show_step(m);
 }
 
 static lv_obj_t *cross_new(lv_obj_t *box)
@@ -459,7 +508,7 @@ static void *motion_screen_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_height(col, LV_PCT(100));
 	lv_obj_set_flex_grow(col, 1);
 	lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_style_pad_row(col, ui_cell() / 2, 0);
+	lv_obj_set_style_pad_row(col, ui_px(ROW_GAP), 0);
 	lv_obj_set_scroll_dir(col, LV_DIR_VER);
 	lv_obj_set_scrollbar_mode(col, LV_SCROLLBAR_MODE_OFF);
 	{
@@ -471,13 +520,14 @@ static void *motion_screen_init(lv_obj_t *parent, lv_obj_t **root)
 		lv_obj_set_size(rows, LV_PCT(100), LV_SIZE_CONTENT);
 		lv_obj_set_flex_flow(rows, LV_FLEX_FLOW_COLUMN);
 		lv_obj_set_scrollable(rows, false);
+		m->tune = rows;
 		for (int r = 0; r < TUNE_ROWS; r++) {
 			lv_obj_t *o = lv_obj_create(rows);
 
 			lv_obj_remove_style_all(o);
 			lv_obj_set_size(o, LV_PCT(100), LV_SIZE_CONTENT);
 			lv_obj_set_style_pad_hor(o, ui_cell() / 2, 0);
-			lv_obj_set_style_pad_ver(o, ui_px(6), 0);
+			lv_obj_set_style_pad_ver(o, ui_px(TUNE_PAD), 0);
 			lv_obj_set_style_border_side(o, LV_BORDER_SIDE_BOTTOM, 0);
 			lv_obj_set_style_border_width(o, 1, 0);
 			lv_obj_set_style_border_color(o, UI_COLOR_LINE, 0);
@@ -506,7 +556,6 @@ static void *motion_screen_init(lv_obj_t *parent, lv_obj_t **root)
 	lv_obj_set_style_bg_color(m->bar, UI_COLOR_ACCENT, LV_PART_INDICATOR);
 	show_progress(m, -1);
 	set_note(m, S_MOTION_TRY, UI_COLOR_DIM);
-	footer_hints(m);
 
 	m->timer = lv_timer_create(on_timer, STATUS_MS, m);
 	on_timer(m->timer);
